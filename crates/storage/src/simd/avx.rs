@@ -109,7 +109,7 @@ unsafe fn sum_i64_masked_avx2(data: &[i64], nulls: &[u8]) -> i64 {
     let remainder_sum: i64 = remainder_data
         .iter()
         .zip(remainder_nulls.iter())
-        .filter(|(_, &n)| n != 0)
+        .filter(|&(_, &n)| n != 0)
         .map(|(&d, _)| d)
         .sum();
 
@@ -129,7 +129,7 @@ pub fn sum_i64_masked(data: &[i64], nulls: &[u8]) -> i64 {
     } else {
         data.iter()
             .zip(nulls.iter())
-            .filter(|(_, &n)| n != 0)
+            .filter(|&(_, &n)| n != 0)
             .map(|(&d, _)| d)
             .sum()
     }
@@ -169,7 +169,7 @@ unsafe fn sum_f64_masked_avx2(data: &[f64], nulls: &[u8]) -> f64 {
     let remainder_sum: f64 = remainder_data
         .iter()
         .zip(remainder_nulls.iter())
-        .filter(|(_, &n)| n != 0)
+        .filter(|&(_, &n)| n != 0)
         .map(|(&d, _)| d)
         .sum();
 
@@ -189,7 +189,7 @@ pub fn sum_f64_masked(data: &[f64], nulls: &[u8]) -> f64 {
     } else {
         data.iter()
             .zip(nulls.iter())
-            .filter(|(_, &n)| n != 0)
+            .filter(|&(_, &n)| n != 0)
             .map(|(&d, _)| d)
             .sum()
     }
@@ -220,7 +220,7 @@ unsafe fn count_nonzero_i64_avx2(data: &[i64]) -> usize {
             if (mask & 0x00FF0000) != 0xFF0000 {
                 count += 1;
             }
-            if (mask & 0xFF000000) as u32 != 0xFF000000 {
+            if (mask as u32 & 0xFF000000) != 0xFF000000 {
                 count += 1;
             }
         }
@@ -273,7 +273,7 @@ unsafe fn filter_gt_i64_avx2(data: &[i64], threshold: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -342,7 +342,7 @@ unsafe fn filter_gt_i64_with_nulls_avx2(data: &[i64], nulls: &[u8], threshold: i
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -548,7 +548,7 @@ unsafe fn filter_eq_i64_avx2(data: &[i64], value: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -603,7 +603,7 @@ unsafe fn filter_lt_i64_avx2(data: &[i64], threshold: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -659,7 +659,7 @@ unsafe fn filter_gte_i64_avx2(data: &[i64], threshold: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -715,7 +715,7 @@ unsafe fn filter_lte_i64_avx2(data: &[i64], threshold: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
@@ -771,7 +771,7 @@ unsafe fn filter_ne_i64_avx2(data: &[i64], value: i64) -> Vec<usize> {
             if (mask & 0x00FF0000) == 0xFF0000 {
                 indices.push(idx + 2);
             }
-            if (mask & 0xFF000000) as u32 == 0xFF000000 {
+            if (mask as u32 & 0xFF000000) == 0xFF000000 {
                 indices.push(idx + 3);
             }
         }
