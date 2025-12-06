@@ -60,10 +60,13 @@ impl ProjectionWithExprExec {
             }
             "SPLIT" | "STRING_TO_ARRAY" => Self::evaluate_split(args, batch, row_idx),
             "SPLIT_PART" => Self::evaluate_split_part(args, batch, row_idx),
-            "STARTS_WITH" => Self::evaluate_starts_with(args, batch, row_idx),
-            "ENDS_WITH" => Self::evaluate_ends_with(args, batch, row_idx),
+            "SPLITBYCHAR" | "SPLITBYSTRING" => Self::evaluate_split(args, batch, row_idx),
+            "STARTS_WITH" | "STARTSWITH" => Self::evaluate_starts_with(args, batch, row_idx),
+            "ENDS_WITH" | "ENDSWITH" => Self::evaluate_ends_with(args, batch, row_idx),
             "REGEXP_CONTAINS" => Self::evaluate_regexp_contains(args, batch, row_idx),
-            "REGEXP_REPLACE" => Self::evaluate_regexp_replace(args, batch, row_idx),
+            "REGEXP_REPLACE" | "REPLACEREGEXPALL" | "REPLACEREGEXPONE" => {
+                Self::evaluate_regexp_replace(args, batch, row_idx)
+            }
             "REGEXP_EXTRACT" => Self::evaluate_regexp_extract(args, batch, row_idx),
             "POSITION" => Self::evaluate_position(args, batch, row_idx),
             "STRPOS" => Self::evaluate_strpos(args, batch, row_idx),

@@ -466,14 +466,20 @@ impl ProjectionWithExprExec {
                 | "RTRIM_CHARS"
                 | "STRING_TO_ARRAY"
                 | "STARTS_WITH"
+                | "STARTSWITH"
                 | "ENDS_WITH"
+                | "ENDSWITH"
                 | "REGEXP_CONTAINS"
                 | "REGEXP_REPLACE"
+                | "REPLACEREGEXPALL"
+                | "REPLACEREGEXPONE"
                 | "REGEXP_EXTRACT"
                 | "FORMAT"
                 | "QUOTE_IDENT"
                 | "QUOTE_LITERAL"
                 | "CASEFOLD"
+                | "SPLITBYCHAR"
+                | "SPLITBYSTRING"
             )
         ) {
             return Self::evaluate_string_function(func_name, args, batch, row_idx);

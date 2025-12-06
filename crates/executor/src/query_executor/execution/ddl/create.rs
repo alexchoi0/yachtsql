@@ -523,7 +523,18 @@ impl DdlExecutor for QueryExecutor {
             | SqlDataType::Integer(_)
             | SqlDataType::BigInt(_)
             | SqlDataType::TinyInt(_)
-            | SqlDataType::SmallInt(_) => Ok(DataType::Int64),
+            | SqlDataType::SmallInt(_)
+            | SqlDataType::Int8(_)
+            | SqlDataType::Int16
+            | SqlDataType::Int32
+            | SqlDataType::Int128
+            | SqlDataType::Int256
+            | SqlDataType::UInt8
+            | SqlDataType::UInt16
+            | SqlDataType::UInt32
+            | SqlDataType::UInt64
+            | SqlDataType::UInt128
+            | SqlDataType::UInt256 => Ok(DataType::Int64),
             SqlDataType::Float64
             | SqlDataType::Float(_)
             | SqlDataType::Real
@@ -562,6 +573,7 @@ impl DdlExecutor for QueryExecutor {
                 Ok(DataType::Array(Box::new(inner_data_type)))
             }
             SqlDataType::JSON => Ok(DataType::Json),
+            SqlDataType::Nullable(inner) => self.sql_type_to_data_type(dataset_id, inner),
             SqlDataType::Interval { .. } => Ok(DataType::Interval),
             SqlDataType::GeometricType(kind) => {
                 use sqlparser::ast::GeometricTypeKind;

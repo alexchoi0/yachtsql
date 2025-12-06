@@ -62,6 +62,12 @@ pub fn clickhouse_scalar_functions() -> Vec<&'static str> {
         "MAP_VALUES",
         "MAP_CONTAINS",
         "TUPLE_ELEMENT",
+        "STARTSWITH",
+        "ENDSWITH",
+        "REPLACEREGEXPALL",
+        "REPLACEREGEXPONE",
+        "SPLITBYCHAR",
+        "SPLITBYSTRING",
     ]
 }
 
