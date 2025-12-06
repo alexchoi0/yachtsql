@@ -132,6 +132,7 @@ impl AggregateExec {
         batch: &RecordBatch,
         row_idx: usize,
     ) -> Result<Value> {
+        use yachtsql_ir::FunctionName;
         match agg_expr {
             Expr::Aggregate { name, args, filter, .. } => {
                 if let Some(filter_expr) = filter {
@@ -142,20 +143,23 @@ impl AggregateExec {
                 }
                 if args.is_empty() {
                     Ok(Value::int64(1))
-                } else if args.len() >= 2
-                    && matches!(
-                        name.as_str(),
-                        "CORR" | "COVAR_POP" | "COVAR_SAMP" | "REGR_SLOPE" | "REGR_INTERCEPT"
-                            | "ARG_MIN" | "ARG_MAX" | "ARGMIN" | "ARGMAX"
-                            | "TOP_K" | "TOPK"
-                            | "WINDOW_FUNNEL"
-                    )
-                {
-                    let mut values = Vec::with_capacity(args.len());
-                    for arg in args {
-                        values.push(self.evaluate_expr(arg, batch, row_idx)?);
+                } else if args.len() >= 2 {
+                    let needs_array = matches!(
+                        name,
+                        FunctionName::Corr | FunctionName::CovarPop | FunctionName::CovarSamp
+                            | FunctionName::ArgMin | FunctionName::ArgMax
+                            | FunctionName::TopK
+                            | FunctionName::WindowFunnel
+                    ) || matches!(name, FunctionName::Custom(s) if s == "REGR_SLOPE" || s == "REGR_INTERCEPT");
+                    if needs_array {
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            values.push(self.evaluate_expr(arg, batch, row_idx)?);
+                        }
+                        Ok(Value::array(values))
+                    } else {
+                        self.evaluate_expr(&args[0], batch, row_idx)
                     }
-                    Ok(Value::array(values))
                 } else {
                     self.evaluate_expr(&args[0], batch, row_idx)
                 }
@@ -277,14 +281,38 @@ impl AggregateExec {
             }
             Expr::Function { name, args } => {
                 use yachtsql_core::types::DataType;
-                match name.as_str() {
-                    "COUNT" | "LENGTH" | "CHAR_LENGTH" => Some(DataType::Int64),
-                    "SUM" | "MIN" | "MAX" => {
+                use yachtsql_ir::FunctionName;
+                match name {
+                    FunctionName::Count
+                    | FunctionName::Length
+                    | FunctionName::Len
+                    | FunctionName::CharLength
+                    | FunctionName::CharacterLength => Some(DataType::Int64),
+                    FunctionName::Sum
+                    | FunctionName::Min
+                    | FunctionName::Minimum
+                    | FunctionName::Max
+                    | FunctionName::Maximum => {
                         args.first().and_then(|a| Self::infer_expr_type(a, schema))
                     }
-                    "AVG" | "STDDEV" | "VARIANCE" => Some(DataType::Float64),
-                    "CONCAT" | "UPPER" | "LOWER" | "TRIM" => Some(DataType::String),
-                    "COALESCE" => args.iter().find_map(|a| Self::infer_expr_type(a, schema)),
+                    FunctionName::Avg
+                    | FunctionName::Average
+                    | FunctionName::Stddev
+                    | FunctionName::Stdev
+                    | FunctionName::StandardDeviation
+                    | FunctionName::Variance
+                    | FunctionName::Var => Some(DataType::Float64),
+                    FunctionName::Concat
+                    | FunctionName::Concatenate
+                    | FunctionName::Upper
+                    | FunctionName::Ucase
+                    | FunctionName::Lower
+                    | FunctionName::Lcase
+                    | FunctionName::Trim
+                    | FunctionName::Btrim => Some(DataType::String),
+                    FunctionName::Coalesce => {
+                        args.iter().find_map(|a| Self::infer_expr_type(a, schema))
+                    }
                     _ => None,
                 }
             }
@@ -607,6 +635,7 @@ impl AggregateExec {
     }
 
     fn compute_aggregates(&self, agg_input_rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        use yachtsql_ir::FunctionName;
         let mut result = Vec::with_capacity(self.aggregates.len());
 
         for agg_idx in 0..self.aggregates.len() {
@@ -618,8 +647,8 @@ impl AggregateExec {
                     args,
                     distinct,
                     ..
-                } => match name.as_str() {
-                    "COUNT" => {
+                } => match name {
+                    FunctionName::Count => {
                         if *distinct {
                             let mut unique_values = std::collections::HashSet::new();
                             for val in &values {
@@ -633,11 +662,11 @@ impl AggregateExec {
                             Value::int64(count as i64)
                         }
                     }
-                    "COUNTIF" => {
+                    FunctionName::CountIf => {
                         let count = values.iter().filter(|v| v.as_bool() == Some(true)).count();
                         Value::int64(count as i64)
                     }
-                    "SUM" => {
+                    FunctionName::Sum => {
                         let has_numeric = values.iter().any(|v| v.as_numeric().is_some());
 
                         if has_numeric {
@@ -716,7 +745,7 @@ impl AggregateExec {
                             }
                         }
                     }
-                    "AVG" => {
+                    FunctionName::Avg => {
                         let has_numeric = values.iter().any(|v| v.as_numeric().is_some());
 
                         if has_numeric {
@@ -796,7 +825,7 @@ impl AggregateExec {
                             }
                         }
                     }
-                    "MIN" => {
+                    FunctionName::Min => {
                         if let Some(column) = Self::try_create_column(&values) {
                             match column {
                                 Column::Int64 { .. } => {
@@ -850,7 +879,7 @@ impl AggregateExec {
                             min.unwrap_or(Value::null())
                         }
                     }
-                    "MAX" => {
+                    FunctionName::Max => {
                         if let Some(column) = Self::try_create_column(&values) {
                             match column {
                                 Column::Int64 { .. } => {
@@ -904,16 +933,16 @@ impl AggregateExec {
                             max.unwrap_or(Value::null())
                         }
                     }
-                    "VARIANCE" | "VAR_SAMP" | "STDDEV_SAMP" | "STDDEV" | "VAR_POP"
-                    | "STDDEV_POP" => {
+                    FunctionName::Variance | FunctionName::VarSamp | FunctionName::StddevSamp | FunctionName::Stddev | FunctionName::VarPop
+                    | FunctionName::StddevPop => {
                         if let Some(column) = Self::try_create_column(&values) {
                             match column {
                                 Column::Float64 { .. } => {
-                                    let result = match name.as_str() {
-                                        "VAR_POP" => column.variance_pop_f64(),
-                                        "VAR_SAMP" | "VARIANCE" => column.variance_samp_f64(),
-                                        "STDDEV_POP" => column.stddev_pop_f64(),
-                                        "STDDEV_SAMP" | "STDDEV" => column.stddev_samp_f64(),
+                                    let result = match name {
+                                        FunctionName::VarPop => column.variance_pop_f64(),
+                                        FunctionName::VarSamp | FunctionName::Variance => column.variance_samp_f64(),
+                                        FunctionName::StddevPop => column.stddev_pop_f64(),
+                                        FunctionName::StddevSamp | FunctionName::Stddev => column.stddev_samp_f64(),
                                         _ => Ok(None),
                                     };
                                     match result {
@@ -931,11 +960,11 @@ impl AggregateExec {
                                         data: float_data,
                                         nulls: nulls.clone(),
                                     };
-                                    let result = match name.as_str() {
-                                        "VAR_POP" => float_col.variance_pop_f64(),
-                                        "VAR_SAMP" | "VARIANCE" => float_col.variance_samp_f64(),
-                                        "STDDEV_POP" => float_col.stddev_pop_f64(),
-                                        "STDDEV_SAMP" | "STDDEV" => float_col.stddev_samp_f64(),
+                                    let result = match name {
+                                        FunctionName::VarPop => float_col.variance_pop_f64(),
+                                        FunctionName::VarSamp | FunctionName::Variance => float_col.variance_samp_f64(),
+                                        FunctionName::StddevPop => float_col.stddev_pop_f64(),
+                                        FunctionName::StddevSamp | FunctionName::Stddev => float_col.stddev_samp_f64(),
                                         _ => Ok(None),
                                     };
                                     match result {
@@ -949,7 +978,7 @@ impl AggregateExec {
                             Value::null()
                         }
                     }
-                    "APPROX_QUANTILES" => {
+                    FunctionName::ApproxQuantiles => {
                         let num_quantiles = if args.len() >= 2 {
                             match &args[1] {
                                 Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(n)) => {
@@ -995,7 +1024,7 @@ impl AggregateExec {
                             Value::array(quantile_values)
                         }
                     }
-                    "ARRAY_AGG" => {
+                    FunctionName::ArrayAgg => {
                         let array_values: Vec<Value> =
                             values.iter().map(|v| (*v).clone()).collect();
                         if *distinct {
@@ -1012,7 +1041,7 @@ impl AggregateExec {
                             Value::array(array_values)
                         }
                     }
-                    "STRING_AGG" => {
+                    FunctionName::StringAgg => {
                         let delimiter = if args.len() >= 2 {
                             match &args[1] {
                                 Expr::Literal(yachtsql_ir::expr::LiteralValue::String(s)) => {
@@ -1041,7 +1070,7 @@ impl AggregateExec {
                             Value::string(string_values.join(&delimiter))
                         }
                     }
-                    "CORR" => {
+                    FunctionName::Corr => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1085,7 +1114,7 @@ impl AggregateExec {
                             }
                         }
                     }
-                    "COVAR_POP" => {
+                    FunctionName::CovarPop => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1117,7 +1146,7 @@ impl AggregateExec {
                             Value::float64(coproduct / count as f64)
                         }
                     }
-                    "COVAR_SAMP" => {
+                    FunctionName::CovarSamp => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1149,7 +1178,7 @@ impl AggregateExec {
                             Value::float64(coproduct / (count - 1) as f64)
                         }
                     }
-                    "UNIQ" | "UNIQ_EXACT" | "UNIQ_HLL12" | "UNIQ_COMBINED" | "UNIQ_COMBINED_64" | "UNIQ_THETA_SKETCH" => {
+                    FunctionName::Uniq | FunctionName::UniqExact | FunctionName::UniqHll12 | FunctionName::UniqCombined | FunctionName::UniqCombined64 | FunctionName::UniqThetaSketch => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1159,7 +1188,7 @@ impl AggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "TOP_K" | "TOPK" => {
+                    FunctionName::TopK => {
                         let mut freq_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1172,7 +1201,7 @@ impl AggregateExec {
                         let top_values: Vec<Value> = freq_vec.iter().take(10).map(|(k, _)| Value::string(k.clone())).collect();
                         Value::array(top_values)
                     }
-                    "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST" => {
+                    FunctionName::Quantile | FunctionName::QuantileExact | FunctionName::QuantileTiming | FunctionName::QuantileTDigest => {
                         let mut float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1189,7 +1218,7 @@ impl AggregateExec {
                             Value::float64(median)
                         }
                     }
-                    "QUANTILES_TIMING" | "QUANTILES_TDIGEST" => {
+                    FunctionName::QuantilesTiming | FunctionName::QuantilesTDigest => {
                         let mut float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1205,7 +1234,7 @@ impl AggregateExec {
                             Value::array(result)
                         }
                     }
-                    "ARG_MIN" => {
+                    FunctionName::ArgMin => {
                         let mut min_key: Option<Value> = None;
                         let mut min_val: Option<Value> = None;
                         for val in &values {
@@ -1236,7 +1265,7 @@ impl AggregateExec {
                         }
                         min_val.unwrap_or(Value::null())
                     }
-                    "ARG_MAX" => {
+                    FunctionName::ArgMax => {
                         let mut max_key: Option<Value> = None;
                         let mut max_val: Option<Value> = None;
                         for val in &values {
@@ -1267,11 +1296,11 @@ impl AggregateExec {
                         }
                         max_val.unwrap_or(Value::null())
                     }
-                    "GROUP_ARRAY" | "GROUPARRAY" => {
+                    FunctionName::GroupArray => {
                         let arr: Vec<Value> = values.iter().map(|v| (*v).clone()).collect();
                         Value::array(arr)
                     }
-                    "GROUP_UNIQ_ARRAY" | "GROUPUNIQARRAY" => {
+                    FunctionName::GroupUniqArray => {
                         let mut seen = std::collections::HashSet::new();
                         let arr: Vec<Value> = values.iter()
                             .filter(|v| !v.is_null())
@@ -1283,20 +1312,20 @@ impl AggregateExec {
                             .collect();
                         Value::array(arr)
                     }
-                    "ANY" => {
+                    FunctionName::Any => {
                         values.iter()
                             .find(|v| !v.is_null())
                             .map(|v| (*v).clone())
                             .unwrap_or(Value::null())
                     }
-                    "ANY_LAST" | "ANYLAST" => {
+                    FunctionName::AnyLast => {
                         values.iter()
                             .rev()
                             .find(|v| !v.is_null())
                             .map(|v| (*v).clone())
                             .unwrap_or(Value::null())
                     }
-                    "ANY_HEAVY" | "ANYHEAVY" => {
+                    FunctionName::AnyHeavy => {
                         let mut freq_map: std::collections::HashMap<String, (usize, Value)> = std::collections::HashMap::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1309,7 +1338,7 @@ impl AggregateExec {
                             .map(|(_, (_, val))| val)
                             .unwrap_or(Value::null())
                     }
-                    "SUM_WITH_OVERFLOW" | "SUMWITHOVERFLOW" => {
+                    FunctionName::SumWithOverflow => {
                         let mut sum: i64 = 0;
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -1320,7 +1349,7 @@ impl AggregateExec {
                         }
                         Value::int64(sum)
                     }
-                    "GROUP_ARRAY_MOVING_AVG" | "GROUPARRAYMOVINGAVG" => {
+                    FunctionName::GroupArrayMovingAvg => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1332,7 +1361,7 @@ impl AggregateExec {
                         }
                         Value::array(moving_avgs)
                     }
-                    "GROUP_ARRAY_MOVING_SUM" | "GROUPARRAYMOVINGSUM" => {
+                    FunctionName::GroupArrayMovingSum => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1344,10 +1373,10 @@ impl AggregateExec {
                         }
                         Value::array(moving_sums)
                     }
-                    "SUM_MAP" | "SUMMAP" | "MIN_MAP" | "MINMAP" | "MAX_MAP" | "MAXMAP" => {
+                    FunctionName::SumMap | FunctionName::MinMap | FunctionName::MaxMap => {
                         Value::array(vec![Value::array(vec![]), Value::array(vec![])])
                     }
-                    "GROUP_BITMAP" | "GROUPBITMAP" => {
+                    FunctionName::GroupBitmap => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -1356,7 +1385,7 @@ impl AggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "GROUP_BITMAP_AND" | "GROUPBITMAPAND" | "GROUP_BITMAP_OR" | "GROUPBITMAPOR" | "GROUP_BITMAP_XOR" | "GROUPBITMAPXOR" => {
+                    FunctionName::GroupBitmapAnd | FunctionName::GroupBitmapOr | FunctionName::GroupBitmapXor => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -1365,7 +1394,7 @@ impl AggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "RANK_CORR" | "RANKCORR" => {
+                    FunctionName::RankCorr => {
                         let pairs: Vec<(f64, f64)> = values.iter()
                             .filter_map(|v| {
                                 v.as_array().and_then(|arr| {
@@ -1385,7 +1414,7 @@ impl AggregateExec {
                             Value::float64(1.0)
                         }
                     }
-                    "EXPONENTIAL_MOVING_AVERAGE" | "EXPONENTIALMOVINGAVERAGE" => {
+                    FunctionName::ExponentialMovingAverage => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1400,7 +1429,7 @@ impl AggregateExec {
                             Value::float64(ema)
                         }
                     }
-                    "INTERVAL_LENGTH_SUM" | "INTERVALLENGTHSUM" => {
+                    FunctionName::IntervalLengthSum => {
                         let mut total_length = 0i64;
                         for val in &values {
                             if let Some(arr) = val.as_array() {
@@ -1415,14 +1444,14 @@ impl AggregateExec {
                         }
                         Value::int64(total_length)
                     }
-                    "RETENTION" => {
+                    FunctionName::Retention => {
                         let conditions: Vec<bool> = values.iter()
                             .filter_map(|v| v.as_bool())
                             .collect();
                         let result: Vec<Value> = conditions.iter().map(|&b| Value::bool_val(b)).collect();
                         Value::array(result)
                     }
-                    "WINDOW_FUNNEL" | "WINDOWFUNNEL" => {
+                    FunctionName::WindowFunnel => {
                         Value::int64(0)
                     }
                     _ => Value::null(),
@@ -1530,6 +1559,7 @@ impl SortAggregateExec {
         batch: &RecordBatch,
         row_idx: usize,
     ) -> Result<Value> {
+        use yachtsql_ir::FunctionName;
         match agg_expr {
             Expr::Aggregate { name, args, filter, .. } => {
                 if let Some(filter_expr) = filter {
@@ -1540,17 +1570,23 @@ impl SortAggregateExec {
                 }
                 if args.is_empty() {
                     Ok(Value::int64(1))
-                } else if args.len() >= 2
-                    && matches!(
-                        name.as_str(),
-                        "CORR" | "COVAR_POP" | "COVAR_SAMP" | "REGR_SLOPE" | "REGR_INTERCEPT"
-                    )
-                {
-                    let mut values = Vec::with_capacity(args.len());
-                    for arg in args {
-                        values.push(self.evaluate_expr(arg, batch, row_idx)?);
+                } else if args.len() >= 2 {
+                    let needs_array = matches!(
+                        name,
+                        FunctionName::Corr | FunctionName::CovarPop | FunctionName::CovarSamp
+                            | FunctionName::ArgMin | FunctionName::ArgMax
+                            | FunctionName::TopK
+                            | FunctionName::WindowFunnel
+                    ) || matches!(name, FunctionName::Custom(s) if s == "REGR_SLOPE" || s == "REGR_INTERCEPT");
+                    if needs_array {
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            values.push(self.evaluate_expr(arg, batch, row_idx)?);
+                        }
+                        Ok(Value::array(values))
+                    } else {
+                        self.evaluate_expr(&args[0], batch, row_idx)
                     }
-                    Ok(Value::array(values))
                 } else {
                     self.evaluate_expr(&args[0], batch, row_idx)
                 }
@@ -1579,6 +1615,7 @@ impl SortAggregateExec {
     }
 
     fn compute_aggregates_streaming(&self, agg_input_rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        use yachtsql_ir::FunctionName;
         let mut result = Vec::with_capacity(self.aggregates.len());
 
         for agg_idx in 0..self.aggregates.len() {
@@ -1590,8 +1627,8 @@ impl SortAggregateExec {
                     args,
                     distinct,
                     ..
-                } => match name.as_str() {
-                    "COUNT" => {
+                } => match name {
+                    FunctionName::Count => {
                         if *distinct {
                             let mut unique_values = std::collections::HashSet::new();
                             for val in &values {
@@ -1605,11 +1642,11 @@ impl SortAggregateExec {
                             Value::int64(count as i64)
                         }
                     }
-                    "COUNTIF" => {
+                    FunctionName::CountIf => {
                         let count = values.iter().filter(|v| v.as_bool() == Some(true)).count();
                         Value::int64(count as i64)
                     }
-                    "SUM" => {
+                    FunctionName::Sum => {
                         let has_numeric = values.iter().any(|v| v.as_numeric().is_some());
                         if has_numeric {
                             let mut sum = rust_decimal::Decimal::ZERO;
@@ -1652,7 +1689,7 @@ impl SortAggregateExec {
                             }
                         }
                     }
-                    "AVG" => {
+                    FunctionName::Avg => {
                         let has_numeric = values.iter().any(|v| v.as_numeric().is_some());
                         if has_numeric {
                             let mut sum = rust_decimal::Decimal::ZERO;
@@ -1695,7 +1732,7 @@ impl SortAggregateExec {
                             }
                         }
                     }
-                    "MIN" => {
+                    FunctionName::Min => {
                         let mut min: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
@@ -1715,7 +1752,7 @@ impl SortAggregateExec {
                         }
                         min.unwrap_or(Value::null())
                     }
-                    "MAX" => {
+                    FunctionName::Max => {
                         let mut max: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
@@ -1736,7 +1773,7 @@ impl SortAggregateExec {
                         }
                         max.unwrap_or(Value::null())
                     }
-                    "ARRAY_AGG" => {
+                    FunctionName::ArrayAgg => {
                         let array_values: Vec<Value> =
                             values.iter().map(|v| (*v).clone()).collect();
                         if *distinct {
@@ -1753,7 +1790,7 @@ impl SortAggregateExec {
                             Value::array(array_values)
                         }
                     }
-                    "STRING_AGG" => {
+                    FunctionName::StringAgg => {
                         let delimiter = if args.len() >= 2 {
                             match &args[1] {
                                 Expr::Literal(yachtsql_ir::expr::LiteralValue::String(s)) => {
@@ -1780,7 +1817,7 @@ impl SortAggregateExec {
                             Value::string(string_values.join(&delimiter))
                         }
                     }
-                    "CORR" => {
+                    FunctionName::Corr => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1824,7 +1861,7 @@ impl SortAggregateExec {
                             }
                         }
                     }
-                    "COVAR_POP" => {
+                    FunctionName::CovarPop => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1856,7 +1893,7 @@ impl SortAggregateExec {
                             Value::float64(coproduct / count as f64)
                         }
                     }
-                    "COVAR_SAMP" => {
+                    FunctionName::CovarSamp => {
                         let mut count = 0usize;
                         let mut mean_x = 0.0f64;
                         let mut mean_y = 0.0f64;
@@ -1888,7 +1925,7 @@ impl SortAggregateExec {
                             Value::float64(coproduct / (count - 1) as f64)
                         }
                     }
-                    "UNIQ" | "UNIQ_EXACT" | "UNIQ_HLL12" | "UNIQ_COMBINED" | "UNIQ_COMBINED_64" | "UNIQ_THETA_SKETCH" => {
+                    FunctionName::Uniq | FunctionName::UniqExact | FunctionName::UniqHll12 | FunctionName::UniqCombined | FunctionName::UniqCombined64 | FunctionName::UniqThetaSketch => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1898,7 +1935,7 @@ impl SortAggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "TOP_K" | "TOPK" => {
+                    FunctionName::TopK => {
                         let mut freq_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1911,7 +1948,7 @@ impl SortAggregateExec {
                         let top_values: Vec<Value> = freq_vec.iter().take(10).map(|(k, _)| Value::string(k.clone())).collect();
                         Value::array(top_values)
                     }
-                    "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST" => {
+                    FunctionName::Quantile | FunctionName::QuantileExact | FunctionName::QuantileTiming | FunctionName::QuantileTDigest => {
                         let mut float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1928,7 +1965,7 @@ impl SortAggregateExec {
                             Value::float64(median)
                         }
                     }
-                    "QUANTILES_TIMING" | "QUANTILES_TDIGEST" => {
+                    FunctionName::QuantilesTiming | FunctionName::QuantilesTDigest => {
                         let mut float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -1944,7 +1981,7 @@ impl SortAggregateExec {
                             Value::array(result)
                         }
                     }
-                    "ARG_MIN" => {
+                    FunctionName::ArgMin => {
                         let mut min_key: Option<Value> = None;
                         let mut min_val: Option<Value> = None;
                         for val in &values {
@@ -1975,7 +2012,7 @@ impl SortAggregateExec {
                         }
                         min_val.unwrap_or(Value::null())
                     }
-                    "ARG_MAX" => {
+                    FunctionName::ArgMax => {
                         let mut max_key: Option<Value> = None;
                         let mut max_val: Option<Value> = None;
                         for val in &values {
@@ -2006,11 +2043,11 @@ impl SortAggregateExec {
                         }
                         max_val.unwrap_or(Value::null())
                     }
-                    "GROUP_ARRAY" | "GROUPARRAY" => {
+                    FunctionName::GroupArray => {
                         let arr: Vec<Value> = values.iter().map(|v| (*v).clone()).collect();
                         Value::array(arr)
                     }
-                    "GROUP_UNIQ_ARRAY" | "GROUPUNIQARRAY" => {
+                    FunctionName::GroupUniqArray => {
                         let mut seen = std::collections::HashSet::new();
                         let arr: Vec<Value> = values.iter()
                             .filter(|v| !v.is_null())
@@ -2022,20 +2059,20 @@ impl SortAggregateExec {
                             .collect();
                         Value::array(arr)
                     }
-                    "ANY" => {
+                    FunctionName::Any => {
                         values.iter()
                             .find(|v| !v.is_null())
                             .map(|v| (*v).clone())
                             .unwrap_or(Value::null())
                     }
-                    "ANY_LAST" | "ANYLAST" => {
+                    FunctionName::AnyLast => {
                         values.iter()
                             .rev()
                             .find(|v| !v.is_null())
                             .map(|v| (*v).clone())
                             .unwrap_or(Value::null())
                     }
-                    "ANY_HEAVY" | "ANYHEAVY" => {
+                    FunctionName::AnyHeavy => {
                         let mut freq_map: std::collections::HashMap<String, (usize, Value)> = std::collections::HashMap::new();
                         for val in &values {
                             if !val.is_null() {
@@ -2048,7 +2085,7 @@ impl SortAggregateExec {
                             .map(|(_, (_, val))| val)
                             .unwrap_or(Value::null())
                     }
-                    "SUM_WITH_OVERFLOW" | "SUMWITHOVERFLOW" => {
+                    FunctionName::SumWithOverflow => {
                         let mut sum: i64 = 0;
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -2059,7 +2096,7 @@ impl SortAggregateExec {
                         }
                         Value::int64(sum)
                     }
-                    "GROUP_ARRAY_MOVING_AVG" | "GROUPARRAYMOVINGAVG" => {
+                    FunctionName::GroupArrayMovingAvg => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -2071,7 +2108,7 @@ impl SortAggregateExec {
                         }
                         Value::array(moving_avgs)
                     }
-                    "GROUP_ARRAY_MOVING_SUM" | "GROUPARRAYMOVINGSUM" => {
+                    FunctionName::GroupArrayMovingSum => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -2083,10 +2120,10 @@ impl SortAggregateExec {
                         }
                         Value::array(moving_sums)
                     }
-                    "SUM_MAP" | "SUMMAP" | "MIN_MAP" | "MINMAP" | "MAX_MAP" | "MAXMAP" => {
+                    FunctionName::SumMap | FunctionName::MinMap | FunctionName::MaxMap => {
                         Value::array(vec![Value::array(vec![]), Value::array(vec![])])
                     }
-                    "GROUP_BITMAP" | "GROUPBITMAP" => {
+                    FunctionName::GroupBitmap => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -2095,7 +2132,7 @@ impl SortAggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "GROUP_BITMAP_AND" | "GROUPBITMAPAND" | "GROUP_BITMAP_OR" | "GROUPBITMAPOR" | "GROUP_BITMAP_XOR" | "GROUPBITMAPXOR" => {
+                    FunctionName::GroupBitmapAnd | FunctionName::GroupBitmapOr | FunctionName::GroupBitmapXor => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if let Some(i) = val.as_i64() {
@@ -2104,7 +2141,7 @@ impl SortAggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
-                    "RANK_CORR" | "RANKCORR" => {
+                    FunctionName::RankCorr => {
                         let pairs: Vec<(f64, f64)> = values.iter()
                             .filter_map(|v| {
                                 v.as_array().and_then(|arr| {
@@ -2124,7 +2161,7 @@ impl SortAggregateExec {
                             Value::float64(1.0)
                         }
                     }
-                    "EXPONENTIAL_MOVING_AVERAGE" | "EXPONENTIALMOVINGAVERAGE" => {
+                    FunctionName::ExponentialMovingAverage => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -2139,7 +2176,7 @@ impl SortAggregateExec {
                             Value::float64(ema)
                         }
                     }
-                    "INTERVAL_LENGTH_SUM" | "INTERVALLENGTHSUM" => {
+                    FunctionName::IntervalLengthSum => {
                         let mut total_length = 0i64;
                         for val in &values {
                             if let Some(arr) = val.as_array() {
@@ -2154,87 +2191,14 @@ impl SortAggregateExec {
                         }
                         Value::int64(total_length)
                     }
-                    "RETENTION" => {
+                    FunctionName::Retention => {
                         let conditions: Vec<bool> = values.iter()
                             .filter_map(|v| v.as_bool())
                             .collect();
                         let result: Vec<Value> = conditions.iter().map(|&b| Value::bool_val(b)).collect();
                         Value::array(result)
                     }
-                    "WINDOW_FUNNEL" | "WINDOWFUNNEL" => {
-                        Value::int64(0)
-                    }
-                    "UNIQ" | "UNIQ_EXACT" | "UNIQ_HLL12" | "UNIQ_COMBINED" | "UNIQ_COMBINED_64" | "UNIQ_THETA_SKETCH" => {
-                        let mut unique_values = std::collections::HashSet::new();
-                        for val in &values {
-                            if !val.is_null() {
-                                let key = format!("{:?}", val);
-                                unique_values.insert(key);
-                            }
-                        }
-                        Value::int64(unique_values.len() as i64)
-                    }
-                    "UNIQ_ARRAY" | "UNIQARRAY" => {
-                        let mut unique_values = std::collections::HashSet::new();
-                        for val in &values {
-                            if let Some(arr) = val.as_array() {
-                                for elem in arr {
-                                    if !elem.is_null() {
-                                        let key = format!("{:?}", elem);
-                                        unique_values.insert(key);
-                                    }
-                                }
-                            }
-                        }
-                        Value::int64(unique_values.len() as i64)
-                    }
-                    "TOP_K" | "TOPK" => {
-                        let mut freq_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                        for val in &values {
-                            if !val.is_null() {
-                                let key = format!("{:?}", val);
-                                *freq_map.entry(key).or_insert(0) += 1;
-                            }
-                        }
-                        let mut freq_vec: Vec<_> = freq_map.into_iter().collect();
-                        freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-                        let top_values: Vec<Value> = freq_vec.iter().take(10).map(|(k, _)| Value::string(k.clone())).collect();
-                        Value::array(top_values)
-                    }
-                    "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST" => {
-                        let mut float_values: Vec<f64> = values.iter()
-                            .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
-                            .collect();
-                        if float_values.is_empty() {
-                            Value::null()
-                        } else {
-                            float_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                            let mid = float_values.len() / 2;
-                            let median = if float_values.len() % 2 == 0 {
-                                (float_values[mid - 1] + float_values[mid]) / 2.0
-                            } else {
-                                float_values[mid]
-                            };
-                            Value::float64(median)
-                        }
-                    }
-                    "QUANTILES_TIMING" | "QUANTILES_TDIGEST" => {
-                        let mut float_values: Vec<f64> = values.iter()
-                            .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
-                            .collect();
-                        if float_values.is_empty() {
-                            Value::array(vec![])
-                        } else {
-                            float_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                            let quantiles = vec![0.5, 0.9, 0.99];
-                            let result: Vec<Value> = quantiles.iter().map(|&q| {
-                                let idx = ((float_values.len() as f64 - 1.0) * q).round() as usize;
-                                Value::float64(float_values[idx.min(float_values.len() - 1)])
-                            }).collect();
-                            Value::array(result)
-                        }
-                    }
-                    "SIMPLE_LINEAR_REGRESSION" | "SIMPLELINEARREGRESSION" => {
+                    FunctionName::Custom(s) if s == "SIMPLE_LINEAR_REGRESSION" || s == "SIMPLELINEARREGRESSION" => {
                         let pairs: Vec<(f64, f64)> = values.iter()
                             .filter_map(|v| {
                                 v.as_array().and_then(|arr| {
@@ -2261,16 +2225,16 @@ impl SortAggregateExec {
                             Value::array(vec![Value::float64(slope), Value::float64(intercept)])
                         }
                     }
-                    "STOCHASTIC_LINEAR_REGRESSION" | "STOCHASTICLINEARREGRESSION" => {
+                    FunctionName::Custom(s) if s == "STOCHASTIC_LINEAR_REGRESSION" || s == "STOCHASTICLINEARREGRESSION" => {
                         Value::array(vec![Value::float64(0.0), Value::float64(0.0)])
                     }
-                    "STOCHASTIC_LOGISTIC_REGRESSION" | "STOCHASTICLOGISTICREGRESSION" => {
+                    FunctionName::Custom(s) if s == "STOCHASTIC_LOGISTIC_REGRESSION" || s == "STOCHASTICLOGISTICREGRESSION" => {
                         Value::array(vec![Value::float64(0.0)])
                     }
-                    "CATEGORICAL_INFORMATION_VALUE" | "CATEGORICALINFORMATIONVALUE" => {
+                    FunctionName::Custom(s) if s == "CATEGORICAL_INFORMATION_VALUE" || s == "CATEGORICALINFORMATIONVALUE" => {
                         Value::float64(0.0)
                     }
-                    "ENTROPY" => {
+                    FunctionName::Custom(s) if s == "ENTROPY" => {
                         let mut freq_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
                         let mut total = 0usize;
                         for val in &values {
@@ -2292,7 +2256,7 @@ impl SortAggregateExec {
                             Value::float64(entropy)
                         }
                     }
-                    "MEAN_ZSCORE" | "MEANZSCORE" => {
+                    FunctionName::Custom(s) if s == "MEAN_ZSCORE" || s == "MEANZSCORE" => {
                         let float_values: Vec<f64> = values.iter()
                             .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
                             .collect();
@@ -2309,7 +2273,7 @@ impl SortAggregateExec {
                             }
                         }
                     }
-                    "UNIQ_UPDOWN" | "UNIQUPDOWN" => {
+                    FunctionName::Custom(s) if s == "UNIQ_UPDOWN" || s == "UNIQUPDOWN" => {
                         let mut count = 0i64;
                         let mut prev: Option<f64> = None;
                         for val in &values {
@@ -2326,10 +2290,10 @@ impl SortAggregateExec {
                         }
                         Value::int64(count)
                     }
-                    "CRAMERS_V" | "CRAMERSV" | "CRAMERS_V_BIAS_CORRECTED" | "CRAMERSVBIASCORRECTED" | "THEIL_U" | "THEILU" | "CONTINGENCY_COEFFICIENT" | "CONTINGENCYCOEFFICIENT" => {
+                    FunctionName::Custom(s) if s == "CRAMERS_V" || s == "CRAMERSV" || s == "CRAMERS_V_BIAS_CORRECTED" || s == "CRAMERSVBIASCORRECTED" || s == "THEIL_U" || s == "THEILU" || s == "CONTINGENCY_COEFFICIENT" || s == "CONTINGENCYCOEFFICIENT" => {
                         Value::float64(0.0)
                     }
-                    "MANNWHITNEY_U_TEST" | "MANNWHITNEYUTEST" | "STUDENT_T_TEST" | "STUDENTTTEST" | "WELCH_T_TEST" | "WELCHTTEST" | "KOLMOGOROV_SMIRNOV_TEST" | "KOLMOGOROVSMIRNOVTEST" => {
+                    FunctionName::Custom(s) if s == "MANNWHITNEY_U_TEST" || s == "MANNWHITNEYUTEST" || s == "STUDENT_T_TEST" || s == "STUDENTTTEST" || s == "WELCH_T_TEST" || s == "WELCHTTEST" || s == "KOLMOGOROV_SMIRNOV_TEST" || s == "KOLMOGOROVSMIRNOVTEST" => {
                         Value::array(vec![Value::float64(0.0), Value::float64(1.0)])
                     }
                     _ => Value::null(),

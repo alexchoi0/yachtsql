@@ -30,8 +30,8 @@ impl ProjectionWithExprExec {
 
         let time_high = ((timestamp_ms >> 28) & 0xFFFF_FFFF) as u32;
         let time_mid = ((timestamp_ms >> 12) & 0xFFFF) as u16;
-        let time_low_and_version = (((timestamp_ms & 0xFFF) as u16) | 0x7000);
-        let clock_seq_and_variant = ((random_a & 0x3FFF) | 0x8000);
+        let time_low_and_version = ((timestamp_ms & 0xFFF) as u16) | 0x7000;
+        let clock_seq_and_variant = (random_a & 0x3FFF) | 0x8000;
         let node = random_b & 0xFFFF_FFFF_FFFF;
 
         let uuid_str = format!(

@@ -73,13 +73,16 @@ impl WindowExec {
     }
 
     pub(super) fn get_window_function_return_type(
-        name: &str,
+        name: &yachtsql_ir::FunctionName,
         args: &[Expr],
         schema: &Schema,
     ) -> DataType {
-        match name.to_uppercase().as_str() {
-            "PERCENT_RANK" | "CUME_DIST" => DataType::Float64,
-            "AVG" => {
+        use yachtsql_ir::FunctionName;
+        match name {
+            FunctionName::PercentRank | FunctionName::Percentrank | FunctionName::CumeDist | FunctionName::Cumedist => {
+                DataType::Float64
+            }
+            FunctionName::Avg | FunctionName::Average => {
                 if let Some(first_arg) = args.first()
                     && let Some(input_type) = Self::extract_column_type(first_arg, schema)
                 {
@@ -87,7 +90,11 @@ impl WindowExec {
                 }
                 DataType::Float64
             }
-            "SUM" | "MIN" | "MAX" => {
+            FunctionName::Sum
+            | FunctionName::Min
+            | FunctionName::Minimum
+            | FunctionName::Max
+            | FunctionName::Maximum => {
                 if let Some(first_arg) = args.first()
                     && let Some(col_type) = Self::extract_column_type(first_arg, schema)
                 {
@@ -100,17 +107,32 @@ impl WindowExec {
     }
 
     pub(super) fn get_window_function_return_type_with_registry(
-        name: &str,
+        name: &yachtsql_ir::FunctionName,
         args: &[Expr],
         schema: &Schema,
         registry: &std::rc::Rc<crate::functions::FunctionRegistry>,
     ) -> DataType {
-        let func_name_upper = name.to_uppercase();
+        use yachtsql_ir::FunctionName;
 
-        match func_name_upper.as_str() {
-            "ROW_NUMBER" | "RANK" | "DENSE_RANK" | "NTILE" => return DataType::Int64,
-            "PERCENT_RANK" | "CUME_DIST" => return DataType::Float64,
-            "LAG" | "LEAD" | "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE" => {
+        match name {
+            FunctionName::RowNumber
+            | FunctionName::Rownumber
+            | FunctionName::Rank
+            | FunctionName::Ranking
+            | FunctionName::DenseRank
+            | FunctionName::Denserank
+            | FunctionName::Ntile => return DataType::Int64,
+            FunctionName::PercentRank
+            | FunctionName::Percentrank
+            | FunctionName::CumeDist
+            | FunctionName::Cumedist => return DataType::Float64,
+            FunctionName::Lag
+            | FunctionName::Lead
+            | FunctionName::FirstValue
+            | FunctionName::First
+            | FunctionName::LastValue
+            | FunctionName::Last
+            | FunctionName::NthValue => {
                 if let Some(first_arg) = args.first() {
                     if let Some(col_type) = Self::extract_column_type(first_arg, schema) {
                         return col_type;
@@ -122,6 +144,7 @@ impl WindowExec {
             _ => {}
         }
 
+        let func_name_upper = name.as_str().to_uppercase();
         if let Some(agg_func) = registry.get_aggregate(&func_name_upper) {
             let arg_types: Vec<DataType> = args
                 .iter()

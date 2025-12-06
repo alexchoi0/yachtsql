@@ -58,7 +58,7 @@ impl WindowExec {
                         .clone()
                         .unwrap_or_else(|| format!("{}(...)", name.as_str()));
                     let dtype = Self::get_window_function_return_type_with_registry(
-                        name.as_str(),
+                        name,
                         args,
                         input_schema,
                         &function_registry,
@@ -341,7 +341,7 @@ impl ExecutionPlan for WindowExec {
                         }
 
                         let data_type = Self::get_window_function_return_type_with_registry(
-                            name.as_str(),
+                            name,
                             args,
                             input_batch.schema(),
                             &self.function_registry,

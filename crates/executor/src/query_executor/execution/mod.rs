@@ -33,19 +33,19 @@ pub use utility::{
     infer_scalar_subquery_type_static, perform_cast, safe_add, safe_divide, safe_multiply,
     safe_negate, safe_subtract,
 };
-use yachtsql_capability::FeatureId;
 use yachtsql_capability::error::CapabilityError;
 use yachtsql_capability::feature_ids::{
     F781_SELF_REFERENCING_OPERATIONS, F782_COMMIT_STATEMENT, F783_ROLLBACK_STATEMENT,
     F784_SAVEPOINT_STATEMENT, F785_ROLLBACK_TO_SAVEPOINT_STATEMENT, F786_SAVEPOINTS,
 };
+use yachtsql_capability::FeatureId;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::{DataType, Value};
 use yachtsql_optimizer::rules::{
     IndexSelectionRule, SubqueryFlattening, UnionOptimization, WindowOptimization,
 };
 use yachtsql_parser::DialectType;
-use yachtsql_storage::{Schema, SharedTransactionState, StorageLayout};
+use yachtsql_storage::{Schema, SharedTransactionState};
 
 use self::session::SessionState;
 use self::transaction::SessionTransactionController;
@@ -61,21 +61,14 @@ fn create_default_optimizer() -> yachtsql_optimizer::Optimizer {
 
 pub struct QueryExecutor {
     pub storage: Rc<RefCell<yachtsql_storage::Storage>>,
-
     pub transaction_manager: Rc<RefCell<yachtsql_storage::TransactionManager>>,
-
     pub temporary_storage: Rc<RefCell<yachtsql_storage::TempStorage>>,
     session: SessionState,
     session_tx: SessionTransactionController,
-
     resource_limits: crate::resource_limits::ResourceLimitsConfig,
-
     optimizer: yachtsql_optimizer::Optimizer,
-
     plan_cache: Rc<RefCell<crate::plan_cache::PlanCache>>,
-
     memory_pool: Option<Rc<crate::resource_limits::MemoryPool>>,
-
     query_registry: Option<Rc<crate::resource_limits::QueryRegistry>>,
 }
 
@@ -997,7 +990,7 @@ impl QueryExecutor {
     }
 
     fn execute_copy(&mut self, stmt: &sqlparser::ast::Statement) -> Result<RecordBatch> {
-        use sqlparser::ast::{CopyOption, CopySource, CopyTarget, Statement as SqlStatement};
+        use sqlparser::ast::{CopyOption, Statement as SqlStatement};
 
         let (source, to, target, options) = match stmt {
             SqlStatement::Copy {

@@ -38,11 +38,10 @@ pub fn infer_scalar_subquery_type_static(
 fn infer_aggregate_type_with_input_plan(agg_expr: &Expr, input: &PlanNode) -> Option<DataType> {
     match agg_expr {
         Expr::Aggregate { name, args, .. } => {
-            let agg_name = name.as_str().to_uppercase();
-
-            match agg_name.as_str() {
-                "COUNT" => Some(DataType::Int64),
-                "AVG" | "SUM" => {
+            use yachtsql_ir::FunctionName;
+            match name {
+                FunctionName::Count => Some(DataType::Int64),
+                FunctionName::Avg | FunctionName::Average | FunctionName::Sum => {
                     if let Some(arg) = args.first() {
                         if let Some(col_type) = infer_column_type_from_plan(arg, input) {
                             return match col_type {
@@ -55,7 +54,7 @@ fn infer_aggregate_type_with_input_plan(agg_expr: &Expr, input: &PlanNode) -> Op
 
                     Some(DataType::Numeric(None))
                 }
-                "MIN" | "MAX" => {
+                FunctionName::Min | FunctionName::Minimum | FunctionName::Max | FunctionName::Maximum => {
                     if let Some(arg) = args.first() {
                         if let Some(col_type) = infer_column_type_from_plan(arg, input) {
                             return Some(col_type);
@@ -64,8 +63,8 @@ fn infer_aggregate_type_with_input_plan(agg_expr: &Expr, input: &PlanNode) -> Op
 
                     Some(DataType::Float64)
                 }
-                "STRING_AGG" | "ARRAY_AGG" => Some(DataType::String),
-                "APPROX_QUANTILES" => Some(DataType::Array(Box::new(DataType::Float64))),
+                FunctionName::StringAgg | FunctionName::ArrayAgg => Some(DataType::String),
+                FunctionName::ApproxQuantiles => Some(DataType::Array(Box::new(DataType::Float64))),
                 _ => None,
             }
         }
@@ -109,9 +108,9 @@ fn find_column_type_in_plan(col_name: &str, plan: &PlanNode) -> Option<DataType>
 fn infer_expr_type_basic(expr: &Expr) -> Option<DataType> {
     match expr {
         Expr::Literal(lit) => Some(literal_type(lit)),
-        Expr::Function { name, .. } => function_return_type(name.as_str()),
+        Expr::Function { name, .. } => function_return_type(name),
         Expr::Aggregate { name, args, .. } => {
-            aggregate_return_type_with_input(name.as_str(), args.first())
+            aggregate_return_type_with_input(name, args.first())
         }
         Expr::Cast { data_type, .. } | Expr::TryCast { data_type, .. } => {
             Some(cast_data_type_to_data_type(data_type))
@@ -149,29 +148,67 @@ fn literal_type(lit: &yachtsql_optimizer::expr::LiteralValue) -> DataType {
     }
 }
 
-fn function_return_type(name: &str) -> Option<DataType> {
-    match name.to_uppercase().as_str() {
-        "CURRENT_DATE" => Some(DataType::Date),
-        "CURRENT_TIMESTAMP" => Some(DataType::Timestamp),
-        "LENGTH" | "CHAR_LENGTH" | "OCTET_LENGTH" => Some(DataType::Int64),
-        "UPPER" | "LOWER" | "TRIM" | "LTRIM" | "RTRIM" => Some(DataType::String),
+fn function_return_type(name: &yachtsql_ir::FunctionName) -> Option<DataType> {
+    use yachtsql_ir::FunctionName;
+    match name {
+        FunctionName::CurrentDate | FunctionName::Curdate | FunctionName::Today => {
+            Some(DataType::Date)
+        }
+        FunctionName::CurrentTimestamp
+        | FunctionName::Getdate
+        | FunctionName::Sysdate
+        | FunctionName::Systimestamp
+        | FunctionName::Now => Some(DataType::Timestamp),
+        FunctionName::Length
+        | FunctionName::Len
+        | FunctionName::CharLength
+        | FunctionName::CharacterLength
+        | FunctionName::OctetLength
+        | FunctionName::Lengthb => Some(DataType::Int64),
+        FunctionName::Upper
+        | FunctionName::Ucase
+        | FunctionName::Lower
+        | FunctionName::Lcase
+        | FunctionName::Trim
+        | FunctionName::Btrim
+        | FunctionName::Ltrim
+        | FunctionName::TrimLeft
+        | FunctionName::Rtrim
+        | FunctionName::TrimRight => Some(DataType::String),
         _ => None,
     }
 }
 
-fn aggregate_return_type(name: &str) -> Option<DataType> {
-    match name.to_uppercase().as_str() {
-        "COUNT" => Some(DataType::Int64),
-        "AVG" | "SUM" | "MIN" | "MAX" => Some(DataType::Float64),
-        "STRING_AGG" | "ARRAY_AGG" => Some(DataType::String),
+fn aggregate_return_type(name: &yachtsql_ir::FunctionName) -> Option<DataType> {
+    use yachtsql_ir::FunctionName;
+    match name {
+        FunctionName::Count => Some(DataType::Int64),
+        FunctionName::Avg
+        | FunctionName::Average
+        | FunctionName::Sum
+        | FunctionName::Min
+        | FunctionName::Minimum
+        | FunctionName::Max
+        | FunctionName::Maximum => Some(DataType::Float64),
+        FunctionName::StringAgg | FunctionName::ArrayAgg => Some(DataType::String),
         _ => None,
     }
 }
 
-fn aggregate_return_type_with_input(name: &str, input: Option<&Expr>) -> Option<DataType> {
-    match name.to_uppercase().as_str() {
-        "COUNT" => Some(DataType::Int64),
-        "AVG" | "SUM" | "MIN" | "MAX" => {
+fn aggregate_return_type_with_input(
+    name: &yachtsql_ir::FunctionName,
+    input: Option<&Expr>,
+) -> Option<DataType> {
+    use yachtsql_ir::FunctionName;
+    match name {
+        FunctionName::Count => Some(DataType::Int64),
+        FunctionName::Avg
+        | FunctionName::Average
+        | FunctionName::Sum
+        | FunctionName::Min
+        | FunctionName::Minimum
+        | FunctionName::Max
+        | FunctionName::Maximum => {
             if let Some(input_expr) = input {
                 if let Some(input_type) = infer_input_column_type(input_expr) {
                     return match input_type {
@@ -184,8 +221,8 @@ fn aggregate_return_type_with_input(name: &str, input: Option<&Expr>) -> Option<
 
             Some(DataType::Float64)
         }
-        "STRING_AGG" | "ARRAY_AGG" => Some(DataType::String),
-        "APPROX_QUANTILES" => Some(DataType::Array(Box::new(DataType::Float64))),
+        FunctionName::StringAgg | FunctionName::ArrayAgg => Some(DataType::String),
+        FunctionName::ApproxQuantiles => Some(DataType::Array(Box::new(DataType::Float64))),
         _ => None,
     }
 }
@@ -201,7 +238,7 @@ fn infer_input_column_type(expr: &Expr) -> Option<DataType> {
         Expr::Column { .. } => None,
 
         Expr::Function { name, args } => {
-            if let Some(ret_type) = function_return_type(name.as_str()) {
+            if let Some(ret_type) = function_return_type(name) {
                 return Some(ret_type);
             }
 

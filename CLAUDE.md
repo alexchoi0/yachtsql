@@ -13,6 +13,8 @@
 
 5. Avoid nested if statements.
 
-6. Use `match` on enum and tuple types. Use `if` on boolean type.
+6. Prefer `match` on enum and tuple types.
 
 7. Always use panic! where the invariants fail for easy debugging.
+
+8. Avoid writing nested if/else beyond two layers deep.

@@ -3,13 +3,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone)]
 pub struct ExtensionMetadata {
     pub name: String,
-
     pub description: String,
-
     pub version: String,
-
     pub functions: Vec<String>,
-
     pub types: Vec<String>,
 }
 
@@ -43,7 +39,6 @@ impl ExtensionMetadata {
 #[derive(Debug, Clone)]
 pub struct ExtensionRegistry {
     installed: HashSet<String>,
-
     available: HashMap<String, ExtensionMetadata>,
 }
 

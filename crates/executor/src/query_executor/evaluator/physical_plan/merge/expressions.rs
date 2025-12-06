@@ -146,7 +146,9 @@ pub(super) fn evaluate_expr_row(expr: &Expr, row: &Row, schema: &Schema) -> Resu
             Ok(ProjectionWithExprExec::try_cast_value(value, data_type))
         }
         Expr::Function { name, args, .. } => {
-            if name.as_str().eq_ignore_ascii_case("CURRENT_TIMESTAMP") && args.is_empty() {
+            use yachtsql_ir::FunctionName;
+            if matches!(name, FunctionName::CurrentTimestamp | FunctionName::Now) && args.is_empty()
+            {
                 use chrono::Utc;
                 let now = Utc::now();
                 Ok(Value::timestamp(now))

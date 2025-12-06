@@ -55,58 +55,68 @@ impl ProjectionWithExprExec {
         occurrence_index: usize,
         dialect: crate::DialectType,
     ) -> Result<Value> {
-        match expr {
-            Expr::Column { name, table } => {
-                if let Some(table_name) = table {
-                    if batch.schema().field_index(name).is_some() {
-                        let col_idx =
-                            Self::find_column_by_occurrence(batch.schema(), name, occurrence_index)?;
-                        let column = batch
-                            .column(col_idx)
-                            .ok_or_else(|| Error::column_not_found(name.clone()))?;
-                        column.get(row_idx)
-                    } else if let Some(col_idx) = batch.schema().field_index(table_name) {
-                        let field = &batch.schema().fields()[col_idx];
-                        if matches!(field.data_type, yachtsql_core::types::DataType::Struct(_) | yachtsql_core::types::DataType::Custom(_)) {
-                            let struct_value = batch
-                                .column(col_idx)
-                                .ok_or_else(|| Error::column_not_found(table_name.clone()))?
-                                .get(row_idx)?;
-                            if let Some(map) = struct_value.as_struct() {
-                                if let Some(value) = map.get(name) {
-                                    Ok(value.clone())
-                                } else if let Some((_, value)) = map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
-                                    Ok(value.clone())
-                                } else {
-                                    Err(Error::column_not_found(format!("{}.{}", table_name, name)))
-                                }
-                            } else if struct_value.is_null() {
-                                Ok(Value::null())
-                            } else {
-                                Err(Error::column_not_found(name.clone()))
-                            }
-                        } else {
-                            Err(Error::column_not_found(name.clone()))
-                        }
-                    } else {
-                        let col_idx =
-                            Self::find_column_by_occurrence(batch.schema(), name, occurrence_index)?;
-                        let column = batch
-                            .column(col_idx)
-                            .ok_or_else(|| Error::column_not_found(name.clone()))?;
-                        column.get(row_idx)
-                    }
-                } else {
-                    let col_idx =
-                        Self::find_column_by_occurrence(batch.schema(), name, occurrence_index)?;
-                    let column = batch
-                        .column(col_idx)
-                        .ok_or_else(|| Error::column_not_found(name.clone()))?;
-                    column.get(row_idx)
-                }
-            }
-            _ => Self::evaluate_expr_internal(expr, batch, row_idx, dialect),
+        let Expr::Column { name, table } = expr else {
+            return Self::evaluate_expr_internal(expr, batch, row_idx, dialect);
+        };
+
+        let Some(table_name) = table else {
+            return Self::get_column_by_occurrence(batch, name, row_idx, occurrence_index);
+        };
+
+        let schema = batch.schema();
+
+        if schema.field_index(name).is_some() {
+            return Self::get_column_by_occurrence(batch, name, row_idx, occurrence_index);
         }
+
+        let Some(col_idx) = schema.field_index(table_name) else {
+            return Self::get_column_by_occurrence(batch, name, row_idx, occurrence_index);
+        };
+
+        let field = &schema.fields()[col_idx];
+        let is_struct = matches!(
+            field.data_type,
+            yachtsql_core::types::DataType::Struct(_) | yachtsql_core::types::DataType::Custom(_)
+        );
+        if !is_struct {
+            return Err(Error::column_not_found(name.clone()));
+        }
+
+        let struct_value = batch
+            .column(col_idx)
+            .ok_or_else(|| Error::column_not_found(table_name.clone()))?
+            .get(row_idx)?;
+
+        if struct_value.is_null() {
+            return Ok(Value::null());
+        }
+
+        let Some(map) = struct_value.as_struct() else {
+            return Err(Error::column_not_found(name.clone()));
+        };
+
+        if let Some(value) = map.get(name) {
+            return Ok(value.clone());
+        }
+
+        if let Some((_, value)) = map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+            return Ok(value.clone());
+        }
+
+        Err(Error::column_not_found(format!("{}.{}", table_name, name)))
+    }
+
+    fn get_column_by_occurrence(
+        batch: &RecordBatch,
+        name: &str,
+        row_idx: usize,
+        occurrence_index: usize,
+    ) -> Result<Value> {
+        let col_idx = Self::find_column_by_occurrence(batch.schema(), name, occurrence_index)?;
+        batch
+            .column(col_idx)
+            .ok_or_else(|| Error::column_not_found(name.to_string()))?
+            .get(row_idx)
     }
 
     pub(crate) fn evaluate_expr(expr: &Expr, batch: &RecordBatch, row_idx: usize) -> Result<Value> {
@@ -121,43 +131,59 @@ impl ProjectionWithExprExec {
     ) -> Result<Value> {
         match expr {
             Expr::Column { name, table } => {
-                if let Some(table_name) = table {
-                    if let Some(col_idx) = batch.schema().field_index_qualified(name, Some(table_name)) {
-                        let col = batch
-                            .column(col_idx)
-                            .ok_or_else(|| Error::column_not_found(format!("{}.{}", table_name, name)))?;
-                        col.get(row_idx)
-                    } else if batch.schema().field_index(name).is_some() {
-                        Self::evaluate_column(name, batch, row_idx)
-                    } else if let Some(col_idx) = batch.schema().field_index(table_name) {
-                        let field = &batch.schema().fields()[col_idx];
-                        if matches!(field.data_type, yachtsql_core::types::DataType::Struct(_) | yachtsql_core::types::DataType::Custom(_)) {
-                            let struct_value = batch
-                                .column(col_idx)
-                                .ok_or_else(|| Error::column_not_found(table_name.clone()))?
-                                .get(row_idx)?;
-                            if let Some(map) = struct_value.as_struct() {
-                                if let Some(value) = map.get(name) {
-                                    Ok(value.clone())
-                                } else if let Some((_, value)) = map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
-                                    Ok(value.clone())
-                                } else {
-                                    Err(Error::column_not_found(format!("{}.{}", table_name, name)))
-                                }
-                            } else if struct_value.is_null() {
-                                Ok(Value::null())
-                            } else {
-                                Err(Error::column_not_found(name.clone()))
-                            }
-                        } else {
-                            Err(Error::column_not_found(name.clone()))
-                        }
-                    } else {
-                        Self::evaluate_column(name, batch, row_idx)
-                    }
-                } else {
-                    Self::evaluate_column(name, batch, row_idx)
+                let Some(table_name) = table else {
+                    return Self::evaluate_column(name, batch, row_idx);
+                };
+
+                let schema = batch.schema();
+
+                if let Some(col_idx) = schema.field_index_qualified(name, Some(table_name)) {
+                    return batch
+                        .column(col_idx)
+                        .ok_or_else(|| Error::column_not_found(format!("{}.{}", table_name, name)))?
+                        .get(row_idx);
                 }
+
+                if schema.field_index(name).is_some() {
+                    return Self::evaluate_column(name, batch, row_idx);
+                }
+
+                let Some(col_idx) = schema.field_index(table_name) else {
+                    return Self::evaluate_column(name, batch, row_idx);
+                };
+
+                let field = &schema.fields()[col_idx];
+                let is_struct = matches!(
+                    field.data_type,
+                    yachtsql_core::types::DataType::Struct(_)
+                        | yachtsql_core::types::DataType::Custom(_)
+                );
+                if !is_struct {
+                    return Err(Error::column_not_found(name.clone()));
+                }
+
+                let struct_value = batch
+                    .column(col_idx)
+                    .ok_or_else(|| Error::column_not_found(table_name.clone()))?
+                    .get(row_idx)?;
+
+                if struct_value.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let Some(map) = struct_value.as_struct() else {
+                    return Err(Error::column_not_found(name.clone()));
+                };
+
+                if let Some(value) = map.get(name) {
+                    return Ok(value.clone());
+                }
+
+                if let Some((_, value)) = map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+                    return Ok(value.clone());
+                }
+
+                Err(Error::column_not_found(format!("{}.{}", table_name, name)))
             }
 
             Expr::Literal(lit) => Self::evaluate_literal(lit, batch, row_idx),
@@ -198,49 +224,41 @@ impl ProjectionWithExprExec {
             }
 
             Expr::Function { name, args } => {
-                let func_name = name.as_str();
-
-                Self::evaluate_function_by_category(func_name, args, batch, row_idx)
+                Self::evaluate_function_by_category(name, args, batch, row_idx)
             }
 
-            Expr::Aggregate {
-                name,
-                args,
-                distinct: _,
-                ..
-            } => {
-                let agg_name = format!(
-                    "{}({})",
-                    name.as_str(),
-                    args.iter()
-                        .map(|a| match a {
-                            Expr::Column { name, .. } => name.clone(),
-                            Expr::Literal(lit) => format!("{:?}", lit),
-                            _ => "*".to_string(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
+            Expr::Aggregate { name, args, .. } => {
+                let func_name = name.as_str();
+                let fields = batch.schema().fields();
 
-                if let Some(col_idx) = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .position(|f| f.name == agg_name || f.name == name.as_str())
-                {
-                    batch
-                        .column(col_idx)
-                        .ok_or_else(|| Error::column_not_found(&agg_name))?
-                        .get(row_idx)
-                } else {
-                    if args.len() == 1 {
-                        Self::compute_aggregate_over_batch(name.as_str(), &args[0], batch)
-                    } else {
-                        Err(Error::unsupported_feature(format!(
-                            "Aggregate expression {} requires pre-computed values",
-                            agg_name
-                        )))
+                let col_idx = fields.iter().position(|f| f.name == func_name).or_else(|| {
+                    let full_name = format!(
+                        "{}({})",
+                        func_name,
+                        args.iter()
+                            .map(|a| match a {
+                                Expr::Column { name, .. } => name.clone(),
+                                Expr::Literal(lit) => format!("{:?}", lit),
+                                _ => "*".to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    fields.iter().position(|f| f.name == full_name)
+                });
+
+                match col_idx {
+                    Some(idx) => batch
+                        .column(idx)
+                        .ok_or_else(|| Error::column_not_found(func_name))?
+                        .get(row_idx),
+                    None if args.len() == 1 => {
+                        Self::compute_aggregate_over_batch(name, &args[0], batch)
                     }
+                    None => Err(Error::unsupported_feature(format!(
+                        "Aggregate expression {} requires pre-computed values",
+                        func_name
+                    ))),
                 }
             }
 
@@ -273,56 +291,14 @@ impl ProjectionWithExprExec {
                 let val = Self::evaluate_expr(expr, batch, row_idx)?;
                 let low_val = Self::evaluate_expr(low, batch, row_idx)?;
                 let high_val = Self::evaluate_expr(high, batch, row_idx)?;
-                let enum_labels = Self::get_enum_labels_for_expr(expr, batch.schema());
 
-                let result = if val.is_null() || low_val.is_null() || high_val.is_null() {
-                    Value::null()
-                } else if let (Some(v), Some(l), Some(h)) =
-                    (val.as_i64(), low_val.as_i64(), high_val.as_i64())
-                {
-                    Value::bool_val(v >= l && v <= h)
-                } else if let (Some(v), Some(l), Some(h)) =
-                    (val.as_f64(), low_val.as_f64(), high_val.as_f64())
-                {
-                    Value::bool_val(v >= l && v <= h)
-                } else if let (Some(v), Some(l), Some(h)) =
-                    (val.as_str(), low_val.as_str(), high_val.as_str())
-                {
-                    if let Some(labels) = &enum_labels {
-                        let v_pos = labels.iter().position(|lbl| lbl == v);
-                        let l_pos = labels.iter().position(|lbl| lbl == l);
-                        let h_pos = labels.iter().position(|lbl| lbl == h);
-                        if let (Some(v_idx), Some(l_idx), Some(h_idx)) = (v_pos, l_pos, h_pos) {
-                            Value::bool_val(v_idx >= l_idx && v_idx <= h_idx)
-                        } else {
-                            Value::bool_val(v >= l && v <= h)
-                        }
-                    } else {
-                        Value::bool_val(v >= l && v <= h)
-                    }
-                } else if let (Some(v), Some(l), Some(h)) =
-                    (val.as_date(), low_val.as_date(), high_val.as_date())
-                {
-                    Value::bool_val(v >= l && v <= h)
-                } else if let (Some(v), Some(l), Some(h)) = (
-                    val.as_timestamp(),
-                    low_val.as_timestamp(),
-                    high_val.as_timestamp(),
-                ) {
-                    Value::bool_val(v >= l && v <= h)
-                } else {
-                    Value::null()
+                let in_range = Self::check_between(&val, &low_val, &high_val, batch.schema(), expr);
+                let result = match (in_range, *negated) {
+                    (None, _) => Value::null(),
+                    (Some(b), false) => Value::bool_val(b),
+                    (Some(b), true) => Value::bool_val(!b),
                 };
-
-                Ok(if *negated {
-                    if let Some(b) = result.as_bool() {
-                        Value::bool_val(!b)
-                    } else {
-                        result
-                    }
-                } else {
-                    result
-                })
+                Ok(result)
             }
             Expr::InList {
                 expr,
@@ -346,25 +322,18 @@ impl ProjectionWithExprExec {
                     }
                 }
 
-                let result = if found {
-                    Value::bool_val(true)
-                } else if has_null {
-                    Value::null()
-                } else {
-                    Value::bool_val(false)
+                let in_list = match (found, has_null) {
+                    (true, _) => Some(true),
+                    (false, true) => None,
+                    (false, false) => Some(false),
                 };
 
-                Ok(if *negated {
-                    if let Some(b) = result.as_bool() {
-                        Value::bool_val(!b)
-                    } else if result.is_null() {
-                        Value::null()
-                    } else {
-                        result
-                    }
-                } else {
-                    result
-                })
+                let result = match (in_list, *negated) {
+                    (None, _) => Value::null(),
+                    (Some(b), false) => Value::bool_val(b),
+                    (Some(b), true) => Value::bool_val(!b),
+                };
+                Ok(result)
             }
 
             Expr::Subquery { plan } => Self::evaluate_scalar_subquery_expr(plan),
@@ -428,62 +397,93 @@ impl ProjectionWithExprExec {
     }
 
     fn evaluate_function_by_category(
-        func_name: &str,
+        name: &yachtsql_ir::FunctionName,
         args: &[Expr],
         batch: &RecordBatch,
         row_idx: usize,
     ) -> Result<Value> {
+        use yachtsql_ir::FunctionName;
+
+        let func_name = name.as_str();
+
         if matches!(
-            func_name,
-            "CONCAT"
-                | "TRIM"
-                | "TRIM_CHARS"
-                | "LTRIM"
+            name,
+            FunctionName::Concat
+                | FunctionName::Concatenate
+                | FunctionName::Trim
+                | FunctionName::Btrim
+                | FunctionName::Ltrim
+                | FunctionName::TrimLeft
+                | FunctionName::Rtrim
+                | FunctionName::TrimRight
+                | FunctionName::Upper
+                | FunctionName::Ucase
+                | FunctionName::Lower
+                | FunctionName::Lcase
+                | FunctionName::Replace
+                | FunctionName::StrReplace
+                | FunctionName::Substr
+                | FunctionName::Substring
+                | FunctionName::Mid
+                | FunctionName::Length
+                | FunctionName::Len
+                | FunctionName::CharLength
+                | FunctionName::CharacterLength
+                | FunctionName::Split
+                | FunctionName::SplitPart
+                | FunctionName::StringSplit
+                | FunctionName::Position
+                | FunctionName::Strpos
+                | FunctionName::Instr
+                | FunctionName::Locate
+                | FunctionName::Left
+                | FunctionName::Right
+                | FunctionName::Repeat
+                | FunctionName::Replicate
+                | FunctionName::Reverse
+                | FunctionName::Strrev
+                | FunctionName::Lpad
+                | FunctionName::LeftPad
+                | FunctionName::Rpad
+                | FunctionName::RightPad
+                | FunctionName::Ascii
+                | FunctionName::Ord
+                | FunctionName::Chr
+                | FunctionName::Char
+                | FunctionName::Initcap
+                | FunctionName::Proper
+                | FunctionName::Translate
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "TRIM_CHARS"
                 | "LTRIM_CHARS"
-                | "RTRIM"
                 | "RTRIM_CHARS"
-                | "UPPER"
-                | "LOWER"
-                | "REPLACE"
-                | "SUBSTR"
-                | "SUBSTRING"
-                | "LENGTH"
-                | "CHAR_LENGTH"
-                | "CHARACTER_LENGTH"
-                | "SPLIT"
-                | "SPLIT_PART"
                 | "STRING_TO_ARRAY"
                 | "STARTS_WITH"
                 | "ENDS_WITH"
                 | "REGEXP_CONTAINS"
                 | "REGEXP_REPLACE"
                 | "REGEXP_EXTRACT"
-                | "POSITION"
-                | "STRPOS"
-                | "LEFT"
-                | "RIGHT"
-                | "REPEAT"
-                | "REVERSE"
-                | "LPAD"
-                | "RPAD"
-                | "ASCII"
-                | "CHR"
-                | "INITCAP"
-                | "TRANSLATE"
                 | "FORMAT"
                 | "QUOTE_IDENT"
                 | "QUOTE_LITERAL"
                 | "CASEFOLD"
+            )
         ) {
             return Self::evaluate_string_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "ARRAY_LENGTH"
-                | "ARRAY_CONCAT"
-                | "ARRAY_CAT"
-                | "ARRAY_REVERSE"
+            name,
+            FunctionName::ArrayLength
+                | FunctionName::Cardinality
+                | FunctionName::ArrayConcat
+                | FunctionName::ArrayCat
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "ARRAY_REVERSE"
                 | "ARRAY_APPEND"
                 | "ARRAY_PREPEND"
                 | "ARRAY_POSITION"
@@ -495,40 +495,60 @@ impl ProjectionWithExprExec {
                 | "GENERATE_ARRAY"
                 | "GENERATE_DATE_ARRAY"
                 | "GENERATE_TIMESTAMP_ARRAY"
+            )
         ) {
             return Self::evaluate_array_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "SIGN"
-                | "ABS"
-                | "CEIL"
-                | "CEILING"
-                | "FLOOR"
-                | "ROUND"
-                | "TRUNC"
-                | "TRUNCATE"
-                | "MOD"
-                | "POWER"
-                | "POW"
-                | "SQRT"
-                | "EXP"
-                | "LN"
-                | "LOG"
-                | "LOG10"
-                | "SIN"
-                | "COS"
-                | "TAN"
-                | "ASIN"
-                | "ACOS"
-                | "ATAN"
-                | "ATAN2"
-                | "DEGREES"
+            name,
+            FunctionName::Sign
+                | FunctionName::Signum
+                | FunctionName::Abs
+                | FunctionName::Absolute
+                | FunctionName::Ceil
+                | FunctionName::Ceiling
+                | FunctionName::Floor
+                | FunctionName::Round
+                | FunctionName::Rnd
+                | FunctionName::Trunc
+                | FunctionName::Truncate
+                | FunctionName::Mod
+                | FunctionName::Modulo
+                | FunctionName::Power
+                | FunctionName::Pow
+                | FunctionName::Sqrt
+                | FunctionName::Sqr
+                | FunctionName::Exp
+                | FunctionName::Exponent
+                | FunctionName::Ln
+                | FunctionName::Loge
+                | FunctionName::Log
+                | FunctionName::Logarithm
+                | FunctionName::Log10
+                | FunctionName::Log2
+                | FunctionName::Sin
+                | FunctionName::Sine
+                | FunctionName::Cos
+                | FunctionName::Cosine
+                | FunctionName::Tan
+                | FunctionName::Tangent
+                | FunctionName::Asin
+                | FunctionName::Arcsine
+                | FunctionName::Acos
+                | FunctionName::Arccosine
+                | FunctionName::Atan
+                | FunctionName::Arctangent
+                | FunctionName::Atan2
+                | FunctionName::Arctangent2
+                | FunctionName::Pi
+                | FunctionName::Random
+                | FunctionName::Rand
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "DEGREES"
                 | "RADIANS"
-                | "PI"
-                | "RANDOM"
-                | "RAND"
                 | "SAFE_DIVIDE"
                 | "SAFE_MULTIPLY"
                 | "SAFE_ADD"
@@ -536,32 +556,54 @@ impl ProjectionWithExprExec {
                 | "SAFE_NEGATE"
                 | "GAMMA"
                 | "LGAMMA"
+            )
         ) {
             return Self::evaluate_math_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "CURRENT_DATE"
-                | "CURRENT_TIMESTAMP"
-                | "NOW"
-                | "CURRENT_TIME"
-                | "DATE_ADD"
-                | "DATE_SUB"
-                | "DATE_DIFF"
-                | "EXTRACT"
-                | "DATE_PART"
-                | "DATE_TRUNC"
-                | "TIMESTAMP_TRUNC"
+            name,
+            FunctionName::CurrentDate
+                | FunctionName::Curdate
+                | FunctionName::Today
+                | FunctionName::CurrentTimestamp
+                | FunctionName::Getdate
+                | FunctionName::Sysdate
+                | FunctionName::Systimestamp
+                | FunctionName::Now
+                | FunctionName::CurrentTime
+                | FunctionName::Curtime
+                | FunctionName::DateAdd
+                | FunctionName::Dateadd
+                | FunctionName::Adddate
+                | FunctionName::DateSub
+                | FunctionName::Datesub
+                | FunctionName::Subdate
+                | FunctionName::DateDiff
+                | FunctionName::Datediff
+                | FunctionName::Extract
+                | FunctionName::DatePart
+                | FunctionName::Datepart
+                | FunctionName::DateTrunc
+                | FunctionName::TruncDate
+                | FunctionName::FormatTimestamp
+                | FunctionName::DateFormat
+                | FunctionName::StrToDate
+                | FunctionName::ParseDatetime
+                | FunctionName::Age
+                | FunctionName::Date
+                | FunctionName::CastDate
+                | FunctionName::ToDate
+                | FunctionName::Timestampdiff
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "TIMESTAMP_TRUNC"
                 | "FORMAT_DATE"
-                | "FORMAT_TIMESTAMP"
                 | "PARSE_DATE"
                 | "PARSE_TIMESTAMP"
-                | "STR_TO_DATE"
                 | "MAKE_DATE"
                 | "MAKE_TIMESTAMP"
-                | "AGE"
-                | "DATE"
                 | "TIMESTAMP_DIFF"
                 | "INTERVAL_LITERAL"
                 | "INTERVAL_PARSE"
@@ -580,70 +622,92 @@ impl ProjectionWithExprExec {
                 | "WEEKDAY"
                 | "LAST_DAY"
                 | "AT_TIME_ZONE"
+            )
         ) {
             return Self::evaluate_datetime_function(func_name, args, batch, row_idx);
         }
 
-        if func_name.starts_with("JSON")
-            || func_name.starts_with("IS_JSON")
-            || func_name.starts_with("IS_NOT_JSON")
         {
-            return Self::evaluate_json_function(func_name, args, batch, row_idx);
+            let s = name.as_str();
+            if s.starts_with("JSON") || s.starts_with("IS_JSON") || s.starts_with("IS_NOT_JSON") {
+                return Self::evaluate_json_function(func_name, args, batch, row_idx);
+            }
         }
 
         if matches!(
-            func_name,
-            "MD5"
-                | "SHA1"
-                | "SHA256"
+            name,
+            FunctionName::Md5
+                | FunctionName::Md5Hash
+                | FunctionName::Sha256
+                | FunctionName::Sha2
+                | FunctionName::Encode
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "SHA1"
                 | "SHA512"
                 | "FARM_FINGERPRINT"
                 | "TO_HEX"
                 | "FROM_HEX"
                 | "GEN_RANDOM_BYTES"
                 | "DIGEST"
-                | "ENCODE"
                 | "CRC32"
                 | "CRC32C"
-        ) || func_name.starts_with("NET.")
+            )
+        ) || name.as_str().starts_with("NET.")
         {
             return Self::evaluate_crypto_hash_network_function(func_name, args, batch, row_idx);
         }
 
-        if func_name.starts_with("AEAD.")
-            || func_name.starts_with("DETERMINISTIC_")
-            || func_name.starts_with("KEYS.")
         {
-            return Self::evaluate_encryption_function(func_name, args, batch, row_idx);
+            let s = name.as_str();
+            if s.starts_with("AEAD.") || s.starts_with("DETERMINISTIC_") || s.starts_with("KEYS.") {
+                return Self::evaluate_encryption_function(func_name, args, batch, row_idx);
+            }
         }
 
         if matches!(
-            func_name,
-            "COALESCE" | "IFNULL" | "NULLIF" | "IF" | "IIF" | "DECODE" | "GREATEST" | "LEAST"
+            name,
+            FunctionName::Coalesce
+                | FunctionName::Ifnull
+                | FunctionName::Nvl
+                | FunctionName::Isnull
+                | FunctionName::Nullif
+                | FunctionName::If
+                | FunctionName::Iif
+                | FunctionName::Decode
+                | FunctionName::Greatest
+                | FunctionName::MaxValue
+                | FunctionName::Least
+                | FunctionName::MinValue
         ) {
             return Self::evaluate_conditional_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "GENERATE_UUID"
-                | "GENERATE_UUID_ARRAY"
-                | "GEN_RANDOM_UUID"
-                | "UUID_GENERATE_V4"
-                | "UUID_GENERATE_V1"
-                | "UUIDV4"
-                | "UUIDV7"
+            name,
+            FunctionName::GenerateUuid
+                | FunctionName::Uuid
+                | FunctionName::GenRandomUuid
+                | FunctionName::Newid
+                | FunctionName::UuidGenerateV4
+        ) || matches!(
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "GENERATE_UUID_ARRAY" | "UUID_GENERATE_V1" | "UUIDV4" | "UUIDV7"
+            )
         ) {
             return Self::evaluate_generator_function(func_name, args, batch, row_idx);
         }
 
-        if matches!(func_name, "TO_NUMBER" | "TO_CHAR") {
+        if matches!(name, FunctionName::ToChar) || matches!(name, FunctionName::Custom(s) if s == "TO_NUMBER") {
             return Self::evaluate_conversion_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "POINT"
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "POINT"
                 | "BOX"
                 | "CIRCLE"
                 | "AREA"
@@ -656,13 +720,15 @@ impl ProjectionWithExprExec {
                 | "CONTAINS"
                 | "CONTAINED_BY"
                 | "OVERLAPS"
+            )
         ) {
             return Self::evaluate_geometric_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "TO_TSVECTOR"
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "TO_TSVECTOR"
                 | "TO_TSQUERY"
                 | "PLAINTO_TSQUERY"
                 | "PHRASETO_TSQUERY"
@@ -682,17 +748,19 @@ impl ProjectionWithExprExec {
                 | "TSQUERY_AND"
                 | "TSQUERY_OR"
                 | "TSQUERY_NOT"
+            )
         ) {
             return Self::evaluate_fulltext_function(func_name, args, batch, row_idx);
         }
 
-        if func_name.starts_with("YACHTSQL.") {
+        if name.as_str().starts_with("YACHTSQL.") {
             return Self::evaluate_system_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
-            func_name,
-            "HSTORE_EXISTS"
+            name,
+            FunctionName::Custom(s) if matches!(s.as_str(),
+                "HSTORE_EXISTS"
                 | "HSTORE_EXISTS_ALL"
                 | "HSTORE_EXISTS_ANY"
                 | "EXIST"
@@ -721,6 +789,7 @@ impl ProjectionWithExprExec {
                 | "HSTORE"
                 | "HSTORE_GET"
                 | "HSTORE_GET_VALUES"
+            )
         ) {
             return Self::evaluate_hstore_function(func_name, args, batch, row_idx);
         }
@@ -732,14 +801,16 @@ impl ProjectionWithExprExec {
     }
 
     fn compute_aggregate_over_batch(
-        agg_name: &str,
+        agg_name: &yachtsql_ir::FunctionName,
         arg: &Expr,
         batch: &RecordBatch,
     ) -> Result<Value> {
+        use yachtsql_ir::FunctionName;
+
         let num_rows = batch.num_rows();
         if num_rows == 0 {
-            return Ok(match agg_name.to_uppercase().as_str() {
-                "COUNT" => Value::int64(0),
+            return Ok(match agg_name {
+                FunctionName::Count => Value::int64(0),
                 _ => Value::null(),
             });
         }
@@ -750,12 +821,12 @@ impl ProjectionWithExprExec {
             values.push(val);
         }
 
-        match agg_name.to_uppercase().as_str() {
-            "COUNT" => {
+        match agg_name {
+            FunctionName::Count => {
                 let count = values.iter().filter(|v| !v.is_null()).count();
                 Ok(Value::int64(count as i64))
             }
-            "SUM" => {
+            FunctionName::Sum => {
                 let mut sum_int: i64 = 0;
                 let mut sum_float: f64 = 0.0;
                 let mut has_float = false;
@@ -782,7 +853,7 @@ impl ProjectionWithExprExec {
                     Ok(Value::int64(sum_int))
                 }
             }
-            "AVG" => {
+            FunctionName::Avg | FunctionName::Average => {
                 let mut sum: f64 = 0.0;
                 let mut count: usize = 0;
 
@@ -804,7 +875,7 @@ impl ProjectionWithExprExec {
                     Ok(Value::float64(sum / count as f64))
                 }
             }
-            "MIN" => {
+            FunctionName::Min | FunctionName::Minimum => {
                 let mut min_val: Option<Value> = None;
                 for v in values {
                     if !v.is_null() {
@@ -823,7 +894,7 @@ impl ProjectionWithExprExec {
                 }
                 Ok(min_val.unwrap_or_else(Value::null))
             }
-            "MAX" => {
+            FunctionName::Max | FunctionName::Maximum => {
                 let mut max_val: Option<Value> = None;
                 for v in values {
                     if !v.is_null() {
@@ -842,13 +913,22 @@ impl ProjectionWithExprExec {
                 }
                 Ok(max_val.unwrap_or_else(Value::null))
             }
-            "ARRAY_AGG" => {
+            FunctionName::ArrayAgg => {
                 let non_null_values: Vec<Value> =
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            "UNIQ" | "UNIQ_EXACT" | "UNIQ_HLL12" | "UNIQ_COMBINED" | "UNIQ_COMBINED_64"
-            | "UNIQ_THETA_SKETCH" => {
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "UNIQ"
+                        | "UNIQ_EXACT"
+                        | "UNIQ_HLL12"
+                        | "UNIQ_COMBINED"
+                        | "UNIQ_COMBINED_64"
+                        | "UNIQ_THETA_SKETCH"
+                ) =>
+            {
                 let mut unique_values = std::collections::HashSet::new();
                 for val in &values {
                     if !val.is_null() {
@@ -858,7 +938,12 @@ impl ProjectionWithExprExec {
                 }
                 Ok(Value::int64(unique_values.len() as i64))
             }
-            "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST" => {
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST"
+                ) =>
+            {
                 let mut numeric_values: Vec<f64> = values
                     .iter()
                     .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
@@ -866,31 +951,35 @@ impl ProjectionWithExprExec {
                 if numeric_values.is_empty() {
                     Ok(Value::null())
                 } else {
-                    numeric_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    numeric_values
+                        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let median_idx = numeric_values.len() / 2;
                     Ok(Value::float64(numeric_values[median_idx]))
                 }
             }
-            "GROUP_ARRAY" => {
+            FunctionName::Custom(s) if s == "GROUP_ARRAY" => {
                 let non_null_values: Vec<Value> =
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            "ARG_MIN" | "ARGMIN" => {
-                Ok(Value::null())
-            }
-            "ARG_MAX" | "ARGMAX" => {
-                Ok(Value::null())
-            }
-            "TOP_K" | "TOPK" => {
+            FunctionName::ArgMin => Ok(Value::null()),
+            FunctionName::Custom(s) if s == "ARGMIN" => Ok(Value::null()),
+            FunctionName::ArgMax => Ok(Value::null()),
+            FunctionName::Custom(s) if s == "ARGMAX" => Ok(Value::null()),
+            FunctionName::Custom(s) if matches!(s.as_str(), "TOP_K" | "TOPK") => {
                 let non_null_values: Vec<Value> =
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            "ANY" | "ANY_LAST" | "ANY_HEAVY" => {
-                values.into_iter().find(|v| !v.is_null()).map_or(Ok(Value::null()), Ok)
-            }
-            "GROUP_UNIQ_ARRAY" => {
+            FunctionName::Any => values
+                .into_iter()
+                .find(|v| !v.is_null())
+                .map_or(Ok(Value::null()), Ok),
+            FunctionName::Custom(s) if matches!(s.as_str(), "ANY_LAST" | "ANY_HEAVY") => values
+                .into_iter()
+                .find(|v| !v.is_null())
+                .map_or(Ok(Value::null()), Ok),
+            FunctionName::Custom(s) if s == "GROUP_UNIQ_ARRAY" => {
                 let mut unique_values = std::collections::HashSet::new();
                 let mut result = Vec::new();
                 for val in values {
@@ -905,7 +994,7 @@ impl ProjectionWithExprExec {
             }
             _ => Err(Error::unsupported_feature(format!(
                 "Aggregate function {} not supported in expression context",
-                agg_name
+                agg_name.as_str()
             ))),
         }
     }
@@ -925,5 +1014,50 @@ impl ProjectionWithExprExec {
             }
             _ => None,
         }
+    }
+
+    fn check_between(
+        val: &Value,
+        low: &Value,
+        high: &Value,
+        schema: &Schema,
+        expr: &Expr,
+    ) -> Option<bool> {
+        if val.is_null() || low.is_null() || high.is_null() {
+            return None;
+        }
+
+        if let (Some(v), Some(l), Some(h)) = (val.as_i64(), low.as_i64(), high.as_i64()) {
+            return Some(v >= l && v <= h);
+        }
+
+        if let (Some(v), Some(l), Some(h)) = (val.as_f64(), low.as_f64(), high.as_f64()) {
+            return Some(v >= l && v <= h);
+        }
+
+        if let (Some(v), Some(l), Some(h)) = (val.as_str(), low.as_str(), high.as_str()) {
+            let enum_labels = Self::get_enum_labels_for_expr(expr, schema);
+            if let Some(labels) = &enum_labels {
+                let v_pos = labels.iter().position(|lbl| lbl == v);
+                let l_pos = labels.iter().position(|lbl| lbl == l);
+                let h_pos = labels.iter().position(|lbl| lbl == h);
+                if let (Some(v_idx), Some(l_idx), Some(h_idx)) = (v_pos, l_pos, h_pos) {
+                    return Some(v_idx >= l_idx && v_idx <= h_idx);
+                }
+            }
+            return Some(v >= l && v <= h);
+        }
+
+        if let (Some(v), Some(l), Some(h)) = (val.as_date(), low.as_date(), high.as_date()) {
+            return Some(v >= l && v <= h);
+        }
+
+        if let (Some(v), Some(l), Some(h)) =
+            (val.as_timestamp(), low.as_timestamp(), high.as_timestamp())
+        {
+            return Some(v >= l && v <= h);
+        }
+
+        None
     }
 }

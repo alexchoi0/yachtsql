@@ -29,19 +29,12 @@ impl Deferrable {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForeignKey {
     pub name: Option<String>,
-
     pub child_columns: Vec<String>,
-
     pub parent_table: String,
-
     pub parent_columns: Vec<String>,
-
     pub on_delete: ReferentialAction,
-
     pub on_update: ReferentialAction,
-
     pub deferrable: Option<Deferrable>,
-
     pub enforced: bool,
 }
 

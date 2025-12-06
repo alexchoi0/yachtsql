@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::Value;
@@ -49,9 +49,9 @@ impl ProjectionWithExprExec {
                 Self::is_plain_timestamp_expr(expr)
             }
             Expr::Function { name, args } => {
-                let fn_name = name.as_str().to_uppercase();
-                match fn_name.as_str() {
-                    "AT_TIME_ZONE" => false,
+                use yachtsql_ir::FunctionName;
+                match name {
+                    FunctionName::Custom(s) if s == "AT_TIME_ZONE" => false,
                     _ => args.first().is_some_and(Self::is_plain_timestamp_expr),
                 }
             }
@@ -135,10 +135,11 @@ impl ProjectionWithExprExec {
             )));
         };
 
-        let naive_local = NaiveDateTime::from_timestamp_opt(
+        let naive_local = DateTime::from_timestamp(
             naive_ts.timestamp(),
             naive_ts.timestamp_subsec_nanos(),
         )
+        .map(|dt| dt.naive_utc())
         .unwrap_or_else(|| naive_ts.naive_utc());
 
         let local_dt = match tz.from_local_datetime(&naive_local) {

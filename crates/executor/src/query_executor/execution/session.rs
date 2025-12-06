@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use yachtsql_capability::FeatureRegistry;
-use yachtsql_core::diagnostics::DiagnosticArea;
 use yachtsql_core::diagnostics::sqlstate::SqlState;
+use yachtsql_core::diagnostics::DiagnosticArea;
 use yachtsql_core::error::Error;
 use yachtsql_parser::DialectType;
 use yachtsql_storage::ExtensionRegistry;
@@ -18,11 +18,8 @@ pub struct SessionState {
     diagnostics: SessionDiagnostics,
     feature_registry: Rc<FeatureRegistry>,
     function_registry: Rc<crate::functions::FunctionRegistry>,
-
     feature_registry_snapshot: Option<Rc<FeatureRegistry>>,
-
     extension_registry: ExtensionRegistry,
-
     search_path: Vec<String>,
 }
 
