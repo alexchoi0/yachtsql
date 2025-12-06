@@ -1,6 +1,6 @@
 mod common;
 
-use common::{get_string, is_null, setup_executor};
+use common::{get_string, is_null};
 use yachtsql::{DialectType, QueryExecutor};
 
 fn create_executor() -> QueryExecutor {
@@ -430,8 +430,6 @@ mod hstore_containment {
 }
 
 mod hstore_utility_functions {
-    use common::get_i64;
-
     use super::*;
 
     #[test]

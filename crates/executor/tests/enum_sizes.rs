@@ -7,7 +7,7 @@
 use std::mem::size_of;
 
 use debug_print::debug_eprintln;
-use yachtsql::{DataType, DialectType, Error, Value};
+use yachtsql::{DataType, Error, Value};
 
 struct SizeThresholds {
     excellent: usize,

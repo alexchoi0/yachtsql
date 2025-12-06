@@ -740,6 +740,7 @@ fn compare_values(actual: f64, expected: f64, op: FilterOp) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use serde_json::json;
 

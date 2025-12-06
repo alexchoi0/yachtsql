@@ -55,7 +55,7 @@ mod to_tsvector_tests {
 
         assert_eq!(result.num_rows(), 1);
         let vector = get_string_value(&result, 0, 0).unwrap();
-        assert!(vector.is_empty() || vector == "");
+        assert!(vector.is_empty());
     }
 
     #[test]

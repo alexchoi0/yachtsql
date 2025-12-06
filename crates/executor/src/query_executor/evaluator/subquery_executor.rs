@@ -654,10 +654,8 @@ impl SubqueryExecutorImpl {
                     d.to_f64()
                 } else if let Some(i) = v.as_i64() {
                     Some(i as f64)
-                } else if let Some(f) = v.as_f64() {
-                    Some(f)
                 } else {
-                    None
+                    v.as_f64()
                 }
             })
             .collect()

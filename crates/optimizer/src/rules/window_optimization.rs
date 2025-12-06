@@ -15,13 +15,13 @@ impl WindowOptimization {
     }
 
     fn contains_windows(&self, plan: &LogicalPlan) -> bool {
-        self.has_windows_node(&plan.root)
+        Self::has_windows_node(&plan.root)
     }
 
-    fn has_windows_node(&self, node: &PlanNode) -> bool {
+    fn has_windows_node(node: &PlanNode) -> bool {
         match node {
             PlanNode::Window { .. } => true,
-            _ => node.children().iter().any(|c| self.has_windows_node(c)),
+            _ => node.children().iter().any(|c| Self::has_windows_node(c)),
         }
     }
 
@@ -146,17 +146,17 @@ impl WindowOptimization {
             .filter_map(|(_, alias)| alias.as_deref())
             .collect();
 
-        self.expr_references_columns(predicate, &window_cols)
+        Self::expr_references_columns(predicate, &window_cols)
     }
 
-    fn expr_references_columns(&self, expr: &Expr, columns: &[&str]) -> bool {
+    fn expr_references_columns(expr: &Expr, columns: &[&str]) -> bool {
         match expr {
             Expr::Column { name, .. } => columns.contains(&name.as_str()),
             Expr::BinaryOp { left, right, .. } => {
-                self.expr_references_columns(left, columns)
-                    || self.expr_references_columns(right, columns)
+                Self::expr_references_columns(left, columns)
+                    || Self::expr_references_columns(right, columns)
             }
-            Expr::UnaryOp { expr: inner, .. } => self.expr_references_columns(inner, columns),
+            Expr::UnaryOp { expr: inner, .. } => Self::expr_references_columns(inner, columns),
             _ => false,
         }
     }

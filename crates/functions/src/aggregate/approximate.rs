@@ -195,11 +195,9 @@ impl Accumulator for ApproxTopCountAccumulator {
             *count += 1;
         } else if self.counts.len() < self.k {
             self.counts.insert(key, 1);
-        } else {
-            if let Some((min_key, min_count)) = find_min_entry(&self.counts) {
-                self.counts.remove(&min_key);
-                self.counts.insert(key, min_count + 1);
-            }
+        } else if let Some((min_key, min_count)) = find_min_entry(&self.counts) {
+            self.counts.remove(&min_key);
+            self.counts.insert(key, min_count + 1);
         }
 
         Ok(())
@@ -311,11 +309,9 @@ impl Accumulator for ApproxTopSumAccumulator {
             *sum += weight_f64;
         } else if self.sums.len() < self.k {
             self.sums.insert(key, weight_f64);
-        } else {
-            if let Some((min_key, min_sum)) = find_min_entry_f64(&self.sums) {
-                self.sums.remove(&min_key);
-                self.sums.insert(key, min_sum + weight_f64);
-            }
+        } else if let Some((min_key, min_sum)) = find_min_entry_f64(&self.sums) {
+            self.sums.remove(&min_key);
+            self.sums.insert(key, min_sum + weight_f64);
         }
 
         Ok(())

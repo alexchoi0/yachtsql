@@ -270,7 +270,7 @@ impl ComplexityAnalyzer {
                         .as_ref()
                         .is_some_and(|e| Self::contains_scalar_subquery(e))
             }
-            Expr::Function { args, .. } => args.iter().any(|a| Self::contains_scalar_subquery(a)),
+            Expr::Function { args, .. } => args.iter().any(Self::contains_scalar_subquery),
             _ => false,
         }
     }

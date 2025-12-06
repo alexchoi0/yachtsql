@@ -165,7 +165,10 @@ fn test_temporal_from_to_query() {
             assert_eq!(*s, start);
             assert_eq!(*e, end);
         }
-        _ => panic!("Expected FromTo clause"),
+        TemporalClause::AsOf(_)
+        | TemporalClause::Between { .. }
+        | TemporalClause::All
+        | TemporalClause::ContainedIn { .. } => panic!("Expected FromTo clause"),
     }
 }
 

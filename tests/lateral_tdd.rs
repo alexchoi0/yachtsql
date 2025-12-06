@@ -1,7 +1,6 @@
 mod common;
 
-use common::{assert_batch_eq, build_batch};
-use yachtsql::{DialectType, QueryExecutor, Value};
+use yachtsql::{DialectType, QueryExecutor};
 
 fn create_executor() -> QueryExecutor {
     QueryExecutor::with_dialect(DialectType::PostgreSQL)

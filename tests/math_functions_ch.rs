@@ -1,4 +1,5 @@
 #![allow(clippy::approx_constant)]
+#![allow(clippy::manual_range_contains)]
 
 use yachtsql::QueryExecutor;
 use yachtsql_parser::DialectType;

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{get_i64, get_string};
+use common::get_i64;
 use yachtsql::{DialectType, QueryExecutor};
 
 fn create_executor() -> QueryExecutor {

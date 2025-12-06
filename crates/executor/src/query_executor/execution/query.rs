@@ -124,10 +124,7 @@ impl QueryExecutorTrait for QueryExecutor {
 
                     for field in schema.fields() {
                         let should_include = if has_source_tables {
-                            field
-                                .source_table
-                                .as_ref()
-                                .map_or(false, |st| st == &table_qualifier)
+                            field.source_table.as_ref() == Some(&table_qualifier)
                         } else {
                             true
                         };
@@ -503,8 +500,8 @@ impl QueryExecutor {
             for row in &all_rows {
                 let value = row
                     .get_by_name(&schema, &field.name)
-                    .map(|v| v.clone())
-                    .unwrap_or_else(|| Value::null());
+                    .cloned()
+                    .unwrap_or_else(Value::null);
                 column.push(value)?;
             }
             columns.push(column);
@@ -3378,7 +3375,7 @@ impl QueryExecutor {
                     return Err(Error::ColumnNotFound(col_name.clone()));
                 }
             } else {
-                (SortSpec::Expression(order_expr.expr.clone()), None)
+                (SortSpec::Expression(Box::new(order_expr.expr.clone())), None)
             };
 
             let is_ascending = order_expr.options.asc.unwrap_or(true);
@@ -4080,11 +4077,11 @@ impl QueryExecutor {
             {
                 let agg_key = self.aggregate_function_to_column_name(func)?;
 
-                if !having_agg_indices.contains_key(&agg_key) {
+                if let std::collections::hash_map::Entry::Vacant(e) = having_agg_indices.entry(agg_key) {
                     if let Some(agg_spec) = AggregateSpec::from_expr(expr, func_registry)? {
                         let idx = aggregate_specs.len();
                         aggregate_specs.push(agg_spec);
-                        having_agg_indices.insert(agg_key, idx);
+                        e.insert(idx);
                     }
                 }
                 Ok(())
@@ -5826,7 +5823,7 @@ impl QueryExecutor {
                 pipe_operators: Vec::new(),
             }));
 
-            let recursive_query_sql = format!("{}_{}", recursive_query.to_string(), iteration);
+            let recursive_query_sql = format!("{}_{}", recursive_query, iteration);
             debug_eprintln!(
                 "[executor::query] Executing recursive query: {}",
                 recursive_query_sql
@@ -6300,7 +6297,7 @@ fn collect_column_refs_from_expr(expr: &Expr, columns: &mut Vec<String>) {
 
 enum SortSpec {
     Column(usize),
-    Expression(Expr),
+    Expression(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

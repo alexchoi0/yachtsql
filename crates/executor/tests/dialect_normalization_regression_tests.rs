@@ -308,9 +308,7 @@ fn postgresql_array_literal_normalization_regression() {
             debug_eprintln!(
                 "[test::dialect_normalization] WARNING: :: with array literals not fully normalized (known limitation)"
             );
-        } else {
         }
-    } else {
     }
 }
 

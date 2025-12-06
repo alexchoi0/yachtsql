@@ -584,6 +584,7 @@ impl LogicalPlanBuilder {
         Ok(None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_rollup_cube_plan(
         &self,
         plan: LogicalPlan,
@@ -1101,6 +1102,7 @@ impl LogicalPlanBuilder {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn inject_order_by_columns_into_projection(
         &self,
         plan: &LogicalPlan,

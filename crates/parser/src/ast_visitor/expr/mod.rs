@@ -116,16 +116,15 @@ impl LogicalPlanBuilder {
             },
 
             ast::Expr::UnaryOp { op, expr } => {
-                if *op == ast::UnaryOperator::Minus {
-                    if let ast::Expr::Value(value) = expr.as_ref() {
-                        if let ast::Value::Number(s, _) = &value.value {
-                            if !s.contains('.') && !s.to_lowercase().contains('e') {
-                                let neg_str = format!("-{}", s);
-                                if let Ok(i) = neg_str.parse::<i64>() {
-                                    return Ok(Expr::Literal(LiteralValue::Int64(i)));
-                                }
-                            }
-                        }
+                if *op == ast::UnaryOperator::Minus
+                    && let ast::Expr::Value(value) = expr.as_ref()
+                    && let ast::Value::Number(s, _) = &value.value
+                    && !s.contains('.')
+                    && !s.to_lowercase().contains('e')
+                {
+                    let neg_str = format!("-{}", s);
+                    if let Ok(i) = neg_str.parse::<i64>() {
+                        return Ok(Expr::Literal(LiteralValue::Int64(i)));
                     }
                 }
                 let inner_expr = self.sql_expr_to_expr(expr)?;
@@ -579,13 +578,13 @@ impl LogicalPlanBuilder {
 
         if let Some(expected_type) = first_type {
             for elem in elements {
-                if let Some(elem_type) = Self::get_literal_type_category(elem) {
-                    if elem_type != expected_type {
-                        return Err(Error::invalid_query(format!(
-                            "Array elements must have compatible types, found both {:?} and {:?}",
-                            expected_type, elem_type
-                        )));
-                    }
+                if let Some(elem_type) = Self::get_literal_type_category(elem)
+                    && elem_type != expected_type
+                {
+                    return Err(Error::invalid_query(format!(
+                        "Array elements must have compatible types, found both {:?} and {:?}",
+                        expected_type, elem_type
+                    )));
                 }
             }
         }
@@ -626,21 +625,18 @@ impl LogicalPlanBuilder {
 
         use crate::DialectType;
 
-        match name_str.to_uppercase().as_str() {
-            "ROW" => {
-                let fields: Vec<StructLiteralField> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, expr)| StructLiteralField {
-                        name: format!("f{}", idx + 1),
-                        expr: expr.clone(),
-                        declared_type: None,
-                    })
-                    .collect();
+        if name_str.to_uppercase().as_str() == "ROW" {
+            let fields: Vec<StructLiteralField> = args
+                .iter()
+                .enumerate()
+                .map(|(idx, expr)| StructLiteralField {
+                    name: format!("f{}", idx + 1),
+                    expr: expr.clone(),
+                    declared_type: None,
+                })
+                .collect();
 
-                return Ok(Some(Expr::StructLiteral { fields }));
-            }
-            _ => {}
+            return Ok(Some(Expr::StructLiteral { fields }));
         }
 
         let normalized = match self.dialect {

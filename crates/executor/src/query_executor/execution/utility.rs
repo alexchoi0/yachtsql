@@ -1010,7 +1010,7 @@ pub fn perform_cast(
                     }
                     let new_fields: Vec<_> = struct_fields
                         .iter()
-                        .zip(old_values.into_iter())
+                        .zip(old_values)
                         .map(|(field, val)| (field.name.clone(), val))
                         .collect();
                     Ok(Value::struct_val(new_fields.into_iter().collect()))

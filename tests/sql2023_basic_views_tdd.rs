@@ -230,10 +230,10 @@ fn test_view_with_join() {
         let col = result.column(col_idx).unwrap();
         for row_idx in 0..result.num_rows() {
             let val = col.get(row_idx).unwrap();
-            if let Some(s) = val.as_str() {
-                if s == "Alice" || s == "Bob" || s == "Charlie" {
-                    all_crew_names.push(s.to_string());
-                }
+            if let Some(s) = val.as_str()
+                && matches!(s, "Alice" | "Bob" | "Charlie")
+            {
+                all_crew_names.push(s.to_string());
             }
         }
     }
@@ -256,10 +256,10 @@ fn test_view_with_join() {
         let col = result.column(col_idx).unwrap();
         for row_idx in 0..result.num_rows() {
             let val = col.get(row_idx).unwrap();
-            if let Some(v) = val.as_i64() {
-                if v == 80000 || v == 60000 || v == 90000 {
-                    all_salaries.push(v);
-                }
+            if let Some(v) = val.as_i64()
+                && matches!(v, 80000 | 60000 | 90000)
+            {
+                all_salaries.push(v);
             }
         }
     }

@@ -185,7 +185,7 @@ impl ProjectionWithExprExec {
                 }
                 let new_fields: Vec<_> = struct_fields
                     .iter()
-                    .zip(old_values.into_iter())
+                    .zip(old_values)
                     .map(|(field, val)| (field.name.clone(), val))
                     .collect();
                 debug_print::debug_eprintln!(

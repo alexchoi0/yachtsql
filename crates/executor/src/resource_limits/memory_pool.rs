@@ -21,17 +21,11 @@ impl Drop for AllocationHandle {
 #[derive(Debug)]
 struct MemoryPoolInner {
     total_budget: usize,
-
     allocated: Cell<usize>,
-
     peak_allocated: Cell<usize>,
-
     total_allocations: Cell<u64>,
-
     successful_allocations: Cell<u64>,
-
     failed_allocations: Cell<u64>,
-
     total_deallocations: Cell<u64>,
 }
 
@@ -146,21 +140,13 @@ impl MemoryPool {
 #[derive(Debug, Clone)]
 pub struct PoolStats {
     pub total_budget: usize,
-
     pub allocated: usize,
-
     pub available: usize,
-
     pub peak_allocated: usize,
-
     pub utilization: f64,
-
     pub total_allocations: u64,
-
     pub successful_allocations: u64,
-
     pub failed_allocations: u64,
-
     pub total_deallocations: u64,
 }
 

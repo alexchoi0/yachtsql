@@ -542,6 +542,7 @@ fn value_to_json(value: &Value) -> yachtsql_core::error::Result<serde_json::Valu
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
 

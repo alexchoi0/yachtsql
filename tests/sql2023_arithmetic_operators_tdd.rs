@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![allow(clippy::approx_constant)]
 
 use yachtsql::{DialectType, QueryExecutor};
 

@@ -22,7 +22,7 @@ impl MaterializedViewExecutor for QueryExecutor {
         let view_name = name.to_string();
         let (dataset_id, view_id) = self.parse_ddl_table_name(&view_name)?;
 
-        if *concurrently {}
+        let _ = concurrently;
 
         let view_sql = {
             let storage = self.storage.borrow_mut();

@@ -204,10 +204,8 @@ impl NullPropagation {
                             continue;
                         } else if matches!(arg, Expr::Literal(_)) {
                             return arg.clone();
-                        } else {
-                            if first_non_literal.is_none() {
-                                first_non_literal = Some(idx);
-                            }
+                        } else if first_non_literal.is_none() {
+                            first_non_literal = Some(idx);
                         }
                     }
 

@@ -234,10 +234,10 @@ fn test_case_simple_form_multiple_when() {
         .unwrap();
 
     let descs = ["Excellent", "Good", "Average"];
-    for i in 0..3 {
+    for (i, expected_desc) in descs.iter().enumerate() {
         let temp_desc = result.column(1).unwrap().get(i).unwrap();
         let desc = temp_desc.as_str().unwrap();
-        assert_eq!(desc, descs[i]);
+        assert_eq!(desc, *expected_desc);
     }
 }
 
@@ -501,10 +501,10 @@ fn test_if_function_nested() {
     ).unwrap();
 
     let grades = ["A", "B", "C"];
-    for i in 0..3 {
+    for (i, expected_grade) in grades.iter().enumerate() {
         let temp_grade = result.column(1).unwrap().get(i).unwrap();
         let grade = temp_grade.as_str().unwrap();
-        assert_eq!(grade, grades[i]);
+        assert_eq!(grade, *expected_grade);
     }
 }
 

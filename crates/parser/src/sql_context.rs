@@ -114,10 +114,8 @@ impl<'a> SqlWalker<'a> {
             let peek = iter.peek().map(|(_, c)| *c);
 
             if context.process_char(ch, peek) {
-                if peek.is_some() && (ch == '-' || ch == '/' || ch == '*') {
-                    if (ch == '-' && peek == Some('-')) || (ch == '/' && peek == Some('*')) {
-                        iter.next();
-                    }
+                if (ch == '-' && peek == Some('-')) || (ch == '/' && peek == Some('*')) {
+                    iter.next();
                 }
                 continue;
             }

@@ -201,14 +201,14 @@ impl ProjectionPushdown {
             alias,
             projection,
         } = scan
+            && projection.is_none()
+            && !required_cols.is_empty()
         {
-            if projection.is_none() && !required_cols.is_empty() {
-                return Some(PlanNode::Scan {
-                    table_name: table_name.clone(),
-                    alias: alias.clone(),
-                    projection: Some(required_cols.iter().cloned().collect()),
-                });
-            }
+            return Some(PlanNode::Scan {
+                table_name: table_name.clone(),
+                alias: alias.clone(),
+                projection: Some(required_cols.iter().cloned().collect()),
+            });
         }
         None
     }

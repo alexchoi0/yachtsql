@@ -13,7 +13,7 @@
 
 5. Avoid nested if statements.
 
-6. Prefer `match` on enum and tuple types.
+6. Prefer `match` pattern matching on enum and tuple types.
 
 7. Always use panic! where the invariants fail for easy debugging.
 

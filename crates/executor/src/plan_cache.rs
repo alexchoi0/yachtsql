@@ -1,23 +1,21 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 
 use debug_print::debug_eprintln;
+use lru::LruCache;
 use yachtsql_optimizer::plan::PlanNode;
 
 #[derive(Debug, Clone)]
 pub struct PlanCacheConfig {
-    pub max_capacity: u64,
-
-    pub ttl_seconds: Option<u64>,
+    pub max_capacity: usize,
 }
 
 impl Default for PlanCacheConfig {
     fn default() -> Self {
         Self {
             max_capacity: 1_000,
-
-            ttl_seconds: None,
         }
     }
 }
@@ -25,7 +23,6 @@ impl Default for PlanCacheConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlanCacheKey {
     pub sql_hash: u64,
-
     pub dialect: u8,
 }
 
@@ -75,13 +72,10 @@ impl CachedPlan {
 }
 
 pub struct PlanCache {
-    cache: HashMap<PlanCacheKey, Rc<CachedPlan>>,
-    max_capacity: u64,
-    ttl_seconds: Option<u64>,
+    cache: LruCache<PlanCacheKey, Rc<CachedPlan>>,
     hit_count: u64,
     miss_count: u64,
     invalidation_count: u64,
-
     table_to_keys: HashMap<String, HashSet<PlanCacheKey>>,
 }
 
@@ -91,10 +85,9 @@ impl PlanCache {
     }
 
     pub fn with_config(config: PlanCacheConfig) -> Self {
+        let cap = NonZeroUsize::new(config.max_capacity).unwrap_or(NonZeroUsize::MIN);
         Self {
-            cache: HashMap::with_capacity(config.max_capacity as usize),
-            max_capacity: config.max_capacity,
-            ttl_seconds: config.ttl_seconds,
+            cache: LruCache::new(cap),
             hit_count: 0,
             miss_count: 0,
             invalidation_count: 0,
@@ -103,31 +96,20 @@ impl PlanCache {
     }
 
     pub fn get(&mut self, key: &PlanCacheKey) -> Option<Rc<CachedPlan>> {
-        if let Some(ttl) = self.ttl_seconds {
-            if let Some(cached) = self.cache.get(key) {
-                if cached.cached_at.elapsed().as_secs() > ttl {
-                    self.cache.remove(key);
-                    self.miss_count += 1;
-                    return None;
-                }
+        match self.cache.get(key) {
+            Some(cached) => {
+                cached.record_hit();
+                self.hit_count += 1;
+                Some(Rc::clone(cached))
             }
-        }
-
-        if let Some(cached) = self.cache.get(key) {
-            cached.record_hit();
-            self.hit_count += 1;
-            Some(Rc::clone(cached))
-        } else {
-            self.miss_count += 1;
-            None
+            None => {
+                self.miss_count += 1;
+                None
+            }
         }
     }
 
     pub fn insert(&mut self, key: PlanCacheKey, cached_plan: CachedPlan) {
-        if self.cache.len() as u64 >= self.max_capacity && !self.cache.contains_key(&key) {
-            self.evict_lru();
-        }
-
         let cached_plan = Rc::new(cached_plan);
 
         for table in cached_plan.referenced_tables.iter() {
@@ -137,46 +119,19 @@ impl PlanCache {
                 .insert(key);
         }
 
-        self.cache.insert(key, cached_plan);
-    }
-
-    fn evict_lru(&mut self) {
-        let mut oldest_key: Option<PlanCacheKey> = None;
-        let mut oldest_time: Option<std::time::Instant> = None;
-
-        for (key, cached) in self.cache.iter() {
-            if oldest_time.is_none() || cached.cached_at < oldest_time.unwrap() {
-                oldest_key = Some(*key);
-                oldest_time = Some(cached.cached_at);
-            }
-        }
-
-        if let Some(key) = oldest_key {
-            if let Some(cached) = self.cache.get(&key) {
-                for table in cached.referenced_tables.iter() {
-                    if let Some(keys) = self.table_to_keys.get_mut(table) {
-                        keys.remove(&key);
-                        if keys.is_empty() {
-                            self.table_to_keys.remove(table);
-                        }
-                    }
-                }
-            }
-            self.cache.remove(&key);
-        }
+        self.cache.put(key, cached_plan);
     }
 
     pub fn invalidate_all(&mut self) {
         self.cache.clear();
         self.table_to_keys.clear();
-
         self.invalidation_count += 1;
     }
 
     pub fn invalidate_table(&mut self, _dataset: &str, table: &str) {
         if let Some(keys_to_invalidate) = self.table_to_keys.remove(table) {
             for key in keys_to_invalidate {
-                self.cache.remove(&key);
+                self.cache.pop(&key);
             }
             self.invalidation_count += 1;
         }
@@ -216,7 +171,7 @@ impl PlanCache {
         for (_table_name, keys) in self.table_to_keys.iter() {
             for key in keys {
                 if seen_keys.insert(*key) {
-                    if let Some(cached) = self.cache.get(key) {
+                    if let Some(cached) = self.cache.peek(key) {
                         entries.push(CacheEntryInfo {
                             key: *key,
                             sql: (*cached.sql).clone(),
@@ -237,7 +192,7 @@ impl PlanCache {
 
         if let Some(keys) = self.table_to_keys.get(table) {
             for key in keys {
-                if let Some(cached) = self.cache.get(key) {
+                if let Some(cached) = self.cache.peek(key) {
                     entries.push(CacheEntryInfo {
                         key: *key,
                         sql: (*cached.sql).clone(),

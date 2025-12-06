@@ -1,3 +1,4 @@
+#![allow(clippy::approx_constant)]
 mod common;
 use common::assertions::{assert_batch_eq, build_batch};
 use yachtsql_core::types::{DataType, Value};

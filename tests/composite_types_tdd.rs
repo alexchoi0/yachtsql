@@ -1041,7 +1041,7 @@ mod edge_cases {
     fn test_reserved_type_name_error() {
         let mut executor = create_executor();
 
-        let result = executor.execute_sql("CREATE TYPE integer AS (val INT)");
+        let _result = executor.execute_sql("CREATE TYPE integer AS (val INT)");
     }
 
     #[test]

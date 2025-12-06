@@ -140,7 +140,7 @@ fn format_schema(schema: &Schema) -> String {
 pub fn build_batch(schema: Schema, values: Vec<Vec<Value>>) -> RecordBatch {
     let rows = values
         .into_iter()
-        .map(|row_values| Row::from_values(row_values))
+        .map(Row::from_values)
         .collect();
     RecordBatch::from_rows(schema, rows).expect("Failed to build RecordBatch")
 }
@@ -242,6 +242,7 @@ pub fn assert_batch_rows(batch: &RecordBatch, expected_rows: usize) {
     );
 }
 
+#[allow(dead_code)]
 pub fn assert_batch_columns(batch: &RecordBatch, expected_cols: usize) {
     assert_eq!(
         batch.num_columns(),

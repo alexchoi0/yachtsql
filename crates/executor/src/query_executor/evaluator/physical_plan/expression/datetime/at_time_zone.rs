@@ -64,7 +64,7 @@ impl ProjectionWithExprExec {
         if s.ends_with('Z') || s.ends_with("UTC") || s.ends_with("GMT") {
             return true;
         }
-        if let Some(pos) = s.rfind(|c| c == '+' || c == '-') {
+        if let Some(pos) = s.rfind(['+', '-']) {
             let suffix = &s[pos + 1..];
             if suffix.chars().all(|c| c.is_ascii_digit() || c == ':') && !suffix.is_empty() {
                 return true;

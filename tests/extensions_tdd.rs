@@ -193,8 +193,7 @@ fn test_list_available_extensions() {
 
     let result = executor.execute_sql("SELECT name FROM pg_available_extensions ORDER BY name");
 
-    if result.is_ok() {
-        let batch = result.unwrap();
+    if let Ok(batch) = result {
         assert!(
             batch.num_rows() > 0,
             "Should have at least one available extension"
@@ -207,8 +206,7 @@ fn test_list_installed_extensions() {
     let mut executor = new_executor();
 
     let result = executor.execute_sql("SELECT extname FROM pg_extension");
-    if result.is_ok() {
-        let batch = result.unwrap();
+    if let Ok(batch) = result {
         let initial_count = batch.num_rows();
 
         executor

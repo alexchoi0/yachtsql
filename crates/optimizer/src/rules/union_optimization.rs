@@ -13,13 +13,13 @@ impl UnionOptimization {
     }
 
     fn contains_unions(&self, plan: &LogicalPlan) -> bool {
-        self.has_union_node(&plan.root)
+        Self::has_union_node(&plan.root)
     }
 
-    fn has_union_node(&self, node: &PlanNode) -> bool {
+    fn has_union_node(node: &PlanNode) -> bool {
         match node {
             PlanNode::Union { .. } => true,
-            _ => node.children().iter().any(|c| self.has_union_node(c)),
+            _ => node.children().iter().any(|c| Self::has_union_node(c)),
         }
     }
 
@@ -113,8 +113,8 @@ impl UnionOptimization {
     }
 
     fn branches_are_disjoint(&self, left: &PlanNode, right: &PlanNode) -> bool {
-        let left_pred = self.extract_top_filter(left);
-        let right_pred = self.extract_top_filter(right);
+        let left_pred = Self::extract_top_filter(left);
+        let right_pred = Self::extract_top_filter(right);
 
         match (left_pred, right_pred) {
             (Some(l), Some(r)) => self.predicates_are_disjoint(&l, &r),
@@ -122,10 +122,10 @@ impl UnionOptimization {
         }
     }
 
-    fn extract_top_filter(&self, node: &PlanNode) -> Option<Expr> {
+    fn extract_top_filter(node: &PlanNode) -> Option<Expr> {
         match node {
             PlanNode::Filter { predicate, .. } => Some(predicate.clone()),
-            PlanNode::Projection { input, .. } => self.extract_top_filter(input),
+            PlanNode::Projection { input, .. } => Self::extract_top_filter(input),
             _ => None,
         }
     }
@@ -148,26 +148,22 @@ impl UnionOptimization {
             ) => {
                 if let (Expr::Column { name: l_name, .. }, Expr::Column { name: r_name, .. }) =
                     (l_left.as_ref(), r_left.as_ref())
+                    && l_name == r_name
+                    && let (
+                        Expr::Literal(LiteralValue::Int64(l_val)),
+                        Expr::Literal(LiteralValue::Int64(r_val)),
+                    ) = (l_right.as_ref(), r_right.as_ref())
+                    && l_val == r_val
                 {
-                    if l_name == r_name {
-                        if let (
-                            Expr::Literal(LiteralValue::Int64(l_val)),
-                            Expr::Literal(LiteralValue::Int64(r_val)),
-                        ) = (l_right.as_ref(), r_right.as_ref())
-                        {
-                            if l_val == r_val {
-                                return matches!(
-                                    (l_op, r_op),
-                                    (BinaryOp::LessThan, BinaryOp::GreaterThanOrEqual)
-                                        | (BinaryOp::GreaterThanOrEqual, BinaryOp::LessThan)
-                                        | (BinaryOp::LessThanOrEqual, BinaryOp::GreaterThan)
-                                        | (BinaryOp::GreaterThan, BinaryOp::LessThanOrEqual)
-                                        | (BinaryOp::Equal, BinaryOp::NotEqual)
-                                        | (BinaryOp::NotEqual, BinaryOp::Equal)
-                                );
-                            }
-                        }
-                    }
+                    return matches!(
+                        (l_op, r_op),
+                        (BinaryOp::LessThan, BinaryOp::GreaterThanOrEqual)
+                            | (BinaryOp::GreaterThanOrEqual, BinaryOp::LessThan)
+                            | (BinaryOp::LessThanOrEqual, BinaryOp::GreaterThan)
+                            | (BinaryOp::GreaterThan, BinaryOp::LessThanOrEqual)
+                            | (BinaryOp::Equal, BinaryOp::NotEqual)
+                            | (BinaryOp::NotEqual, BinaryOp::Equal)
+                    );
                 }
                 false
             }

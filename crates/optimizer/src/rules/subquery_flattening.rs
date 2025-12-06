@@ -40,45 +40,38 @@ impl SubqueryFlattening {
             PlanNode::Filter { predicate, input } => {
                 let transformed_input = self.transform_node(input)?;
 
-                if let Some((join_type, subquery_plan, join_condition)) =
-                    self.extract_subquery_join(predicate)
-                {
-                    let remaining_pred = self.remove_subquery_from_predicate(predicate);
+                match self.extract_subquery_join(predicate) {
+                    Some((join_type, subquery_plan, join_condition)) => {
+                        let join_node = PlanNode::Join {
+                            left: Box::new(transformed_input),
+                            right: Box::new(subquery_plan),
+                            on: join_condition,
+                            join_type,
+                        };
 
-                    let join_node = PlanNode::Join {
-                        left: Box::new(transformed_input),
-                        right: Box::new(subquery_plan),
-                        on: join_condition,
-                        join_type,
-                    };
-
-                    if let Some(pred) = remaining_pred {
-                        Ok(PlanNode::Filter {
-                            predicate: pred,
-                            input: Box::new(join_node),
-                        })
-                    } else {
-                        Ok(join_node)
+                        match Self::remove_subquery_from_predicate(predicate) {
+                            Some(pred) => Ok(PlanNode::Filter {
+                                predicate: pred,
+                                input: Box::new(join_node),
+                            }),
+                            None => Ok(join_node),
+                        }
                     }
-                } else {
-                    Ok(PlanNode::Filter {
+                    None => Ok(PlanNode::Filter {
                         predicate: predicate.clone(),
                         input: Box::new(transformed_input),
-                    })
+                    }),
                 }
             }
 
             PlanNode::Projection { expressions, input } => {
-                if let Some(transformed) =
-                    self.transform_projection_with_scalar_subquery(expressions, input)
-                {
-                    return self.transform_node(&transformed);
+                match self.transform_projection_with_scalar_subquery(expressions, input) {
+                    Some(transformed) => self.transform_node(&transformed),
+                    None => Ok(PlanNode::Projection {
+                        expressions: expressions.clone(),
+                        input: Box::new(self.transform_node(input)?),
+                    }),
                 }
-
-                Ok(PlanNode::Projection {
-                    expressions: expressions.clone(),
-                    input: Box::new(self.transform_node(input)?),
-                })
             }
             PlanNode::Join {
                 left,
@@ -132,11 +125,8 @@ impl SubqueryFlattening {
                     JoinType::Semi
                 };
 
-                if let Some((subquery_plan, join_cond)) = self.extract_correlated_subquery(plan) {
-                    Some((join_type, subquery_plan, join_cond))
-                } else {
-                    None
-                }
+                self.extract_correlated_subquery(plan)
+                    .map(|(subquery_plan, join_cond)| (join_type, subquery_plan, join_cond))
             }
 
             Expr::InSubquery {
@@ -150,17 +140,17 @@ impl SubqueryFlattening {
                     JoinType::Semi
                 };
 
-                if let Some(subquery_output) = self.get_subquery_output_column(plan) {
-                    let join_cond = Expr::BinaryOp {
-                        left: Box::new((**expr).clone()),
-                        op: BinaryOp::Equal,
-                        right: Box::new(subquery_output),
-                    };
-
-                    let subquery_plan = self.unwrap_subquery_plan(plan);
-                    Some((join_type, subquery_plan, join_cond))
-                } else {
-                    None
+                match self.get_subquery_output_column(plan) {
+                    Some(subquery_output) => {
+                        let join_cond = Expr::BinaryOp {
+                            left: Box::new((**expr).clone()),
+                            op: BinaryOp::Equal,
+                            right: Box::new(subquery_output),
+                        };
+                        let subquery_plan = Self::unwrap_subquery_plan(plan);
+                        Some((join_type, subquery_plan, join_cond))
+                    }
+                    None => None,
                 }
             }
 
@@ -207,12 +197,11 @@ impl SubqueryFlattening {
 
     fn collect_tables(&self, plan: &PlanNode) -> std::collections::HashSet<String> {
         let mut tables = std::collections::HashSet::new();
-        self.collect_tables_recursive(plan, &mut tables);
+        Self::collect_tables_recursive(plan, &mut tables);
         tables
     }
 
     fn collect_tables_recursive(
-        &self,
         plan: &PlanNode,
         tables: &mut std::collections::HashSet<String>,
     ) {
@@ -227,7 +216,7 @@ impl SubqueryFlattening {
             }
             _ => {
                 for child in plan.children() {
-                    self.collect_tables_recursive(child, tables);
+                    Self::collect_tables_recursive(child, tables);
                 }
             }
         }
@@ -240,7 +229,7 @@ impl SubqueryFlattening {
     ) -> (Vec<Expr>, Vec<Expr>) {
         let mut correlation = Vec::new();
         let mut non_correlation = Vec::new();
-        self.split_conditions_recursive(
+        Self::split_conditions_recursive(
             predicate,
             inner_tables,
             &mut correlation,
@@ -250,7 +239,6 @@ impl SubqueryFlattening {
     }
 
     fn split_conditions_recursive(
-        &self,
         expr: &Expr,
         inner_tables: &std::collections::HashSet<String>,
         correlation: &mut Vec<Expr>,
@@ -262,11 +250,16 @@ impl SubqueryFlattening {
                 op: BinaryOp::And,
                 right,
             } => {
-                self.split_conditions_recursive(left, inner_tables, correlation, non_correlation);
-                self.split_conditions_recursive(right, inner_tables, correlation, non_correlation);
+                Self::split_conditions_recursive(left, inner_tables, correlation, non_correlation);
+                Self::split_conditions_recursive(
+                    right,
+                    inner_tables,
+                    correlation,
+                    non_correlation,
+                );
             }
             _ => {
-                if self.references_outer_table(expr, inner_tables) {
+                if Self::references_outer_table(expr, inner_tables) {
                     correlation.push(expr.clone());
                 } else {
                     non_correlation.push(expr.clone());
@@ -276,7 +269,6 @@ impl SubqueryFlattening {
     }
 
     fn references_outer_table(
-        &self,
         expr: &Expr,
         inner_tables: &std::collections::HashSet<String>,
     ) -> bool {
@@ -284,10 +276,10 @@ impl SubqueryFlattening {
             Expr::Column { table: Some(t), .. } => !inner_tables.contains(t),
             Expr::Column { table: None, .. } => false,
             Expr::BinaryOp { left, right, .. } => {
-                self.references_outer_table(left, inner_tables)
-                    || self.references_outer_table(right, inner_tables)
+                Self::references_outer_table(left, inner_tables)
+                    || Self::references_outer_table(right, inner_tables)
             }
-            Expr::UnaryOp { expr, .. } => self.references_outer_table(expr, inner_tables),
+            Expr::UnaryOp { expr, .. } => Self::references_outer_table(expr, inner_tables),
             Expr::Literal(_) => false,
             _ => false,
         }
@@ -323,9 +315,9 @@ impl SubqueryFlattening {
         }
     }
 
-    fn unwrap_subquery_plan(&self, subquery: &PlanNode) -> PlanNode {
+    fn unwrap_subquery_plan(subquery: &PlanNode) -> PlanNode {
         match subquery {
-            PlanNode::Projection { input, .. } => self.unwrap_subquery_plan(input),
+            PlanNode::Projection { input, .. } => Self::unwrap_subquery_plan(input),
             _ => subquery.clone(),
         }
     }
@@ -375,22 +367,20 @@ impl SubqueryFlattening {
     ) -> Option<CorrelatedScalarSubquery> {
         match node {
             PlanNode::Filter { predicate, input } => {
-                if let Some((outer_col, inner_col)) =
-                    self.extract_correlation_columns(predicate, outer_tables)
-                {
-                    let scan = self.find_scan_node(input)?;
-
-                    Some(CorrelatedScalarSubquery {
-                        aggregate_expr,
-                        inner_alias: inner_col.0,
-                        inner_column: inner_col.1,
-                        outer_alias: outer_col.0,
-                        outer_column: outer_col.1,
-                        subquery_scan: scan,
-                        result_alias: result_alias.to_string(),
-                    })
-                } else {
-                    None
+                match self.extract_correlation_columns(predicate, outer_tables) {
+                    Some((outer_col, inner_col)) => {
+                        let scan = Self::find_scan_node(input)?;
+                        Some(CorrelatedScalarSubquery {
+                            aggregate_expr,
+                            inner_alias: inner_col.0,
+                            inner_column: inner_col.1,
+                            outer_alias: outer_col.0,
+                            outer_column: outer_col.1,
+                            subquery_scan: scan,
+                            result_alias: result_alias.to_string(),
+                        })
+                    }
+                    None => None,
                 }
             }
             _ => None,
@@ -430,23 +420,23 @@ impl SubqueryFlattening {
         }
     }
 
-    fn find_scan_node(&self, node: &PlanNode) -> Option<PlanNode> {
+    fn find_scan_node(node: &PlanNode) -> Option<PlanNode> {
         match node {
             PlanNode::Scan { .. } => Some(node.clone()),
             PlanNode::Filter { input, .. }
             | PlanNode::Projection { input, .. }
-            | PlanNode::Aggregate { input, .. } => self.find_scan_node(input),
+            | PlanNode::Aggregate { input, .. } => Self::find_scan_node(input),
             _ => None,
         }
     }
 
     fn get_outer_table_aliases(&self, plan: &PlanNode) -> Vec<String> {
         let mut aliases = Vec::new();
-        self.collect_table_aliases(plan, &mut aliases);
+        Self::collect_table_aliases(plan, &mut aliases);
         aliases
     }
 
-    fn collect_table_aliases(&self, plan: &PlanNode, aliases: &mut Vec<String>) {
+    fn collect_table_aliases(plan: &PlanNode, aliases: &mut Vec<String>) {
         match plan {
             PlanNode::Scan {
                 table_name, alias, ..
@@ -457,8 +447,8 @@ impl SubqueryFlattening {
                 aliases.push(alias.clone());
             }
             PlanNode::Join { left, right, .. } | PlanNode::LateralJoin { left, right, .. } => {
-                self.collect_table_aliases(left, aliases);
-                self.collect_table_aliases(right, aliases);
+                Self::collect_table_aliases(left, aliases);
+                Self::collect_table_aliases(right, aliases);
             }
             PlanNode::Filter { input, .. }
             | PlanNode::Projection { input, .. }
@@ -466,7 +456,7 @@ impl SubqueryFlattening {
             | PlanNode::Sort { input, .. }
             | PlanNode::Limit { input, .. }
             | PlanNode::Distinct { input } => {
-                self.collect_table_aliases(input, aliases);
+                Self::collect_table_aliases(input, aliases);
             }
             _ => {}
         }
@@ -594,7 +584,7 @@ impl SubqueryFlattening {
         }
     }
 
-    fn remove_subquery_from_predicate(&self, predicate: &Expr) -> Option<Expr> {
+    fn remove_subquery_from_predicate(predicate: &Expr) -> Option<Expr> {
         match predicate {
             Expr::Exists { .. } | Expr::InSubquery { .. } | Expr::TupleInSubquery { .. } => None,
             Expr::BinaryOp {
@@ -602,8 +592,8 @@ impl SubqueryFlattening {
                 op: BinaryOp::And,
                 right,
             } => {
-                let left_cleaned = self.remove_subquery_from_predicate(left);
-                let right_cleaned = self.remove_subquery_from_predicate(right);
+                let left_cleaned = Self::remove_subquery_from_predicate(left);
+                let right_cleaned = Self::remove_subquery_from_predicate(right);
 
                 match (left_cleaned, right_cleaned) {
                     (None, None) => None,

@@ -2,7 +2,7 @@
 #![allow(unused_variables)]
 
 mod common;
-use common::{assert_error_contains, new_executor, table_exists};
+use common::{assert_error_contains, new_executor};
 
 #[test]
 fn test_create_schema_basic() {

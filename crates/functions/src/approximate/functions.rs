@@ -143,13 +143,11 @@ where
         *value += increment;
     } else if map.len() < k {
         map.insert(key, increment);
-    } else {
-        if let Some((min_key, min_value)) = find_min_entry(map) {
-            map.remove(&min_key);
-            let mut new_value = min_value;
-            new_value += increment;
-            map.insert(key, new_value);
-        }
+    } else if let Some((min_key, min_value)) = find_min_entry(map) {
+        map.remove(&min_key);
+        let mut new_value = min_value;
+        new_value += increment;
+        map.insert(key, new_value);
     }
 }
 

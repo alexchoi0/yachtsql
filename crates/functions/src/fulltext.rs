@@ -7,6 +7,7 @@ use yachtsql_core::error::Result;
 pub type Position = u16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Weight {
     A,
 
@@ -14,13 +15,8 @@ pub enum Weight {
 
     C,
 
+    #[default]
     D,
-}
-
-impl Default for Weight {
-    fn default() -> Self {
-        Weight::D
-    }
 }
 
 impl Weight {
@@ -284,7 +280,7 @@ impl TSQuery {
         }
     }
 
-    pub fn not(self) -> TSQuery {
+    pub fn negate(self) -> TSQuery {
         match self.expr {
             None => TSQuery::new(),
             Some(e) => TSQuery {
@@ -565,23 +561,22 @@ fn parse_term(text: &str) -> Result<TSQuery> {
         return Ok(TSQuery::new());
     }
 
-    if text.starts_with('!') {
-        let inner = parse_term(&text[1..])?;
-        return Ok(inner.not());
+    if let Some(stripped) = text.strip_prefix('!') {
+        let inner = parse_term(stripped)?;
+        return Ok(inner.negate());
     }
 
-    if text.starts_with('(') && text.ends_with(')') {
-        return parse_or_expr(&text[1..text.len() - 1]);
+    if let Some(inner) = text.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        return parse_or_expr(inner);
     }
 
-    if text.starts_with('\'') {
-        let end_quote = text[1..].find('\'').map(|i| i + 1);
+    if let Some(after_quote) = text.strip_prefix('\'') {
+        let end_quote = after_quote.find('\'');
         if let Some(end) = end_quote {
-            let lexeme = &text[1..end];
-            let rest = &text[end + 1..];
+            let lexeme = &after_quote[..end];
+            let rest = &after_quote[end + 1..];
 
-            if rest.starts_with(':') {
-                let suffix = &rest[1..];
+            if let Some(suffix) = rest.strip_prefix(':') {
                 if suffix == "*" {
                     return Ok(TSQuery::prefix(lexeme));
                 } else if suffix.len() == 1 {
@@ -615,13 +610,10 @@ fn parse_term(text: &str) -> Result<TSQuery> {
     let normalized = normalize_lexeme(text);
     if normalized.is_empty() {
         Ok(TSQuery::new())
+    } else if let Some(word) = text.strip_suffix(":*") {
+        Ok(TSQuery::prefix(word))
     } else {
-        if text.ends_with(":*") {
-            let word = &text[..text.len() - 2];
-            Ok(TSQuery::prefix(word))
-        } else {
-            Ok(TSQuery::lexeme(&normalized))
-        }
+        Ok(TSQuery::lexeme(&normalized))
     }
 }
 
@@ -648,7 +640,7 @@ fn parse_websearch(text: &str) -> TSQuery {
                             }
                         }
                         if negate_next {
-                            phrase_query = phrase_query.not();
+                            phrase_query = phrase_query.negate();
                             negate_next = false;
                         }
                         result = result.and(phrase_query);
@@ -661,7 +653,7 @@ fn parse_websearch(text: &str) -> TSQuery {
                             let term = TSQuery::lexeme(&word);
                             let term = if negate_next {
                                 negate_next = false;
-                                term.not()
+                                term.negate()
                             } else {
                                 term
                             };
@@ -684,33 +676,31 @@ fn parse_websearch(text: &str) -> TSQuery {
                         }
                         current_word.clear();
                     }
-                } else {
-                    if !current_word.is_empty() {
-                        let upper = current_word.to_uppercase();
-                        if upper == "OR" {
-                            while chars.peek() == Some(&' ') || chars.peek() == Some(&'\t') {
-                                chars.next();
-                            }
-
-                            let remaining: String = chars.collect();
-                            let next = parse_websearch(&remaining);
-                            result = result.or(next);
-                            return result;
+                } else if !current_word.is_empty() {
+                    let upper = current_word.to_uppercase();
+                    if upper == "OR" {
+                        while chars.peek() == Some(&' ') || chars.peek() == Some(&'\t') {
+                            chars.next();
                         }
 
-                        let word = normalize_lexeme(&current_word);
-                        if !word.is_empty() && !is_stop_word(&word) {
-                            let term = TSQuery::lexeme(&word);
-                            let term = if negate_next {
-                                negate_next = false;
-                                term.not()
-                            } else {
-                                term
-                            };
-                            result = result.and(term);
-                        }
-                        current_word.clear();
+                        let remaining: String = chars.collect();
+                        let next = parse_websearch(&remaining);
+                        result = result.or(next);
+                        return result;
                     }
+
+                    let word = normalize_lexeme(&current_word);
+                    if !word.is_empty() && !is_stop_word(&word) {
+                        let term = TSQuery::lexeme(&word);
+                        let term = if negate_next {
+                            negate_next = false;
+                            term.negate()
+                        } else {
+                            term
+                        };
+                        result = result.and(term);
+                    }
+                    current_word.clear();
                 }
             }
             _ => {
@@ -723,7 +713,7 @@ fn parse_websearch(text: &str) -> TSQuery {
         let word = normalize_lexeme(&current_word);
         if !word.is_empty() && !is_stop_word(&word) {
             let term = TSQuery::lexeme(&word);
-            let term = if negate_next { term.not() } else { term };
+            let term = if negate_next { term.negate() } else { term };
             result = result.and(term);
         }
     }
@@ -1138,7 +1128,7 @@ mod tests {
 
     #[test]
     fn test_tsquery_not() {
-        let query = TSQuery::lexeme("cat").and(TSQuery::lexeme("dog").not());
+        let query = TSQuery::lexeme("cat").and(TSQuery::lexeme("dog").negate());
 
         let vector1 = to_tsvector("The cat played alone");
         assert!(query.matches(&vector1));

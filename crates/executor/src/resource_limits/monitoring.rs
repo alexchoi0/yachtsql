@@ -8,24 +8,17 @@ use super::query_registry::{QueryRegistry, RegistryStats};
 #[derive(Debug, Clone)]
 pub struct ResourceReport {
     pub timestamp: Instant,
-
     pub pool_stats: Option<PoolStats>,
-
     pub tiered_pool_stats: Option<TieredPoolStats>,
-
     pub registry_stats: Option<RegistryStats>,
-
     pub manager_stats: Option<MemoryManagerStatsSnapshot>,
-
     pub health: SystemHealth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemHealth {
     Healthy,
-
     Warning,
-
     Critical,
 }
 
@@ -240,15 +233,10 @@ impl Default for ResourceReport {
 
 pub struct ResourceMonitor {
     pool: Option<Rc<MemoryPool>>,
-
     tiered_pool: Option<Rc<TieredMemoryPool>>,
-
     registry: Option<Rc<QueryRegistry>>,
-
     manager: Option<Rc<MemoryManager>>,
-
     history: std::rc::Rc<std::cell::RefCell<Vec<ResourceReport>>>,
-
     max_history: usize,
 }
 

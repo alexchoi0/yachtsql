@@ -161,6 +161,7 @@ impl PatternMatcher {
 }
 
 #[cfg(test)]
+#[allow(clippy::useless_vec)]
 mod tests {
     use sqlparser::tokenizer::{Token, Word};
     use yachtsql_core::error::Error;

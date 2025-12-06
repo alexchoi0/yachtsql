@@ -96,10 +96,10 @@ fn types_are_compatible(
         return true;
     }
 
-    match (type1, type2) {
-        (DataType::Int64, DataType::Float64) | (DataType::Float64, DataType::Int64) => true,
-        _ => false,
-    }
+    matches!(
+        (type1, type2),
+        (DataType::Int64, DataType::Float64) | (DataType::Float64, DataType::Int64)
+    )
 }
 
 pub fn array_prepend(element: Value, array: Value) -> Result<Value> {

@@ -100,8 +100,8 @@ impl JoinReorder {
                     on: left_on,
                     join_type: left_join_type,
                 } = left.as_ref()
+                    && Self::can_reorder_joins(left_join_type, join_type)
                 {
-                    if Self::can_reorder_joins(left_join_type, join_type) {
                         let _card_ll = Self::estimate_cardinality(ll);
                         let card_lr = Self::estimate_cardinality(lr);
                         let card_right = Self::estimate_cardinality(right);
@@ -121,7 +121,6 @@ impl JoinReorder {
                                 join_type: *left_join_type,
                             });
                         }
-                    }
                 }
 
                 let left_opt = self.optimize_join_chain(left);

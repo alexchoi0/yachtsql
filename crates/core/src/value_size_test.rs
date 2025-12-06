@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod value_size_tests {
     use std::mem;
 
@@ -113,7 +114,7 @@ mod value_size_tests {
 
         println!("\n=== Typical Workload Analysis ===");
 
-        let string_waste = if value_size >= 24 { value_size - 24 } else { 0 };
+        let string_waste = value_size.saturating_sub(24);
         let avg_waste = 0.60 * int64_waste as f64
             + 0.20 * string_waste as f64
             + 0.10 * null_waste as f64

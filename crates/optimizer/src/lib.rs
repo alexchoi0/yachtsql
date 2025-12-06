@@ -20,16 +20,16 @@ pub mod visitor;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+pub use catalog::{CatalogRef, EmptyCatalog, IndexCatalog, IndexInfo, IndexType};
 pub use classifier::{ComplexityLevel, QueryComplexity};
 pub use cost_model::{AggregateStrategy, Cost, CostModel, JoinStrategy, TableStats};
 pub use ordering::{OrderingProperty, OrderingRequirement, SortColumn};
 pub use phase::{Phase, PhaseBuilder, PhaseConfig, PhasedRule, StorageType};
-pub use priority::{RuleTier, rule_priority, rule_tier};
+pub use priority::{rule_priority, rule_tier, RuleTier};
 pub use rule::{OptimizationRule, RuleApplication};
 pub use statistics::{ColumnStatistics, Histogram, StatisticsRegistry, TableStatistics};
 pub use telemetry::{OptimizerTelemetry, RuleStats};
 pub use visitor::{PlanRewriter, PlanVisitor};
-pub use catalog::{CatalogRef, EmptyCatalog, IndexCatalog, IndexInfo, IndexType};
 use yachtsql_core::error::Result;
 pub use yachtsql_ir::expr::{BinaryOp, Expr, OrderByExpr, UnaryOp};
 pub use yachtsql_ir::plan::{LogicalPlan, PlanNode};
@@ -219,11 +219,8 @@ impl Default for Optimizer {
 pub struct MultiPhaseOptimizer {
     builder: PhaseBuilder,
     telemetry: OptimizerTelemetry,
-
     global_time_budget: Duration,
-
     enable_fast_path: bool,
-
     storage_type: StorageType,
 }
 

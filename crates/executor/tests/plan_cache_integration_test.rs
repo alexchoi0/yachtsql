@@ -29,7 +29,7 @@ fn test_cache_statistics() {
 
     let cached = CachedPlan::new(plan, sql.to_string());
 
-    cache.insert(key.clone(), cached);
+    cache.insert(key, cached);
 
     let result = cache.get(&key);
     assert!(result.is_some(), "Should find cached entry");

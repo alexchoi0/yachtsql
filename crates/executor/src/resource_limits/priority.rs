@@ -3,11 +3,8 @@ use yachtsql_core::error::{Error, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QueryPriority {
     Low = 0,
-
     Normal = 1,
-
     High = 2,
-
     Critical = 3,
 }
 
@@ -48,13 +45,9 @@ impl QueryPriority {
 #[derive(Debug, Clone)]
 pub struct PriorityConfig {
     pub critical_percent: f32,
-
     pub high_percent: f32,
-
     pub normal_percent: f32,
-
     pub low_percent: f32,
-
     pub allow_borrowing: bool,
 }
 

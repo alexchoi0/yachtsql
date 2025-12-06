@@ -6763,7 +6763,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
                 let query_str = self.value_to_string(&query_val)?;
                 let query = yachtsql_functions::fulltext::to_tsquery(&query_str)?;
-                let result = query.not();
+                let result = query.negate();
                 Ok(Value::string(
                     yachtsql_functions::fulltext::tsquery_to_string(&result),
                 ))
@@ -7680,6 +7680,7 @@ fn parse_roman_numeral(s: &str) -> Result<i64> {
     Ok(result)
 }
 
+#[allow(clippy::excessive_precision)]
 const LANCZOS_COEF: [f64; 9] = [
     0.99999999999980993,
     676.5203681218851,

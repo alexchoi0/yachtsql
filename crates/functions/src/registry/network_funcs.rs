@@ -168,13 +168,7 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
                             let inet_broadcast = InetAddr::new(broadcast);
                             Ok(Value::inet(inet_broadcast))
                         }
-                        None => {
-                            if inet.is_ipv6() {
-                                Ok(args[0].clone())
-                            } else {
-                                Ok(args[0].clone())
-                            }
-                        }
+                        None => Ok(args[0].clone())
                     }
                 } else {
                     Err(Error::TypeMismatch {

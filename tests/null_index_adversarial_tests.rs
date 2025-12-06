@@ -52,9 +52,8 @@ fn test_all_null_composite_keys_allowed() {
         .unwrap();
 
     for i in 1..=3 {
-        let result = executor.execute_sql(&format!(
-            "INSERT INTO default.test VALUES (NULL, NULL, NULL)"
-        ));
+        let result = executor
+            .execute_sql("INSERT INTO default.test VALUES (NULL, NULL, NULL)");
         assert!(
             result.is_ok(),
             "All-NULL insert {} should succeed: {:?}",

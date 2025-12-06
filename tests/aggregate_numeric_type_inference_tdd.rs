@@ -4,7 +4,7 @@
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::wildcard_enum_match_arm)]
 
-use yachtsql::{DialectType, QueryExecutor, Value};
+use yachtsql::{DialectType, QueryExecutor};
 
 fn new_executor() -> QueryExecutor {
     QueryExecutor::with_dialect(DialectType::PostgreSQL)

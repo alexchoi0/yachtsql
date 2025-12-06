@@ -222,6 +222,7 @@ pub fn vector_scalar_multiply(vec: &Value, scalar: &Value) -> Result<Value> {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
 

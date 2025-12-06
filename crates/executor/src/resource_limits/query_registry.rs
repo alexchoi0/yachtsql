@@ -5,21 +5,17 @@ use std::time::{Duration, Instant};
 
 use yachtsql_core::error::{Error, Result};
 
-use super::CancellationToken;
 use super::priority::QueryPriority;
+use super::CancellationToken;
 
 pub type QueryId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryStatus {
     Running,
-
     Waiting,
-
     Completed,
-
     Failed,
-
     Cancelled,
 }
 
@@ -49,25 +45,15 @@ impl QueryStatus {
 #[derive(Debug, Clone)]
 pub struct QueryInfo {
     pub id: QueryId,
-
     pub sql: String,
-
     pub priority: QueryPriority,
-
     pub status: QueryStatus,
-
     pub submitted_at: Instant,
-
     pub started_at: Option<Instant>,
-
     pub finished_at: Option<Instant>,
-
     pub memory_bytes: usize,
-
     pub peak_memory_bytes: usize,
-
     pub row_count: usize,
-
     pub(crate) cancellation_token: CancellationToken,
 }
 
@@ -97,9 +83,7 @@ pub struct QueryRegistry {
 #[derive(Debug)]
 struct QueryRegistryInner {
     next_id: QueryId,
-
     queries: HashMap<QueryId, QueryInfo>,
-
     max_history: usize,
 }
 
@@ -361,19 +345,12 @@ impl QueryRegistry {
 #[derive(Debug, Clone, Default)]
 pub struct RegistryStats {
     pub total_queries: usize,
-
     pub running: usize,
-
     pub waiting: usize,
-
     pub completed: usize,
-
     pub failed: usize,
-
     pub cancelled: usize,
-
     pub total_memory_bytes: usize,
-
     pub peak_memory_bytes: usize,
 }
 

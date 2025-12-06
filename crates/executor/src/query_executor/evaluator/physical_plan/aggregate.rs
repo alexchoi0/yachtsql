@@ -32,13 +32,13 @@ impl AggregateExec {
                 when_then,
                 else_expr,
             } => {
-                operand.as_ref().map_or(false, |o| Self::contains_aggregate(o))
+                operand.as_ref().is_some_and(|o| Self::contains_aggregate(o))
                     || when_then
                         .iter()
                         .any(|(w, t)| Self::contains_aggregate(w) || Self::contains_aggregate(t))
                     || else_expr
                         .as_ref()
-                        .map_or(false, |e| Self::contains_aggregate(e))
+                        .is_some_and(|e| Self::contains_aggregate(e))
             }
             Expr::Cast { expr, .. } | Expr::TryCast { expr, .. } => Self::contains_aggregate(expr),
             Expr::InList { expr, list, .. } => {
@@ -997,10 +997,8 @@ impl AggregateExec {
                                     None
                                 } else if let Some(i) = v.as_i64() {
                                     Some(i as f64)
-                                } else if let Some(f) = v.as_f64() {
-                                    Some(f)
                                 } else {
-                                    None
+                                    v.as_f64()
                                 }
                             })
                             .collect();
@@ -1226,7 +1224,7 @@ impl AggregateExec {
                             Value::array(vec![])
                         } else {
                             float_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                            let quantiles = vec![0.5, 0.9, 0.99];
+                            let quantiles = [0.5, 0.9, 0.99];
                             let result: Vec<Value> = quantiles.iter().map(|&q| {
                                 let idx = ((float_values.len() as f64 - 1.0) * q).round() as usize;
                                 Value::float64(float_values[idx.min(float_values.len() - 1)])
@@ -1973,7 +1971,7 @@ impl SortAggregateExec {
                             Value::array(vec![])
                         } else {
                             float_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                            let quantiles = vec![0.5, 0.9, 0.99];
+                            let quantiles = [0.5, 0.9, 0.99];
                             let result: Vec<Value> = quantiles.iter().map(|&q| {
                                 let idx = ((float_values.len() as f64 - 1.0) * q).round() as usize;
                                 Value::float64(float_values[idx.min(float_values.len() - 1)])

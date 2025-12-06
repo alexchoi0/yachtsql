@@ -3,6 +3,7 @@
 #![allow(clippy::unnecessary_unwrap)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::wildcard_enum_match_arm)]
+#![allow(clippy::single_match)]
 
 use yachtsql::{DialectType, QueryExecutor};
 

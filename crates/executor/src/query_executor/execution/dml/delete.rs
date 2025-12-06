@@ -35,10 +35,10 @@ impl DmlDeleteExecutor for QueryExecutor {
 
         let has_joins = match &delete.from {
             sqlparser::ast::FromTable::WithFromKeyword(tables) => {
-                tables.first().map_or(false, |t| !t.joins.is_empty())
+                tables.first().is_some_and(|t| !t.joins.is_empty())
             }
             sqlparser::ast::FromTable::WithoutKeyword(tables) => {
-                tables.first().map_or(false, |t| !t.joins.is_empty())
+                tables.first().is_some_and(|t| !t.joins.is_empty())
             }
         };
 

@@ -80,7 +80,7 @@ publicsuffix = "2.2"
 lazy_static = "1.5"
 
 # Caching infrastructure
-moka = { version = "0.12", features = ["sync"] }
+lru = "0.12"
 
 # Async runtime (optional, for parallel execution)
 tokio = { version = "1.42", features = ["rt-multi-thread", "sync", "macros"], optional = true }

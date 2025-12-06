@@ -76,8 +76,8 @@ fn gamma(x: f64) -> f64 {
         return f64::NAN;
     }
 
-    let g = 7;
-    let coeffs = [
+    #[allow(clippy::excessive_precision)]
+    const COEFFS: [f64; 9] = [
         0.99999999999980993,
         676.5203681218851,
         -1259.1392167224028,
@@ -88,14 +88,15 @@ fn gamma(x: f64) -> f64 {
         9.9843695780195716e-6,
         1.5056327351493116e-7,
     ];
+    let g = 7;
 
     if x < 0.5 {
         std::f64::consts::PI / (f64::sin(std::f64::consts::PI * x) * gamma(1.0 - x))
     } else {
         let z = x - 1.0;
-        let mut sum = coeffs[0];
+        let mut sum = COEFFS[0];
         for i in 1..g + 2 {
-            sum += coeffs[i] / (z + i as f64);
+            sum += COEFFS[i] / (z + i as f64);
         }
         let t = z + g as f64 + 0.5;
         (2.0 * std::f64::consts::PI).sqrt() * t.powf(z + 0.5) * (-t).exp() * sum
@@ -116,8 +117,8 @@ fn lgamma(x: f64) -> f64 {
         }
         std::f64::consts::PI.ln() - sin_pi_x.abs().ln() - lgamma(1.0 - x)
     } else {
-        let g = 7;
-        let coeffs = [
+        #[allow(clippy::excessive_precision)]
+        const COEFFS: [f64; 9] = [
             0.99999999999980993,
             676.5203681218851,
             -1259.1392167224028,
@@ -128,11 +129,12 @@ fn lgamma(x: f64) -> f64 {
             9.9843695780195716e-6,
             1.5056327351493116e-7,
         ];
+        let g = 7;
 
         let z = x - 1.0;
-        let mut sum = coeffs[0];
+        let mut sum = COEFFS[0];
         for i in 1..g + 2 {
-            sum += coeffs[i] / (z + i as f64);
+            sum += COEFFS[i] / (z + i as f64);
         }
         let t = z + g as f64 + 0.5;
         0.5 * (2.0 * std::f64::consts::PI).ln() + (z + 0.5) * t.ln() - t + sum.ln()

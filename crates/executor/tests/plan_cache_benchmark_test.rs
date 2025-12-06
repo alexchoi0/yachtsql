@@ -66,7 +66,7 @@ fn bench_cache_lookup() {
                 projection: None,
             };
 
-            cache.insert(key.clone(), CachedPlan::new(plan, sql));
+            cache.insert(key, CachedPlan::new(plan, sql));
             key
         })
         .collect();

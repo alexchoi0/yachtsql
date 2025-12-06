@@ -271,6 +271,7 @@ impl PartialEq for SmallValue {
 impl Eq for SmallValue {}
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use std::mem;
 
@@ -382,9 +383,9 @@ mod tests {
     }
 
     #[test]
-    fn test_clone() {
+    fn test_copy() {
         let v1 = SmallValue::int64(42);
-        let v2 = v1.clone();
+        let v2 = v1;
 
         assert_eq!(v1, v2);
         assert_eq!(v1.as_int64(), v2.as_int64());

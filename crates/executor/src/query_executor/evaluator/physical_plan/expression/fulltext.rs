@@ -473,7 +473,7 @@ impl ProjectionWithExprExec {
             actual: val.data_type().to_string(),
         })?;
         let query = fulltext::to_tsquery(query_str)?;
-        let result = query.not();
+        let result = query.negate();
         Ok(Value::string(tsquery_to_string(&result)))
     }
 }

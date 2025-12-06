@@ -81,6 +81,7 @@ fn get_int(result: &yachtsql_executor::RecordBatch, col: &str, row: usize) -> i6
         .unwrap()
 }
 
+#[allow(dead_code)]
 fn is_null(result: &yachtsql_executor::RecordBatch, col: &str, row: usize) -> bool {
     result
         .column_by_name(col)

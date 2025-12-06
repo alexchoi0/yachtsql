@@ -12,11 +12,8 @@ use super::query_registry::{QueryRegistry, QueryStatus};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MemoryPressure {
     Normal,
-
     Moderate,
-
     High,
-
     Critical,
 }
 
@@ -54,17 +51,11 @@ impl MemoryPressure {
 #[derive(Debug, Clone)]
 pub struct MemoryManagerConfig {
     pub enable_queuing: bool,
-
     pub enable_auto_cancel: bool,
-
     pub enable_adaptive_sizing: bool,
-
     pub pressure_check_interval_secs: u64,
-
     pub max_queued_queries: usize,
-
     pub min_pool_size_bytes: usize,
-
     pub max_pool_size_bytes: usize,
 }
 
@@ -98,11 +89,8 @@ struct MemoryManagerInner {
 
 pub struct MemoryManager {
     pool: Rc<MemoryPool>,
-
     registry: Option<Rc<QueryRegistry>>,
-
     config: MemoryManagerConfig,
-
     inner: Rc<MemoryManagerInner>,
 }
 
@@ -235,19 +223,12 @@ impl MemoryManager {
 #[derive(Debug, Clone)]
 pub struct MemoryManagerStatsSnapshot {
     pub queries_queued: u64,
-
     pub queries_cancelled: u64,
-
     pub current_pressure: MemoryPressure,
-
     pub peak_pressure: MemoryPressure,
-
     pub time_in_normal_secs: u64,
-
     pub time_in_moderate_secs: u64,
-
     pub time_in_high_secs: u64,
-
     pub time_in_critical_secs: u64,
 }
 
@@ -279,20 +260,15 @@ struct QueryQueueInner {
 
 pub struct QueryQueue {
     queue: std::rc::Rc<std::cell::RefCell<Vec<QueuedQuery>>>,
-
     max_size: usize,
-
     inner: Rc<QueryQueueInner>,
 }
 
 #[derive(Debug, Clone)]
 struct QueuedQuery {
     query_id: u64,
-
     priority: QueryPriority,
-
     queued_at: Instant,
-
     estimated_memory_bytes: usize,
 }
 
@@ -385,13 +361,9 @@ impl QueryQueue {
 #[derive(Debug, Clone)]
 pub struct QueryQueueStats {
     pub current_size: usize,
-
     pub max_size: usize,
-
     pub total_queued: u64,
-
     pub total_dequeued: u64,
-
     pub total_rejected: u64,
 }
 
@@ -532,10 +504,12 @@ mod tests {
     #[test]
     fn test_adaptive_sizing_suggestion() {
         let pool = Rc::new(MemoryPool::new(1000));
-        let mut config = MemoryManagerConfig::default();
-        config.enable_adaptive_sizing = true;
-        config.min_pool_size_bytes = 500;
-        config.max_pool_size_bytes = 5000;
+        let config = MemoryManagerConfig {
+            enable_adaptive_sizing: true,
+            min_pool_size_bytes: 500,
+            max_pool_size_bytes: 5000,
+            ..Default::default()
+        };
 
         let manager = MemoryManager::new(pool.clone(), None, config);
 

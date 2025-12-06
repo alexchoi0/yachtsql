@@ -222,7 +222,7 @@ impl ExecutionPlan for HashJoinExec {
                 }
 
                 let key_bytes = serialize_key(&join_key);
-                let has_match = right_hash_table.get(&key_bytes).is_some();
+                let has_match = right_hash_table.contains_key(&key_bytes);
 
                 match self.join_type {
                     JoinType::Semi => {
