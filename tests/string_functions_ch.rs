@@ -411,9 +411,7 @@ fn test_regexp_substr() {
     setup_links_table(&mut executor);
 
     let result = executor
-        .execute_sql(
-            "SELECT extract(url, 'https?://[^/]+') AS domain FROM links WHERE id = 1",
-        )
+        .execute_sql("SELECT extract(url, 'https?://[^/]+') AS domain FROM links WHERE id = 1")
         .unwrap();
 
     assert_eq!(result.num_rows(), 1);
