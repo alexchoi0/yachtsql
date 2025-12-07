@@ -1,6 +1,6 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 
-use crate::common::{create_executor, setup_users_table, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor, setup_users_table};
 
 pub fn bench_select_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("bq_select_all");

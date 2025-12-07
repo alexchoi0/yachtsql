@@ -1,7 +1,7 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use yachtsql::QueryExecutor;
 
-use crate::common::{create_executor, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor};
 
 fn setup_merge_tables(executor: &mut QueryExecutor, rows: usize) {
     executor
@@ -46,7 +46,9 @@ pub fn bench_insert(c: &mut Criterion) {
                         executor
                             .execute_sql(&format!(
                                 "INSERT INTO items VALUES ({}, 'item{}', {})",
-                                i, i, i * 10
+                                i,
+                                i,
+                                i * 10
                             ))
                             .unwrap(),
                     );

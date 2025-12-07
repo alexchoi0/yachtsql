@@ -1,6 +1,6 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 
-use crate::common::{create_executor, setup_orders_table, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor, setup_orders_table};
 
 pub fn bench_count(c: &mut Criterion) {
     let mut group = c.benchmark_group("ch_agg_count");
@@ -20,7 +20,13 @@ pub fn bench_sum(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_orders_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT SUM(amount) FROM orders").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT SUM(amount) FROM orders")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();
@@ -32,7 +38,13 @@ pub fn bench_avg(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_orders_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT AVG(amount) FROM orders").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT AVG(amount) FROM orders")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();
@@ -65,7 +77,9 @@ pub fn bench_group_by(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     executor
-                        .execute_sql("SELECT status, COUNT(1), SUM(amount) FROM orders GROUP BY status")
+                        .execute_sql(
+                            "SELECT status, COUNT(1), SUM(amount) FROM orders GROUP BY status",
+                        )
                         .unwrap(),
                 )
             })

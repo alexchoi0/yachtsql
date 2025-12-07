@@ -1,6 +1,6 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 
-use crate::common::{create_executor, setup_users_table, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor, setup_users_table};
 
 pub fn bench_string_upper(c: &mut Criterion) {
     let mut group = c.benchmark_group("pg_func_upper");
@@ -8,7 +8,13 @@ pub fn bench_string_upper(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_users_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT UPPER(name) FROM users").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT UPPER(name) FROM users")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();
@@ -20,7 +26,13 @@ pub fn bench_string_lower(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_users_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT LOWER(name) FROM users").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT LOWER(name) FROM users")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();
@@ -32,7 +44,13 @@ pub fn bench_string_length(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_users_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT LENGTH(name) FROM users").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT LENGTH(name) FROM users")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();
@@ -80,7 +98,13 @@ pub fn bench_math_abs(c: &mut Criterion) {
         let mut executor = create_executor();
         setup_users_table(&mut executor, rows);
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |b, _| {
-            b.iter(|| black_box(executor.execute_sql("SELECT ABS(age - 50) FROM users").unwrap()))
+            b.iter(|| {
+                black_box(
+                    executor
+                        .execute_sql("SELECT ABS(age - 50) FROM users")
+                        .unwrap(),
+                )
+            })
         });
     }
     group.finish();

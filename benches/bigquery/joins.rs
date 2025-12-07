@@ -1,6 +1,6 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 
-use crate::common::{create_executor, setup_join_tables, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor, setup_join_tables};
 
 pub fn bench_inner_join(c: &mut Criterion) {
     let mut group = c.benchmark_group("bq_join_inner");

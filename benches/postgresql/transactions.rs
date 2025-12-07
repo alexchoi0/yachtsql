@@ -1,6 +1,6 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 
-use crate::common::{create_executor, setup_users_table, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor, setup_users_table};
 
 pub fn bench_begin_commit(c: &mut Criterion) {
     let mut group = c.benchmark_group("pg_tx_begin_commit");

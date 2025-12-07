@@ -1,4 +1,4 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use yachtsql::QueryExecutor;
 
 use crate::common::create_executor;
@@ -7,7 +7,9 @@ const SCALE_SIZES: [usize; 6] = [10, 50, 100, 200, 500, 1000];
 
 fn setup_large_table(executor: &mut QueryExecutor, rows: usize) {
     executor
-        .execute_sql("CREATE TABLE large_data (id INT64, value FLOAT64, category STRING, flag INT64)")
+        .execute_sql(
+            "CREATE TABLE large_data (id INT64, value FLOAT64, category STRING, flag INT64)",
+        )
         .expect("Failed to create large_data table");
 
     let categories = ["A", "B", "C", "D", "E"];

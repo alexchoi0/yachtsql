@@ -103,4 +103,6 @@ criterion_group!(
 
 criterion_group!(sanity, quick::bench_quick,);
 
-criterion_main!(basic_ops, agg, join, func, complex, dtype, opt, scale, dml, profile, sanity);
+criterion_main!(
+    basic_ops, agg, join, func, complex, dtype, opt, scale, dml, profile, sanity
+);

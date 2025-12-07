@@ -44,6 +44,7 @@ pub fn setup_orders_table(executor: &mut QueryExecutor, rows: usize) {
     }
 }
 
+#[allow(dead_code)]
 pub fn setup_products_table(executor: &mut QueryExecutor, rows: usize) {
     executor
         .execute_sql("CREATE TABLE products (id INT64, name STRING, price FLOAT64, stock INT64)")

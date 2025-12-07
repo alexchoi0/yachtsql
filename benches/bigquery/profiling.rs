@@ -1,4 +1,4 @@
-use criterion::{black_box, Criterion};
+use criterion::{Criterion, black_box};
 
 use crate::common::{create_executor, setup_join_tables};
 

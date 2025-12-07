@@ -1,7 +1,7 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use yachtsql::QueryExecutor;
 
-use crate::common::{create_executor, ROW_COUNTS};
+use crate::common::{ROW_COUNTS, create_executor};
 
 fn setup_numeric_table(executor: &mut QueryExecutor, rows: usize) {
     executor
@@ -27,7 +27,10 @@ fn setup_string_table(executor: &mut QueryExecutor, rows: usize) {
 
     for i in 0..rows {
         let short = format!("s{}", i);
-        let long = format!("This is a longer string with more content for row number {}", i);
+        let long = format!(
+            "This is a longer string with more content for row number {}",
+            i
+        );
         executor
             .execute_sql(&format!(
                 "INSERT INTO string_data VALUES ({}, '{}', '{}')",
@@ -64,7 +67,9 @@ pub fn bench_float64_operations(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     executor
-                        .execute_sql("SELECT float_val, float_val + 1.5, float_val * 2.0 FROM numeric_data")
+                        .execute_sql(
+                            "SELECT float_val, float_val + 1.5, float_val * 2.0 FROM numeric_data",
+                        )
                         .unwrap(),
                 )
             })
@@ -100,7 +105,9 @@ pub fn bench_mixed_types(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     executor
-                        .execute_sql("SELECT id, int_val, float_val, int_val + float_val FROM numeric_data")
+                        .execute_sql(
+                            "SELECT id, int_val, float_val, int_val + float_val FROM numeric_data",
+                        )
                         .unwrap(),
                 )
             })
@@ -118,7 +125,9 @@ pub fn bench_type_comparison(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     executor
-                        .execute_sql("SELECT * FROM numeric_data WHERE int_val > 50 AND float_val < 100.0")
+                        .execute_sql(
+                            "SELECT * FROM numeric_data WHERE int_val > 50 AND float_val < 100.0",
+                        )
                         .unwrap(),
                 )
             })
