@@ -1,7 +1,7 @@
 use yachtsql::QueryExecutor;
 
-use crate::common::create_executor;
 use crate::assert_table_eq;
+use crate::common::create_executor;
 
 fn setup_table(executor: &mut QueryExecutor) {
     executor

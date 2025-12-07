@@ -1,5 +1,5 @@
-use crate::common::{create_executor, date, timestamp};
 use crate::assert_table_eq;
+use crate::common::{create_executor, date, timestamp};
 
 #[test]
 fn test_current_date() {

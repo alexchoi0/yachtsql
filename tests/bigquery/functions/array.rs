@@ -1,5 +1,5 @@
-use crate::common::{create_executor, d};
 use crate::assert_table_eq;
+use crate::common::{create_executor, d};
 
 #[test]
 fn test_array_length() {

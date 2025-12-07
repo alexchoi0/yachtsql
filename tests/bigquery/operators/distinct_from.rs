@@ -1,5 +1,5 @@
-use crate::common::create_executor;
 use crate::assert_table_eq;
+use crate::common::create_executor;
 
 #[test]
 fn test_is_distinct_from_integers() {
