@@ -13,3 +13,4 @@ output.jsonl
 *.backup
 *.tmp
 .DS_Store
+*.swp
