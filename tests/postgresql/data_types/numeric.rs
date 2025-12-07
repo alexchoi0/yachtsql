@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use crate::assert_table_eq;
 use crate::common::{create_executor, numeric};
 

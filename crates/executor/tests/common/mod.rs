@@ -6,6 +6,7 @@ pub mod assertions;
 use yachtsql::{DataType, Table, Value};
 use yachtsql_storage::{Field, Schema};
 
+#[allow(dead_code)]
 pub trait IntoValue {
     fn into_value(self) -> Value;
 }

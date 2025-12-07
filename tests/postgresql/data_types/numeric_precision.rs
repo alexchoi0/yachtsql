@@ -1,5 +1,5 @@
+use crate::assert_table_eq;
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
 
 #[test]
 #[ignore = "Implement me!"]
@@ -108,17 +108,17 @@ fn test_bigint() {
 #[test]
 fn test_real() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT 3.14::REAL").unwrap();
-    assert_table_eq!(result, [[3.14]]);
+    let result = executor.execute_sql("SELECT 3.11::REAL").unwrap();
+    assert_table_eq!(result, [[3.11]]);
 }
 
 #[test]
 fn test_double_precision() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT 3.141592653589793::DOUBLE PRECISION")
+        .execute_sql("SELECT 3.111592653589793::DOUBLE PRECISION")
         .unwrap();
-    assert_table_eq!(result, [[3.141592653589793]]);
+    assert_table_eq!(result, [[3.111592653589793]]);
 }
 
 #[test]

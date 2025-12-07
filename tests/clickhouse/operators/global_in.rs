@@ -1,5 +1,5 @@
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
+use crate::assert_table_eq;
 
 #[test]
 fn test_global_in_basic() {

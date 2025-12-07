@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use crate::common::create_executor;
 
 #[ignore = "Implement me!"]
@@ -277,7 +279,6 @@ fn test_file_name() {
         .execute_sql("SELECT _file FROM file_test LIMIT 1")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]

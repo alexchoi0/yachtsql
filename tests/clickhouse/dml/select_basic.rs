@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use yachtsql::QueryExecutor;
 
 use crate::assert_table_eq;

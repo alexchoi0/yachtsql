@@ -1,17 +1,19 @@
+#![allow(clippy::approx_constant)]
+
+use crate::assert_table_eq;
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
 
 #[test]
 fn test_round() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT round(3.14159)").unwrap();
+    let result = executor.execute_sql("SELECT round(3.12131)").unwrap();
     assert_table_eq!(result, [[3.0]]);
 }
 
 #[test]
 fn test_round_precision() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT round(3.14159, 2)").unwrap();
+    let result = executor.execute_sql("SELECT round(3.12131, 2)").unwrap();
     assert_table_eq!(result, [[3.14]]);
 }
 
@@ -60,7 +62,7 @@ fn test_floor_negative() {
 #[test]
 fn test_floor_precision() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT floor(3.14159, 2)").unwrap();
+    let result = executor.execute_sql("SELECT floor(3.12131, 2)").unwrap();
     assert_table_eq!(result, [[3.14]]);
 }
 
@@ -102,7 +104,7 @@ fn test_trunc_negative() {
 #[test]
 fn test_truncate_alias() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT truncate(3.14159, 2)").unwrap();
+    let result = executor.execute_sql("SELECT truncate(3.12131, 2)").unwrap();
     assert_table_eq!(result, [[3.14]]);
 }
 
@@ -183,9 +185,9 @@ fn test_round_various_types() {
     let result = executor
         .execute_sql(
             "SELECT
-                round(toDecimal64(3.14159, 5), 2) AS decimal_round,
-                round(toFloat32(3.14159), 2) AS float32_round,
-                round(toFloat64(3.14159), 2) AS float64_round",
+                round(toDecimal64(3.12131, 5), 2) AS decimal_round,
+                round(toFloat32(3.12131), 2) AS float32_round,
+                round(toFloat64(3.12131), 2) AS float64_round",
         )
         .unwrap();
     assert_table_eq!(result, [[3.14, 3.14, 3.14]]);

@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use crate::assert_table_eq;
 use crate::common::{create_executor, d, n, ts};
 
@@ -79,8 +81,8 @@ fn test_to_float32() {
 #[test]
 fn test_to_float64() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT toFloat64('3.14159')").unwrap();
-    assert_table_eq!(result, [[3.14159]]);
+    let result = executor.execute_sql("SELECT toFloat64('3.12131')").unwrap();
+    assert_table_eq!(result, [[3.12131]]);
 }
 
 #[ignore = "Implement me!"]

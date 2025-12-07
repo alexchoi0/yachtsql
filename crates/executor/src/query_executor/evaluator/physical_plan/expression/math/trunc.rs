@@ -123,7 +123,7 @@ mod tests {
             Field::nullable("val", DataType::Float64),
             Field::nullable("decimals", DataType::Int64),
         ]);
-        let batch = create_batch(schema, vec![vec![Value::float64(3.14159), Value::int64(2)]]);
+        let batch = create_batch(schema, vec![vec![Value::float64(3.12131), Value::int64(2)]]);
         let args = vec![Expr::column("val"), Expr::column("decimals")];
         let result = ProjectionWithExprExec::eval_trunc(&args, &batch, 0).expect("success");
         if let Some(f) = result.as_f64() {

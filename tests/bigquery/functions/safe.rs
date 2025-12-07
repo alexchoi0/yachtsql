@@ -1,5 +1,5 @@
 use crate::common::{create_executor, d, n, ts};
-use crate::{assert_table_eq, table};
+use crate::assert_table_eq;
 
 #[test]
 fn test_safe_cast_string_to_int64_valid() {

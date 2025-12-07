@@ -1,5 +1,7 @@
+#![allow(unused_variables)]
+
+use crate::assert_table_eq;
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
 
 #[ignore = "Implement me!"]
 #[test]
@@ -154,7 +156,6 @@ fn test_cluster() {
         .execute_sql("SELECT * FROM cluster('test_cluster', system.one)")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -165,7 +166,6 @@ fn test_cluster_all_replicas() {
         .execute_sql("SELECT * FROM clusterAllReplicas('test_cluster', system.one)")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -188,7 +188,6 @@ fn test_input_table_function() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]

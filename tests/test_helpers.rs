@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use yachtsql::{DataType, Table, Value};
 use yachtsql_storage::{Field, Schema};
 

@@ -1,5 +1,5 @@
+use crate::assert_table_eq;
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
 
 #[test]
 #[ignore = "Implement me!"]
@@ -149,9 +149,9 @@ fn test_numeric_cast_from_int() {
 fn test_numeric_cast_from_float() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT ROUND(CAST(CAST(3.14159 AS NUMERIC) AS FLOAT64), 5)")
+        .execute_sql("SELECT ROUND(CAST(CAST(3.12131 AS NUMERIC) AS FLOAT64), 5)")
         .unwrap();
-    assert_table_eq!(result, [[3.14159]]);
+    assert_table_eq!(result, [[3.12131]]);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crate::common::create_executor;
-use crate::{assert_table_eq, table};
+use crate::assert_table_eq;
 
 #[ignore = "Implement me!"]
 #[test]
@@ -268,7 +268,7 @@ fn test_ends_with() {
 
 #[ignore = "Implement me!"]
 #[test]
-fn test_ngramDistance() {
+fn test_ngram_distance() {
     let mut executor = create_executor();
     let result = executor
         .execute_sql("SELECT ngramDistance('hello', 'hallo')")
@@ -278,7 +278,7 @@ fn test_ngramDistance() {
 
 #[ignore = "Implement me!"]
 #[test]
-fn test_ngramSearch() {
+fn test_ngram_search() {
     let mut executor = create_executor();
     let result = executor
         .execute_sql("SELECT ngramSearch('hello world', 'world')")

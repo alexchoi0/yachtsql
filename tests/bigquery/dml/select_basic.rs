@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use yachtsql::QueryExecutor;
 
 use super::super::common::create_executor;

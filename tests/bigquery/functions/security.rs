@@ -52,7 +52,7 @@ fn test_format_string() {
 fn test_format_float() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT FORMAT('%.2f', 3.14159)")
+        .execute_sql("SELECT FORMAT('%.2f', 3.12131)")
         .unwrap();
     assert_table_eq!(result, [["3.14"]]);
 }

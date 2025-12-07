@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use crate::common::create_executor;
 
 #[ignore = "Implement me!"]
@@ -97,7 +99,6 @@ fn test_information_schema_table_constraints() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -122,7 +123,6 @@ fn test_information_schema_key_column_usage() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -141,7 +141,6 @@ fn test_information_schema_column_privileges() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -160,7 +159,6 @@ fn test_information_schema_table_privileges() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -174,7 +172,6 @@ fn test_information_schema_referential_constraints() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -188,7 +185,6 @@ fn test_information_schema_check_constraints() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -274,7 +270,6 @@ fn test_system_processes() {
         .execute_sql("SELECT query_id, query, elapsed FROM system.processes")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -289,7 +284,6 @@ fn test_system_query_log() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -311,7 +305,6 @@ fn test_system_parts() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -341,7 +334,6 @@ fn test_system_partitions() {
         )
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -352,7 +344,6 @@ fn test_system_merges() {
         .execute_sql("SELECT database, table, progress FROM system.merges")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -363,7 +354,6 @@ fn test_system_mutations() {
         .execute_sql("SELECT database, table, mutation_id, command FROM system.mutations")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -374,7 +364,6 @@ fn test_system_replicas() {
         .execute_sql("SELECT database, table, is_leader FROM system.replicas")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -385,7 +374,6 @@ fn test_system_dictionaries() {
         .execute_sql("SELECT name, type, status FROM system.dictionaries")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -396,7 +384,6 @@ fn test_system_users() {
         .execute_sql("SELECT name, storage FROM system.users")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -407,7 +394,6 @@ fn test_system_roles() {
         .execute_sql("SELECT name FROM system.roles")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -418,7 +404,6 @@ fn test_system_grants() {
         .execute_sql("SELECT user_name, role_name, access_type FROM system.grants")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -429,7 +414,6 @@ fn test_system_quotas() {
         .execute_sql("SELECT name FROM system.quotas")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -440,7 +424,6 @@ fn test_system_row_policies() {
         .execute_sql("SELECT name, short_name, database, table FROM system.row_policies")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -451,7 +434,6 @@ fn test_system_settings_profiles() {
         .execute_sql("SELECT name, storage FROM system.settings_profiles")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -492,7 +474,6 @@ fn test_system_disks() {
         .execute_sql("SELECT name, path, total_space FROM system.disks")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -503,7 +484,6 @@ fn test_system_storage_policies() {
         .execute_sql("SELECT policy_name, volume_name FROM system.storage_policies")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -514,7 +494,6 @@ fn test_system_clusters() {
         .execute_sql("SELECT cluster, shard_num, replica_num FROM system.clusters")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
@@ -545,7 +524,6 @@ fn test_system_collations() {
         .execute_sql("SELECT name, language FROM system.collations")
         .unwrap();
     // TODO: Replace with proper table! assertion
-    assert!(result.num_rows() >= 0);
 }
 
 #[ignore = "Implement me!"]
