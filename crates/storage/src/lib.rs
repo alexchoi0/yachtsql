@@ -57,7 +57,8 @@ pub use table::{
 pub use temp_storage::{OnCommitAction, TempStorage, TempTableMetadata};
 pub use transaction::{
     ConstraintTiming, DMLOperation, DeferredFKCheck, DeferredFKState, IsolationLevel,
-    PendingChanges, Savepoint, Transaction, TransactionManager, TransactionScope,
+    PendingChanges, Savepoint, Transaction, TransactionCharacteristics, TransactionManager,
+    TransactionScope,
 };
 pub use trigger::{TriggerEvent, TriggerLevel, TriggerMetadata, TriggerRegistry, TriggerTiming};
 pub use type_registry::{TypeDefinition, TypeRegistry, UserDefinedType};

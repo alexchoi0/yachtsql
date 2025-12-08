@@ -115,6 +115,34 @@ pub enum IsolationLevel {
     Serializable,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransactionCharacteristics {
+    pub isolation_level: Option<IsolationLevel>,
+    pub read_only: Option<bool>,
+    pub deferrable: Option<bool>,
+}
+
+impl TransactionCharacteristics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_isolation_level(mut self, level: IsolationLevel) -> Self {
+        self.isolation_level = Some(level);
+        self
+    }
+
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = Some(read_only);
+        self
+    }
+
+    pub fn with_deferrable(mut self, deferrable: bool) -> Self {
+        self.deferrable = Some(deferrable);
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Savepoint {
     pub name: String,
@@ -231,6 +259,10 @@ pub struct Transaction {
 
     pub isolation_level: IsolationLevel,
 
+    pub read_only: bool,
+
+    pub deferrable: bool,
+
     pub started_at: Instant,
 
     pub deferred_fk_state: DeferredFKState,
@@ -277,12 +309,32 @@ impl Transaction {
         storage: &Storage,
         isolation_level: IsolationLevel,
     ) -> Self {
+        Self::with_characteristics(
+            txn_id,
+            start_timestamp,
+            storage,
+            isolation_level,
+            false,
+            false,
+        )
+    }
+
+    pub fn with_characteristics(
+        txn_id: u64,
+        start_timestamp: u64,
+        storage: &Storage,
+        isolation_level: IsolationLevel,
+        read_only: bool,
+        deferrable: bool,
+    ) -> Self {
         Self {
             txn_id,
             snapshot: storage.clone(),
             pending_changes: Some(PendingChanges::new()),
             savepoints: Vec::new(),
             isolation_level,
+            read_only,
+            deferrable,
             started_at: Instant::now(),
             deferred_fk_state: DeferredFKState::default(),
             start_timestamp,
@@ -318,6 +370,26 @@ impl Transaction {
 
     pub fn mark_active(&mut self) {
         self.status = TransactionStatus::Active;
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
+    pub fn is_deferrable(&self) -> bool {
+        self.deferrable
+    }
+
+    pub fn set_deferrable(&mut self, deferrable: bool) {
+        self.deferrable = deferrable;
+    }
+
+    pub fn set_isolation_level(&mut self, level: IsolationLevel) {
+        self.isolation_level = level;
     }
 
     pub fn track_insert(&mut self, table_name: &str, row: Row) {
@@ -580,6 +652,52 @@ impl TransactionManager {
         self.active_transaction = Some(ActiveTransactionContext { scope, transaction });
 
         Ok(txn_id)
+    }
+
+    pub fn begin_with_characteristics(
+        &mut self,
+        storage: &mut Storage,
+        characteristics: TransactionCharacteristics,
+        scope: TransactionScope,
+    ) -> Result<u64> {
+        if self.active_transaction.is_some() {
+            return Err(yachtsql_core::error::Error::InvalidOperation(
+                "Cannot BEGIN: transaction already active".to_string(),
+            ));
+        }
+
+        let txn_id = self.next_txn_id;
+        let start_timestamp = self.next_timestamp();
+
+        let isolation = characteristics
+            .isolation_level
+            .unwrap_or(self.default_isolation_level);
+        let read_only = characteristics.read_only.unwrap_or(false);
+        let deferrable = characteristics.deferrable.unwrap_or(false);
+
+        let transaction = Transaction::with_characteristics(
+            txn_id,
+            start_timestamp,
+            storage,
+            isolation,
+            read_only,
+            deferrable,
+        );
+
+        self.next_txn_id += 1;
+        self.active_transaction = Some(ActiveTransactionContext { scope, transaction });
+
+        Ok(txn_id)
+    }
+
+    pub fn get_current_characteristics(&self) -> Option<TransactionCharacteristics> {
+        self.active_transaction
+            .as_ref()
+            .map(|ctx| TransactionCharacteristics {
+                isolation_level: Some(ctx.transaction.isolation_level),
+                read_only: Some(ctx.transaction.read_only),
+                deferrable: Some(ctx.transaction.deferrable),
+            })
     }
 
     fn apply_deltas(&self, storage: &mut Storage, changes: &PendingChanges) -> Result<()> {

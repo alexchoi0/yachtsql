@@ -382,6 +382,22 @@ impl QueryExecutor {
                 CustomStatement::SetConstraints { .. } => self.execute_set_constraints(custom_stmt),
                 CustomStatement::ExistsTable { name } => self.execute_exists_table(name),
                 CustomStatement::ExistsDatabase { name } => self.execute_exists_database(name),
+                CustomStatement::Abort => {
+                    self.execute_rollback_transaction()?;
+                    Self::empty_result()
+                }
+                CustomStatement::BeginTransaction {
+                    isolation_level,
+                    read_only,
+                    deferrable,
+                } => {
+                    self.execute_begin_transaction_with_options(
+                        isolation_level.clone(),
+                        *read_only,
+                        *deferrable,
+                    )?;
+                    Self::empty_result()
+                }
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
                     format!("Custom statement not yet supported: {:?}", custom_stmt),
@@ -487,15 +503,29 @@ impl QueryExecutor {
                 result
             }
 
-            StatementJob::DML { operation, stmt } => match operation {
-                DmlOperation::Insert => self.execute_insert(&stmt, sql),
-                DmlOperation::Update => self.execute_update(&stmt, sql),
-                DmlOperation::Delete => self.execute_delete(&stmt, sql),
-                DmlOperation::Truncate => {
-                    let _rows_affected = self.execute_truncate(&stmt)?;
-                    Self::empty_result()
+            StatementJob::DML { operation, stmt } => {
+                if self.is_transaction_read_only() {
+                    let op_name = match operation {
+                        DmlOperation::Insert => "INSERT",
+                        DmlOperation::Update => "UPDATE",
+                        DmlOperation::Delete => "DELETE",
+                        DmlOperation::Truncate => "TRUNCATE",
+                    };
+                    return Err(Error::InvalidOperation(format!(
+                        "cannot execute {} in a read-only transaction",
+                        op_name
+                    )));
                 }
-            },
+                match operation {
+                    DmlOperation::Insert => self.execute_insert(&stmt, sql),
+                    DmlOperation::Update => self.execute_update(&stmt, sql),
+                    DmlOperation::Delete => self.execute_delete(&stmt, sql),
+                    DmlOperation::Truncate => {
+                        let _rows_affected = self.execute_truncate(&stmt)?;
+                        Self::empty_result()
+                    }
+                }
+            }
 
             StatementJob::Query { stmt } => self.execute_select(&stmt, sql),
 
@@ -549,14 +579,46 @@ impl QueryExecutor {
                 self.execute_begin_transaction()
             }
 
-            TxOperation::Commit => {
+            TxOperation::Commit { chain } => {
                 self.require_feature(F782_COMMIT_STATEMENT, "COMMIT statement")?;
-                self.execute_commit_transaction()
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
+                self.execute_commit_transaction()?;
+                if chain {
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
+                }
+                Ok(())
             }
 
-            TxOperation::Rollback => {
+            TxOperation::Rollback { chain } => {
                 self.require_feature(F783_ROLLBACK_STATEMENT, "ROLLBACK statement")?;
-                self.execute_rollback_transaction()
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
+                self.execute_rollback_transaction()?;
+                if chain {
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
+                }
+                Ok(())
             }
 
             TxOperation::Savepoint { name } => {
@@ -582,6 +644,8 @@ impl QueryExecutor {
             TxOperation::SetTransactionIsolation { .. } => Err(Error::unsupported_feature(
                 "SET TRANSACTION ISOLATION LEVEL not yet implemented".to_string(),
             )),
+
+            TxOperation::SetTransaction { modes } => self.execute_set_transaction(modes),
         }
     }
 

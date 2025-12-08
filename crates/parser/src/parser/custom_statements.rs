@@ -74,6 +74,101 @@ impl CustomStatementParser {
         Ok(Some(CustomStatement::SetConstraints { mode, constraints }))
     }
 
+    pub fn parse_abort(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "ABORT") {
+            return Ok(None);
+        }
+
+        ParserHelpers::consume_keyword(tokens, &mut idx, "TRANSACTION");
+        ParserHelpers::consume_keyword(tokens, &mut idx, "WORK");
+
+        if matches!(tokens.get(idx), Some(Token::SemiColon)) {
+            idx += 1;
+        }
+
+        if idx < tokens.len() {
+            return Ok(None);
+        }
+
+        Ok(Some(CustomStatement::Abort))
+    }
+
+    pub fn parse_begin_transaction_with_deferrable(
+        tokens: &[&Token],
+    ) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "BEGIN") {
+            return Ok(None);
+        }
+
+        ParserHelpers::consume_keyword(tokens, &mut idx, "TRANSACTION");
+        ParserHelpers::consume_keyword(tokens, &mut idx, "WORK");
+
+        let mut isolation_level = None;
+        let mut read_only = None;
+        let mut deferrable = None;
+        let mut has_deferrable = false;
+
+        while idx < tokens.len() {
+            if matches!(tokens.get(idx), Some(Token::SemiColon)) {
+                idx += 1;
+                break;
+            }
+
+            if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "ISOLATION", "LEVEL") {
+                let level = Self::parse_isolation_level(tokens, &mut idx)?;
+                isolation_level = Some(level);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "READ", "ONLY") {
+                read_only = Some(true);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "READ", "WRITE") {
+                read_only = Some(false);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "NOT", "DEFERRABLE") {
+                deferrable = Some(false);
+                has_deferrable = true;
+            } else if ParserHelpers::consume_keyword(tokens, &mut idx, "DEFERRABLE") {
+                deferrable = Some(true);
+                has_deferrable = true;
+            } else {
+                break;
+            }
+        }
+
+        if idx < tokens.len() && !matches!(tokens.get(idx), Some(Token::SemiColon)) {
+            return Ok(None);
+        }
+
+        if !has_deferrable {
+            return Ok(None);
+        }
+
+        Ok(Some(CustomStatement::BeginTransaction {
+            isolation_level,
+            read_only,
+            deferrable,
+        }))
+    }
+
+    fn parse_isolation_level(tokens: &[&Token], idx: &mut usize) -> Result<String> {
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "READ", "UNCOMMITTED") {
+            return Ok("READ UNCOMMITTED".to_string());
+        }
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "READ", "COMMITTED") {
+            return Ok("READ COMMITTED".to_string());
+        }
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "REPEATABLE", "READ") {
+            return Ok("REPEATABLE READ".to_string());
+        }
+        if ParserHelpers::consume_keyword(tokens, idx, "SERIALIZABLE") {
+            return Ok("SERIALIZABLE".to_string());
+        }
+        Err(Error::parse_error(
+            "Expected isolation level after ISOLATION LEVEL".to_string(),
+        ))
+    }
+
     pub fn parse_refresh_materialized_view(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
         let pattern = vec![
             TokenPattern::Keyword("REFRESH"),
