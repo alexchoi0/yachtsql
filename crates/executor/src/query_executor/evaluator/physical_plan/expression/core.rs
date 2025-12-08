@@ -574,6 +574,7 @@ impl ProjectionWithExprExec {
                 | FunctionName::Pi
                 | FunctionName::Random
                 | FunctionName::Rand
+                | FunctionName::Div
         ) || matches!(
             name,
             FunctionName::Custom(s) if matches!(s.as_str(),
@@ -586,6 +587,31 @@ impl ProjectionWithExprExec {
                 | "SAFE_NEGATE"
                 | "GAMMA"
                 | "LGAMMA"
+                | "SINH"
+                | "COSH"
+                | "TANH"
+                | "ASINH"
+                | "ACOSH"
+                | "ATANH"
+                | "COT"
+                | "SIND"
+                | "COSD"
+                | "TAND"
+                | "ASIND"
+                | "ACOSD"
+                | "ATAND"
+                | "ATAN2D"
+                | "COTD"
+                | "CBRT"
+                | "FACTORIAL"
+                | "GCD"
+                | "LCM"
+                | "DIV"
+                | "SCALE"
+                | "MIN_SCALE"
+                | "TRIM_SCALE"
+                | "WIDTH_BUCKET"
+                | "SETSEED"
             )
         ) {
             return Self::evaluate_math_function(func_name, args, batch, row_idx);

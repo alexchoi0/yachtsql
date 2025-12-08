@@ -468,7 +468,23 @@ impl ProjectionWithExprExec {
                     || s == "RADIANS"
                     || s == "GAMMA"
                     || s == "LGAMMA"
-                    || s == "TO_NUMBER" =>
+                    || s == "TO_NUMBER"
+                    || s == "SINH"
+                    || s == "COSH"
+                    || s == "TANH"
+                    || s == "ASINH"
+                    || s == "ACOSH"
+                    || s == "ATANH"
+                    || s == "COT"
+                    || s == "SIND"
+                    || s == "COSD"
+                    || s == "TAND"
+                    || s == "ASIND"
+                    || s == "ACOSD"
+                    || s == "ATAND"
+                    || s == "ATAN2D"
+                    || s == "COTD"
+                    || s == "CBRT" =>
             {
                 if s == "TO_NUMBER" && args.len() == 2 {
                     if let yachtsql_optimizer::Expr::Literal(
@@ -482,6 +498,24 @@ impl ProjectionWithExprExec {
                 }
                 Some(DataType::Float64)
             }
+
+            FunctionName::Div => Some(DataType::Int64),
+
+            FunctionName::Custom(s)
+                if s == "FACTORIAL"
+                    || s == "GCD"
+                    || s == "LCM"
+                    || s == "DIV"
+                    || s == "SCALE"
+                    || s == "MIN_SCALE"
+                    || s == "WIDTH_BUCKET" =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if s == "TRIM_SCALE" => Some(DataType::Numeric(None)),
+
+            FunctionName::Custom(s) if s == "SETSEED" => Some(DataType::Unknown),
 
             FunctionName::Custom(s)
                 if s == "SAFE_ADD"

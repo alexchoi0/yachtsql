@@ -128,8 +128,9 @@ impl LogicalPlanBuilder {
     pub(super) fn sql_value_to_literal(&self, value: &ast::ValueWithSpan) -> Result<LiteralValue> {
         match &value.value {
             ast::Value::Number(s, _) => {
+                use rust_decimal::Decimal;
                 if s.contains('.') || s.to_lowercase().contains('e') {
-                    s.parse::<rust_decimal::Decimal>()
+                    Decimal::from_str_exact(s)
                         .map(LiteralValue::Numeric)
                         .or_else(|_| {
                             s.parse::<f64>()
@@ -138,7 +139,7 @@ impl LogicalPlanBuilder {
                         })
                 } else {
                     s.parse::<i64>().map(LiteralValue::Int64).or_else(|_| {
-                        s.parse::<rust_decimal::Decimal>()
+                        Decimal::from_str_exact(s)
                             .map(LiteralValue::Numeric)
                             .map_err(|_| Error::invalid_query("Invalid integer literal"))
                     })

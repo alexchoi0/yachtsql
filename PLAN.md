@@ -1,39 +1,80 @@
-# Worker 3: UUID Data Type Support - COMPLETED ✓
+# Worker 2: Hyperbolic & Additional Math Functions
 
-## Summary
-All 11 UUID tests now pass. Full test suite: 1649 passed, 0 failed.
+## Objective
+Implement missing math functions to remove `#[ignore]` tags from `tests/postgresql/functions/trigonometric.rs`.
 
-## Changes Made
+## Test File
+- `tests/postgresql/functions/trigonometric.rs` (26 ignored tests)
 
-### 1. DDL Support (`crates/executor/src/query_executor/execution/ddl/create.rs`)
-- Added `SqlDataType::Uuid => Ok(DataType::Uuid)` mapping in `sql_type_to_data_type()`
+## Features to Implement
 
-### 2. Parser Support (`crates/parser/src/ast_visitor/expr/special.rs`)
-- Added UUID to CAST data type parsing: `data_type_str.contains("UUID") => CastDataType::Uuid`
+### 1. Hyperbolic Functions
+- `SINH(x)` - Hyperbolic sine
+- `COSH(x)` - Hyperbolic cosine
+- `TANH(x)` - Hyperbolic tangent
+- `ASINH(x)` - Inverse hyperbolic sine
+- `ACOSH(x)` - Inverse hyperbolic cosine
+- `ATANH(x)` - Inverse hyperbolic tangent
 
-### 3. Binary Comparison Operators (`crates/executor/src/query_executor/evaluator/physical_plan/expression/operators.rs`)
-- Added UUID comparison support for =, <>, <, >, <=, >= operators in `evaluate_binary_op()`
+### 2. Degree-Based Trigonometric Functions
+- `SIND(degrees)` - Sine of angle in degrees
+- `COSD(degrees)` - Cosine of angle in degrees
+- `TAND(degrees)` - Tangent of angle in degrees
+- `ASIND(x)` - Arc sine returning degrees
+- `ACOSD(x)` - Arc cosine returning degrees
+- `ATAND(x)` - Arc tangent returning degrees
+- `ATAN2D(y, x)` - Two-argument arc tangent in degrees
+- `COTD(degrees)` - Cotangent of angle in degrees
+- `COT(radians)` - Cotangent
 
-### 4. Column Type Coercion (`crates/storage/src/column.rs`)
-- Added string-to-UUID coercion in `Column::push()` using `uuid::Uuid::parse_str()`
+### 3. Additional Math Functions
+- `LOG(x)` - Base-10 logarithm (single argument)
+- `CBRT(x)` - Cube root
+- `FACTORIAL(n)` - Factorial
+- `GCD(a, b)` - Greatest common divisor
+- `LCM(a, b)` - Least common multiple
+- `DIV(a, b)` - Integer division
 
-### 5. Sorting Support (`crates/executor/src/query_executor/evaluator/physical_plan/sort.rs`)
-- Added UUID comparison in `compare_values()` for ORDER BY support
+### 4. Numeric Precision Functions
+- `MIN_SCALE(numeric)` - Minimum scale needed
+- `SCALE(numeric)` - Current scale
+- `TRIM_SCALE(numeric)` - Remove trailing zeros
+- `WIDTH_BUCKET(value, low, high, buckets)` - Histogram bucket
 
-### 6. Test File (`tests/postgresql/data_types/uuid.rs`)
-- Removed all `#[ignore]` tags from 10 tests
+### 5. Random Functions
+- `SETSEED(seed)` - Set random seed
 
-## Test Results
+## Implementation Steps
 
-All 11 UUID tests pass:
-- test_uuid_literal
-- test_uuid_column
-- test_uuid_comparison
-- test_uuid_not_equal
-- test_uuid_null
-- test_uuid_ordering
-- test_gen_random_uuid
-- test_uuid_in_where
-- test_uuid_uppercase
-- test_uuid_distinct
-- test_uuid_group_by
+1. **Register Functions**
+   - Add all function names to function registry
+   - Map to appropriate implementations
+
+2. **Implement Hyperbolic Functions**
+   - Use Rust's `f64::sinh()`, `cosh()`, `tanh()`, `asinh()`, `acosh()`, `atanh()`
+
+3. **Implement Degree Functions**
+   - Convert degrees to radians: `radians = degrees * PI / 180`
+   - Call standard trig functions
+   - Convert result back for inverse functions
+
+4. **Implement Math Functions**
+   - `CBRT`: Use `f64::cbrt()`
+   - `FACTORIAL`: Iterative or lookup table for small n
+   - `GCD`/`LCM`: Euclidean algorithm
+   - `DIV`: Integer division with truncation toward zero
+
+5. **Implement Numeric Functions**
+   - Work with decimal/numeric type internals
+   - `SCALE`: Return decimal places
+   - `TRIM_SCALE`: Remove trailing zeros
+   - `WIDTH_BUCKET`: Calculate histogram bucket index
+
+## Key Files to Modify
+- `crates/executor/src/query_executor/evaluator/physical_plan/expression/` - Function implementations
+- Function registry files
+
+## Testing
+```bash
+cargo test --test postgresql functions::trigonometric
+```
