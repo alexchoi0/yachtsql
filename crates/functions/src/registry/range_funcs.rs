@@ -155,9 +155,9 @@ fn register_utility(registry: &mut FunctionRegistry) {
     );
 
     registry.register_scalar(
-        "LOWER".to_string(),
+        "RANGE_LOWER".to_string(),
         Rc::new(ScalarFunctionImpl {
-            name: "LOWER".to_string(),
+            name: "RANGE_LOWER".to_string(),
             arg_types: vec![DataType::Range(RangeType::Int4Range)],
             return_type: DataType::Int64,
             variadic: false,
@@ -166,9 +166,9 @@ fn register_utility(registry: &mut FunctionRegistry) {
     );
 
     registry.register_scalar(
-        "UPPER".to_string(),
+        "RANGE_UPPER".to_string(),
         Rc::new(ScalarFunctionImpl {
-            name: "UPPER".to_string(),
+            name: "RANGE_UPPER".to_string(),
             arg_types: vec![DataType::Range(RangeType::Int4Range)],
             return_type: DataType::Int64,
             variadic: false,
