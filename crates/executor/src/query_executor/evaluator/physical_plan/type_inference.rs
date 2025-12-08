@@ -1325,6 +1325,44 @@ impl ProjectionWithExprExec {
             }
             FunctionName::MapExists | FunctionName::MapAll => Some(DataType::Bool),
 
+            FunctionName::CurrentDatabase
+            | FunctionName::CurrentUser
+            | FunctionName::Version
+            | FunctionName::Timezone
+            | FunctionName::ServerTimezone
+            | FunctionName::HostName
+            | FunctionName::Fqdn
+            | FunctionName::ToTypeName
+            | FunctionName::DumpColumnStructure
+            | FunctionName::QueryId
+            | FunctionName::InitialQueryId
+            | FunctionName::ServerUuid
+            | FunctionName::GetSetting => Some(DataType::String),
+
+            FunctionName::Uptime
+            | FunctionName::BlockNumber
+            | FunctionName::RowNumberInBlock
+            | FunctionName::RowNumberInAllBlocks
+            | FunctionName::BlockSize
+            | FunctionName::CountDigits => Some(DataType::Int64),
+
+            FunctionName::IsFinite
+            | FunctionName::IsInfinite
+            | FunctionName::IsNan
+            | FunctionName::IsDecimalOverflow => Some(DataType::Bool),
+
+            FunctionName::DefaultValueOfArgumentType => {
+                if !args.is_empty() {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::DefaultValueOfTypeName => None,
+
+            FunctionName::CurrentSchemas => Some(DataType::Array(Box::new(DataType::String))),
+
             _ => None,
         }
     }
