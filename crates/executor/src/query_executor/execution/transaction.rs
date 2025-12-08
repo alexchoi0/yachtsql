@@ -1,8 +1,9 @@
 use debug_print::debug_eprintln;
 use yachtsql_core::error::{Error, Result};
-use yachtsql_storage::TransactionScope;
+use yachtsql_storage::{IsolationLevel, TransactionCharacteristics, TransactionScope};
 
 use super::QueryExecutor;
+use super::dispatcher::{TransactionAccessModeInfo, TransactionModeInfo};
 
 #[derive(Debug, Clone)]
 pub struct SessionTransactionController {
@@ -130,6 +131,33 @@ impl QueryExecutor {
         let mut storage = self.storage.borrow_mut();
         let mut manager = self.transaction_manager.borrow_mut();
         manager.begin_scoped(&mut storage, scope).map(|_| ())
+    }
+
+    pub(crate) fn begin_transaction_with_characteristics(
+        &mut self,
+        characteristics: TransactionCharacteristics,
+        scope: TransactionScope,
+    ) -> Result<()> {
+        let mut storage = self.storage.borrow_mut();
+        let mut manager = self.transaction_manager.borrow_mut();
+        manager
+            .begin_with_characteristics(&mut storage, characteristics, scope)
+            .map(|_| ())
+    }
+
+    pub(crate) fn get_current_transaction_characteristics(
+        &self,
+    ) -> Option<TransactionCharacteristics> {
+        let manager = self.transaction_manager.borrow();
+        manager.get_current_characteristics()
+    }
+
+    pub(crate) fn is_transaction_read_only(&self) -> bool {
+        let manager = self.transaction_manager.borrow();
+        manager
+            .get_active_transaction()
+            .map(|t| t.is_read_only())
+            .unwrap_or(false)
     }
 
     pub(crate) fn ensure_autocommit_off_transaction(&mut self) -> Result<()> {
@@ -370,6 +398,54 @@ impl QueryExecutor {
         Ok(())
     }
 
+    pub fn execute_begin_transaction_with_options(
+        &mut self,
+        isolation_level: Option<String>,
+        read_only: Option<bool>,
+        deferrable: Option<bool>,
+    ) -> Result<()> {
+        if self.explicit_transaction_active() {
+            return Err(Error::InvalidOperation(
+                "Transaction is already active. Use COMMIT or ROLLBACK before starting a new one."
+                    .to_string(),
+            ));
+        }
+
+        let isolation = isolation_level
+            .as_ref()
+            .map(|level| match level.to_uppercase().as_str() {
+                "READ UNCOMMITTED" => IsolationLevel::ReadUncommitted,
+                "READ COMMITTED" => IsolationLevel::ReadCommitted,
+                "REPEATABLE READ" => IsolationLevel::RepeatableRead,
+                "SERIALIZABLE" => IsolationLevel::Serializable,
+                _ => IsolationLevel::ReadCommitted,
+            });
+
+        let mut characteristics = TransactionCharacteristics::new();
+        if let Some(level) = isolation {
+            characteristics = characteristics.with_isolation_level(level);
+        }
+        if let Some(ro) = read_only {
+            characteristics = characteristics.with_read_only(ro);
+        }
+        if let Some(def) = deferrable {
+            characteristics = characteristics.with_deferrable(def);
+        }
+
+        self.begin_transaction_with_characteristics(characteristics, TransactionScope::Explicit)?;
+
+        self.session.snapshot_feature_registry();
+
+        debug_eprintln!(
+            "[executor::transaction::begin] BEGIN with options: isolation={:?}, read_only={:?}, deferrable={:?}",
+            isolation_level,
+            read_only,
+            deferrable
+        );
+
+        Ok(())
+    }
+
     pub fn execute_commit_transaction(&mut self) -> Result<()> {
         {
             let manager = self.transaction_manager.borrow_mut();
@@ -461,6 +537,41 @@ impl QueryExecutor {
 
     pub fn execute_set_session_autocommit(&mut self, enabled: bool) -> Result<()> {
         self.apply_autocommit_setting(enabled)?;
+        self.clear_exception_diagnostic();
+        self.record_row_count(0);
+        Ok(())
+    }
+
+    pub fn execute_set_transaction(&mut self, modes: Vec<TransactionModeInfo>) -> Result<()> {
+        let manager = self.transaction_manager.borrow();
+        if !manager.is_active() {
+            return Err(Error::InvalidOperation(
+                "SET TRANSACTION requires an active transaction. Use BEGIN first.".to_string(),
+            ));
+        }
+        drop(manager);
+
+        for mode in &modes {
+            match mode {
+                TransactionModeInfo::IsolationLevel(level) => {
+                    debug_eprintln!(
+                        "[executor::transaction::set_transaction] SET TRANSACTION ISOLATION LEVEL {}",
+                        level
+                    );
+                }
+                TransactionModeInfo::AccessMode(access) => {
+                    debug_eprintln!(
+                        "[executor::transaction::set_transaction] SET TRANSACTION {:?}",
+                        access
+                    );
+                    match access {
+                        TransactionAccessModeInfo::ReadOnly => {}
+                        TransactionAccessModeInfo::ReadWrite => {}
+                    }
+                }
+            }
+        }
+
         self.clear_exception_diagnostic();
         self.record_row_count(0);
         Ok(())

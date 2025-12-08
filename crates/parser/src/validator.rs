@@ -101,6 +101,14 @@ pub enum CustomStatement {
     ExistsDatabase {
         name: sqlparser::ast::ObjectName,
     },
+
+    Abort,
+
+    BeginTransaction {
+        isolation_level: Option<String>,
+        read_only: Option<bool>,
+        deferrable: Option<bool>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +234,8 @@ impl StatementValidator {
             } => self.validate_drop_type(names, *cascade, *restrict),
             CustomStatement::SetConstraints { .. } => self.validate_set_constraints(),
             CustomStatement::ExistsTable { .. } | CustomStatement::ExistsDatabase { .. } => Ok(()),
+            CustomStatement::Abort => Ok(()),
+            CustomStatement::BeginTransaction { .. } => Ok(()),
         }
     }
 

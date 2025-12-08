@@ -97,13 +97,26 @@ pub struct CopyOperation {
 #[derive(Debug, Clone)]
 pub enum TxOperation {
     Begin,
-    Commit,
-    Rollback,
+    Commit { chain: bool },
+    Rollback { chain: bool },
     Savepoint { name: String },
     ReleaseSavepoint { name: String },
     RollbackToSavepoint { name: String },
     SetAutocommit { enabled: bool },
     SetTransactionIsolation { level: String },
+    SetTransaction { modes: Vec<TransactionModeInfo> },
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionModeInfo {
+    IsolationLevel(String),
+    AccessMode(TransactionAccessModeInfo),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionAccessModeInfo {
+    ReadOnly,
+    ReadWrite,
 }
 
 #[derive(Debug, Clone)]
@@ -206,18 +219,20 @@ impl Dispatcher {
                         operation: TxOperation::Begin,
                     }),
 
-                    SqlStatement::Commit { .. } => Ok(StatementJob::Transaction {
-                        operation: TxOperation::Commit,
+                    SqlStatement::Commit { chain, .. } => Ok(StatementJob::Transaction {
+                        operation: TxOperation::Commit { chain: *chain },
                     }),
 
-                    SqlStatement::Rollback { savepoint, .. } => match savepoint {
+                    SqlStatement::Rollback {
+                        chain, savepoint, ..
+                    } => match savepoint {
                         Some(name) => Ok(StatementJob::Transaction {
                             operation: TxOperation::RollbackToSavepoint {
                                 name: name.to_string(),
                             },
                         }),
                         None => Ok(StatementJob::Transaction {
-                            operation: TxOperation::Rollback,
+                            operation: TxOperation::Rollback { chain: *chain },
                         }),
                     },
 
@@ -484,7 +499,7 @@ impl Dispatcher {
 
 impl Dispatcher {
     fn handle_set_statement(&self, set_stmt: &sqlparser::ast::Set) -> Result<StatementJob> {
-        use sqlparser::ast::Set;
+        use sqlparser::ast::{Set, TransactionAccessMode, TransactionMode};
 
         match set_stmt {
             Set::SingleAssignment {
@@ -501,6 +516,30 @@ impl Dispatcher {
 
                 let variable_name = Self::resolve_set_variable_name(variable)?;
                 self.dispatch_single_assignment(variable_name, values)
+            }
+            Set::SetTransaction { modes, .. } => {
+                let mode_infos: Vec<TransactionModeInfo> = modes
+                    .iter()
+                    .map(|m| match m {
+                        TransactionMode::IsolationLevel(level) => {
+                            TransactionModeInfo::IsolationLevel(level.to_string())
+                        }
+                        TransactionMode::AccessMode(access) => {
+                            TransactionModeInfo::AccessMode(match access {
+                                TransactionAccessMode::ReadOnly => {
+                                    TransactionAccessModeInfo::ReadOnly
+                                }
+                                TransactionAccessMode::ReadWrite => {
+                                    TransactionAccessModeInfo::ReadWrite
+                                }
+                            })
+                        }
+                    })
+                    .collect();
+
+                Ok(StatementJob::Transaction {
+                    operation: TxOperation::SetTransaction { modes: mode_infos },
+                })
             }
             _ => Err(Error::unsupported_feature(
                 "Only simple SET assignments are supported".to_string(),
@@ -742,7 +781,7 @@ mod tests {
 
         match result.unwrap() {
             StatementJob::Transaction {
-                operation: TxOperation::Commit,
+                operation: TxOperation::Commit { chain: false },
             } => {}
             other => panic!("Expected Commit transaction, got {:?}", other),
         }
@@ -756,7 +795,7 @@ mod tests {
 
         match result.unwrap() {
             StatementJob::Transaction {
-                operation: TxOperation::Rollback,
+                operation: TxOperation::Rollback { chain: false },
             } => {}
             other => panic!("Expected Rollback transaction, got {:?}", other),
         }

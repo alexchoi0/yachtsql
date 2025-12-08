@@ -233,7 +233,6 @@ fn test_end_transaction() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_abort_transaction() {
     let mut executor = create_executor();
     executor
@@ -251,7 +250,6 @@ fn test_abort_transaction() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_transaction_deferrable() {
     let mut executor = create_executor();
     executor
@@ -268,7 +266,6 @@ fn test_transaction_deferrable() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_transaction() {
     let mut executor = create_executor();
     executor
@@ -289,7 +286,6 @@ fn test_set_transaction() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_commit_and_chain() {
     let mut executor = create_executor();
     executor
@@ -311,7 +307,6 @@ fn test_commit_and_chain() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollback_and_chain() {
     let mut executor = create_executor();
     executor
@@ -333,7 +328,7 @@ fn test_rollback_and_chain() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "UPDATE/DELETE don't see pending inserts from same transaction - needs transaction-aware row fetching"]
 fn test_transaction_multiple_statements() {
     let mut executor = create_executor();
     executor
@@ -525,7 +520,6 @@ fn test_transaction_delete_rollback() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_transaction_read_only() {
     let mut executor = create_executor();
     executor
@@ -544,7 +538,6 @@ fn test_set_transaction_read_only() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_transaction_read_write() {
     let mut executor = create_executor();
     executor
@@ -736,7 +729,7 @@ fn test_lock_table_nowait() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "CTE with UPDATE not yet supported"]
 fn test_transaction_with_cte() {
     let mut executor = create_executor();
     executor
@@ -870,7 +863,6 @@ fn test_transaction_isolation_read_uncommitted() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_transaction_combined_options() {
     let mut executor = create_executor();
     executor
