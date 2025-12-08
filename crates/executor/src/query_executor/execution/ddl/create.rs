@@ -11,6 +11,7 @@ pub struct SerialColumnInfo {
     pub column_name: String,
     pub sequence_name: String,
     pub data_type: DataType,
+    pub sequence_config: Option<yachtsql_storage::sequence::SequenceConfig>,
 }
 
 pub trait DdlExecutor {
@@ -128,7 +129,10 @@ impl DdlExecutor for QueryExecutor {
             }
 
             for serial_col in &serial_columns {
-                let config = SequenceConfig::default();
+                let config = serial_col
+                    .sequence_config
+                    .clone()
+                    .unwrap_or_else(SequenceConfig::default);
                 dataset.sequences_mut().create_sequence(
                     serial_col.sequence_name.clone(),
                     config,
@@ -436,6 +440,7 @@ impl DdlExecutor for QueryExecutor {
                     column_name: name.clone(),
                     sequence_name: seq_name,
                     data_type: data_type.clone(),
+                    sequence_config: None,
                 });
             }
 
@@ -463,9 +468,15 @@ impl DdlExecutor for QueryExecutor {
                         generated_as,
                         generation_expr,
                         generation_expr_mode,
+                        sequence_options,
                         ..
                     } => {
                         use sqlparser::ast::GeneratedAs;
+
+                        let seq_config = sequence_options
+                            .as_ref()
+                            .map(|opts| parse_sequence_options_to_config(opts));
+
                         match generated_as {
                             GeneratedAs::Always => {
                                 if generation_expr.is_none() {
@@ -479,6 +490,7 @@ impl DdlExecutor for QueryExecutor {
                                             column_name: name.clone(),
                                             sequence_name: seq_name,
                                             data_type: data_type.clone(),
+                                            sequence_config: seq_config,
                                         });
                                     }
                                 } else if let Some(expr) = generation_expr {
@@ -504,6 +516,7 @@ impl DdlExecutor for QueryExecutor {
                                         column_name: name.clone(),
                                         sequence_name: seq_name,
                                         data_type: data_type.clone(),
+                                        sequence_config: seq_config,
                                     });
                                 }
                             }
@@ -847,6 +860,78 @@ fn parse_column_default(expr: &sqlparser::ast::Expr) -> Result<DefaultValue> {
             "DEFAULT expression {:?} not supported",
             expr
         ))),
+    }
+}
+
+fn parse_sequence_options_to_config(
+    options: &[sqlparser::ast::SequenceOptions],
+) -> yachtsql_storage::sequence::SequenceConfig {
+    use sqlparser::ast::SequenceOptions;
+    use yachtsql_storage::sequence::SequenceConfig;
+
+    let mut config = SequenceConfig::default();
+
+    for opt in options {
+        match opt {
+            SequenceOptions::StartWith(expr, _) => {
+                if let Some(val) = expr_to_i64(expr) {
+                    config.start_value = val;
+                }
+            }
+            SequenceOptions::IncrementBy(expr, _) => {
+                if let Some(val) = expr_to_i64(expr) {
+                    config.increment = val;
+                }
+            }
+            SequenceOptions::MinValue(Some(expr)) => {
+                config.min_value = expr_to_i64(expr);
+            }
+            SequenceOptions::MinValue(None) => {
+                config.min_value = None;
+            }
+            SequenceOptions::MaxValue(Some(expr)) => {
+                config.max_value = expr_to_i64(expr);
+            }
+            SequenceOptions::MaxValue(None) => {
+                config.max_value = None;
+            }
+            SequenceOptions::Cache(expr) => {
+                if let Some(val) = expr_to_i64(expr) {
+                    config.cache = val as u32;
+                }
+            }
+            SequenceOptions::Cycle(cycle) => {
+                config.cycle = *cycle;
+            }
+        }
+    }
+
+    config
+}
+
+fn expr_to_i64(expr: &sqlparser::ast::Expr) -> Option<i64> {
+    use sqlparser::ast::{Expr, UnaryOperator, Value as SqlValue, ValueWithSpan};
+
+    match expr {
+        Expr::Value(ValueWithSpan {
+            value: SqlValue::Number(n, _),
+            ..
+        }) => n.parse::<i64>().ok(),
+        Expr::UnaryOp {
+            op: UnaryOperator::Minus,
+            expr,
+        } => {
+            if let Expr::Value(ValueWithSpan {
+                value: SqlValue::Number(n, _),
+                ..
+            }) = expr.as_ref()
+            {
+                n.parse::<i64>().ok().map(|v| -v)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
