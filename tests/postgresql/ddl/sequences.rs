@@ -127,7 +127,6 @@ fn test_drop_sequence_if_exists() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_nextval() {
     let mut executor = create_executor();
     executor.execute_sql("CREATE SEQUENCE seq_next").unwrap();
@@ -138,7 +137,6 @@ fn test_nextval() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_currval() {
     let mut executor = create_executor();
     executor.execute_sql("CREATE SEQUENCE seq_curr").unwrap();
@@ -148,7 +146,6 @@ fn test_currval() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_setval() {
     let mut executor = create_executor();
     executor.execute_sql("CREATE SEQUENCE seq_set").unwrap();
@@ -160,7 +157,6 @@ fn test_setval() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_setval_is_called_false() {
     let mut executor = create_executor();
     executor
@@ -176,7 +172,6 @@ fn test_setval_is_called_false() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_lastval() {
     let mut executor = create_executor();
     executor.execute_sql("CREATE SEQUENCE seq_last").unwrap();
