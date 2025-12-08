@@ -4,6 +4,7 @@ pub fn core_scalar_functions() -> Vec<&'static str> {
         "LOWER",
         "CONCAT",
         "LENGTH",
+        "OCTET_LENGTH",
         "CHAR_LENGTH",
         "CHARACTER_LENGTH",
         "SUBSTRING",
@@ -127,5 +128,7 @@ pub fn core_aggregate_functions() -> Vec<&'static str> {
         "FIRST_VALUE",
         "LAST_VALUE",
         "NTH_VALUE",
+        "GROUPING",
+        "GROUPING_ID",
     ]
 }

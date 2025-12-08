@@ -12,7 +12,7 @@ use super::evaluator::physical_plan::{
     MergeJoinExec, NestedLoopJoinExec, PhysicalPlan, PivotAggregateFunction, PivotExec,
     ProjectionWithExprExec, SampleSize, SamplingMethod, SortAggregateExec, SortExec,
     SubqueryScanExec, TableSampleExec, TableScanExec, TableValuedFunctionExec, UnionExec,
-    UnnestExec, UnpivotExec, WindowExec,
+    UnnestExec, UnpivotExec, ValuesExec, WindowExec, infer_values_schema,
 };
 use super::returning::{
     ReturningColumn, ReturningColumnOrigin, ReturningExpressionItem, ReturningSpec,
@@ -116,7 +116,7 @@ impl LogicalToPhysicalPlanner {
             Self::validate_column_references(expr, input_schema)?;
 
             let data_type = ProjectionWithExprExec::infer_expr_type_with_schema(expr, input_schema)
-                .unwrap_or(yachtsql_core::types::DataType::String);
+                .unwrap_or(yachtsql_core::types::DataType::Unknown);
 
             let field_name = if let Some(alias) = alias {
                 alias.clone()
@@ -1288,6 +1288,11 @@ impl LogicalToPhysicalPlanner {
                 Ok(Rc::new(EmptyRelationExec::new(schema)))
             }
 
+            PlanNode::Values { rows } => {
+                let schema = infer_values_schema(rows);
+                Ok(Rc::new(ValuesExec::new(schema, rows.clone())))
+            }
+
             PlanNode::Window {
                 window_exprs,
                 input,
@@ -1450,8 +1455,7 @@ impl LogicalToPhysicalPlanner {
             Expr::Column { .. } => Ok(yachtsql_core::types::DataType::String),
 
             Expr::Function { name, args, .. }
-                if matches!(name, yachtsql_ir::FunctionName::Custom(s) if s == "MERGE_ACTION")
-                    && args.is_empty() =>
+                if matches!(name, yachtsql_ir::FunctionName::MergeAction) && args.is_empty() =>
             {
                 Ok(yachtsql_core::types::DataType::String)
             }
@@ -1544,7 +1548,7 @@ impl LogicalToPhysicalPlanner {
                 }
             }
 
-            Expr::Literal(yachtsql_ir::expr::LiteralValue::Null) => DataType::String,
+            Expr::Literal(yachtsql_ir::expr::LiteralValue::Null) => DataType::Unknown,
 
             Expr::Cast { data_type, .. } => self.cast_data_type_to_data_type(data_type),
 
@@ -1601,7 +1605,7 @@ impl LogicalToPhysicalPlanner {
 
         match expr {
             Expr::Literal(lit) => match lit {
-                LiteralValue::Null => DataType::String,
+                LiteralValue::Null => DataType::Unknown,
                 LiteralValue::Boolean(_) => DataType::Bool,
                 LiteralValue::Int64(_) => DataType::Int64,
                 LiteralValue::Float64(_) => DataType::Float64,
