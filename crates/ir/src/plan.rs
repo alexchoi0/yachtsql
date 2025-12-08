@@ -195,6 +195,10 @@ pub enum PlanNode {
 
     EmptyRelation,
 
+    Values {
+        rows: Vec<Vec<Expr>>,
+    },
+
     InsertOnConflict {
         table_name: String,
         columns: Option<Vec<String>>,
@@ -407,7 +411,8 @@ impl PlanNode {
             | PlanNode::TableValuedFunction { .. }
             | PlanNode::AlterTable { .. }
             | PlanNode::InsertOnConflict { .. }
-            | PlanNode::EmptyRelation => vec![],
+            | PlanNode::EmptyRelation
+            | PlanNode::Values { .. } => vec![],
             PlanNode::Insert { source, .. } => {
                 if let Some(source_plan) = source {
                     vec![source_plan.as_ref()]
