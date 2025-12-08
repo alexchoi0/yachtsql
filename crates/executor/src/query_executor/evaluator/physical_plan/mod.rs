@@ -85,6 +85,11 @@ pub trait SubqueryExecutor {
         &self,
         plan: &yachtsql_optimizer::plan::PlanNode,
     ) -> Result<Vec<yachtsql_core::types::Value>>;
+
+    fn execute_tuple_in_subquery(
+        &self,
+        plan: &yachtsql_optimizer::plan::PlanNode,
+    ) -> Result<Vec<Vec<yachtsql_core::types::Value>>>;
 }
 
 pub(crate) struct FeatureRegistryContextGuard {

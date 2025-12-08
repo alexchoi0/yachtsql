@@ -76,8 +76,7 @@ impl ProjectionWithExprExec {
             .collect();
         let left_values = left_values?;
 
-        let values = executor.execute_in_subquery(plan)?;
-        let right_tuples: Vec<Vec<Value>> = values.into_iter().map(|v| vec![v]).collect();
+        let right_tuples = executor.execute_tuple_in_subquery(plan)?;
 
         Self::evaluate_tuple_in_expression(&left_values, &right_tuples, negated)
     }
