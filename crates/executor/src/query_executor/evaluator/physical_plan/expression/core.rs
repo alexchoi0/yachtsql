@@ -1044,6 +1044,10 @@ impl ProjectionWithExprExec {
             return Self::evaluate_sequence_function(func_name, args, batch, row_idx);
         }
 
+        if let FunctionName::Custom(custom_name) = name {
+            return Self::evaluate_custom_function(custom_name, args, batch, row_idx);
+        }
+
         Err(Error::unsupported_feature(format!(
             "Unknown function: {}",
             func_name
