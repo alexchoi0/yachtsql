@@ -1049,10 +1049,10 @@ impl ProjectionWithExprExec {
                 }
             }
 
-            FunctionName::Coalesce => Self::infer_coalesce_type(args, schema),
-            FunctionName::Ifnull | FunctionName::Nvl | FunctionName::Isnull => {
-                Self::infer_first_arg_type(args, schema)
-            }
+            FunctionName::Coalesce
+            | FunctionName::Ifnull
+            | FunctionName::Nvl
+            | FunctionName::Isnull => Self::infer_coalesce_type(args, schema),
             FunctionName::Nullif => Self::infer_first_arg_type(args, schema),
 
             FunctionName::If | FunctionName::Iif => args
