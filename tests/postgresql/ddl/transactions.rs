@@ -146,7 +146,6 @@ fn test_transaction_read_write() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_savepoint() {
     let mut executor = create_executor();
     executor
@@ -191,7 +190,6 @@ fn test_release_savepoint() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_nested_savepoints() {
     let mut executor = create_executor();
     executor
@@ -362,7 +360,6 @@ fn test_transaction_multiple_statements() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollback_to_savepoint_multiple() {
     let mut executor = create_executor();
     executor
@@ -389,7 +386,6 @@ fn test_rollback_to_savepoint_multiple() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_savepoint_same_name_overwrite() {
     let mut executor = create_executor();
     executor
@@ -921,7 +917,6 @@ fn test_savepoint_release_and_continue() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollback_to_savepoint_and_continue() {
     let mut executor = create_executor();
     executor
@@ -1040,7 +1035,6 @@ fn test_transaction_snapshot() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_transaction_with_exception_recovery() {
     let mut executor = create_executor();
     executor
