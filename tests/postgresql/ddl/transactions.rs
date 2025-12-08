@@ -328,7 +328,7 @@ fn test_rollback_and_chain() {
 }
 
 #[test]
-#[ignore = "UPDATE/DELETE within transactions not yet working"]
+#[ignore = "UPDATE/DELETE don't see pending inserts from same transaction - needs transaction-aware row fetching"]
 fn test_transaction_multiple_statements() {
     let mut executor = create_executor();
     executor

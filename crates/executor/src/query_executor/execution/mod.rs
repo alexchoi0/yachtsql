@@ -503,15 +503,29 @@ impl QueryExecutor {
                 result
             }
 
-            StatementJob::DML { operation, stmt } => match operation {
-                DmlOperation::Insert => self.execute_insert(&stmt, sql),
-                DmlOperation::Update => self.execute_update(&stmt, sql),
-                DmlOperation::Delete => self.execute_delete(&stmt, sql),
-                DmlOperation::Truncate => {
-                    let _rows_affected = self.execute_truncate(&stmt)?;
-                    Self::empty_result()
+            StatementJob::DML { operation, stmt } => {
+                if self.is_transaction_read_only() {
+                    let op_name = match operation {
+                        DmlOperation::Insert => "INSERT",
+                        DmlOperation::Update => "UPDATE",
+                        DmlOperation::Delete => "DELETE",
+                        DmlOperation::Truncate => "TRUNCATE",
+                    };
+                    return Err(Error::InvalidOperation(format!(
+                        "cannot execute {} in a read-only transaction",
+                        op_name
+                    )));
                 }
-            },
+                match operation {
+                    DmlOperation::Insert => self.execute_insert(&stmt, sql),
+                    DmlOperation::Update => self.execute_update(&stmt, sql),
+                    DmlOperation::Delete => self.execute_delete(&stmt, sql),
+                    DmlOperation::Truncate => {
+                        let _rows_affected = self.execute_truncate(&stmt)?;
+                        Self::empty_result()
+                    }
+                }
+            }
 
             StatementJob::Query { stmt } => self.execute_select(&stmt, sql),
 
@@ -567,18 +581,42 @@ impl QueryExecutor {
 
             TxOperation::Commit { chain } => {
                 self.require_feature(F782_COMMIT_STATEMENT, "COMMIT statement")?;
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
                 self.execute_commit_transaction()?;
                 if chain {
-                    self.execute_begin_transaction()?;
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
                 }
                 Ok(())
             }
 
             TxOperation::Rollback { chain } => {
                 self.require_feature(F783_ROLLBACK_STATEMENT, "ROLLBACK statement")?;
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
                 self.execute_rollback_transaction()?;
                 if chain {
-                    self.execute_begin_transaction()?;
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
                 }
                 Ok(())
             }

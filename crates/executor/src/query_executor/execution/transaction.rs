@@ -1,6 +1,6 @@
 use debug_print::debug_eprintln;
 use yachtsql_core::error::{Error, Result};
-use yachtsql_storage::TransactionScope;
+use yachtsql_storage::{IsolationLevel, TransactionCharacteristics, TransactionScope};
 
 use super::QueryExecutor;
 use super::dispatcher::{TransactionAccessModeInfo, TransactionModeInfo};
@@ -131,6 +131,33 @@ impl QueryExecutor {
         let mut storage = self.storage.borrow_mut();
         let mut manager = self.transaction_manager.borrow_mut();
         manager.begin_scoped(&mut storage, scope).map(|_| ())
+    }
+
+    pub(crate) fn begin_transaction_with_characteristics(
+        &mut self,
+        characteristics: TransactionCharacteristics,
+        scope: TransactionScope,
+    ) -> Result<()> {
+        let mut storage = self.storage.borrow_mut();
+        let mut manager = self.transaction_manager.borrow_mut();
+        manager
+            .begin_with_characteristics(&mut storage, characteristics, scope)
+            .map(|_| ())
+    }
+
+    pub(crate) fn get_current_transaction_characteristics(
+        &self,
+    ) -> Option<TransactionCharacteristics> {
+        let manager = self.transaction_manager.borrow();
+        manager.get_current_characteristics()
+    }
+
+    pub(crate) fn is_transaction_read_only(&self) -> bool {
+        let manager = self.transaction_manager.borrow();
+        manager
+            .get_active_transaction()
+            .map(|t| t.is_read_only())
+            .unwrap_or(false)
     }
 
     pub(crate) fn ensure_autocommit_off_transaction(&mut self) -> Result<()> {
@@ -373,9 +400,9 @@ impl QueryExecutor {
 
     pub fn execute_begin_transaction_with_options(
         &mut self,
-        _isolation_level: Option<String>,
-        _read_only: Option<bool>,
-        _deferrable: Option<bool>,
+        isolation_level: Option<String>,
+        read_only: Option<bool>,
+        deferrable: Option<bool>,
     ) -> Result<()> {
         if self.explicit_transaction_active() {
             return Err(Error::InvalidOperation(
@@ -384,15 +411,36 @@ impl QueryExecutor {
             ));
         }
 
-        self.begin_transaction_with_scope(TransactionScope::Explicit)?;
+        let isolation = isolation_level
+            .as_ref()
+            .map(|level| match level.to_uppercase().as_str() {
+                "READ UNCOMMITTED" => IsolationLevel::ReadUncommitted,
+                "READ COMMITTED" => IsolationLevel::ReadCommitted,
+                "REPEATABLE READ" => IsolationLevel::RepeatableRead,
+                "SERIALIZABLE" => IsolationLevel::Serializable,
+                _ => IsolationLevel::ReadCommitted,
+            });
+
+        let mut characteristics = TransactionCharacteristics::new();
+        if let Some(level) = isolation {
+            characteristics = characteristics.with_isolation_level(level);
+        }
+        if let Some(ro) = read_only {
+            characteristics = characteristics.with_read_only(ro);
+        }
+        if let Some(def) = deferrable {
+            characteristics = characteristics.with_deferrable(def);
+        }
+
+        self.begin_transaction_with_characteristics(characteristics, TransactionScope::Explicit)?;
 
         self.session.snapshot_feature_registry();
 
         debug_eprintln!(
             "[executor::transaction::begin] BEGIN with options: isolation={:?}, read_only={:?}, deferrable={:?}",
-            _isolation_level,
-            _read_only,
-            _deferrable
+            isolation_level,
+            read_only,
+            deferrable
         );
 
         Ok(())
