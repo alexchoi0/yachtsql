@@ -1,5 +1,7 @@
 use yachtsql_core::error::Result;
-use yachtsql_storage::{Row, TableConstraintOps};
+use yachtsql_storage::{
+    ConstraintTiming, DMLOperation, DeferredFKCheck, DeferredFKState, Row, TableConstraintOps,
+};
 
 #[derive(Debug, Clone)]
 pub struct ForeignKeyEnforcer {}
@@ -166,6 +168,17 @@ impl ForeignKeyEnforcer {
         row: &Row,
         storage: &yachtsql_storage::Storage,
     ) -> Result<()> {
+        self.validate_insert_with_deferral(table_name, row, storage, None)
+            .map(|_| ())
+    }
+
+    pub fn validate_insert_with_deferral(
+        &self,
+        table_name: &str,
+        row: &Row,
+        storage: &yachtsql_storage::Storage,
+        deferred_state: Option<&DeferredFKState>,
+    ) -> Result<Vec<DeferredFKCheck>> {
         let (dataset_id, table_id) = Self::parse_table_name(table_name);
 
         let (child_schema, foreign_keys) = {
@@ -184,6 +197,8 @@ impl ForeignKeyEnforcer {
             (table.schema().clone(), table.foreign_keys().to_vec())
         };
 
+        let mut deferred_checks = Vec::new();
+
         for fk in foreign_keys {
             if !fk.is_enforced() {
                 continue;
@@ -195,20 +210,45 @@ impl ForeignKeyEnforcer {
                 continue;
             }
 
-            let parent_exists =
-                Self::parent_row_exists(&fk.parent_table, &fk.parent_columns, &fk_values, storage)?;
+            let constraint_name = fk.constraint_name();
+            let should_defer = if let Some(state) = deferred_state {
+                fk.is_deferrable()
+                    && state.get_timing(&constraint_name, fk.initial_timing())
+                        == ConstraintTiming::Deferred
+            } else {
+                false
+            };
 
-            if !parent_exists {
-                return Err(yachtsql_core::error::Error::constraint_violation(format!(
-                    "Foreign key constraint '{}' violated: no matching row in parent table '{}' for values {:?}",
-                    fk.name.as_deref().unwrap_or("unnamed"),
-                    fk.parent_table,
-                    fk_values
-                )));
+            if should_defer {
+                deferred_checks.push(DeferredFKCheck {
+                    constraint_name,
+                    child_table: table_name.to_string(),
+                    child_columns: fk.child_columns.clone(),
+                    parent_table: fk.parent_table.clone(),
+                    parent_columns: fk.parent_columns.clone(),
+                    fk_values,
+                    operation: DMLOperation::Insert,
+                });
+            } else {
+                let parent_exists = Self::parent_row_exists(
+                    &fk.parent_table,
+                    &fk.parent_columns,
+                    &fk_values,
+                    storage,
+                )?;
+
+                if !parent_exists {
+                    return Err(yachtsql_core::error::Error::constraint_violation(format!(
+                        "Foreign key constraint '{}' violated: no matching row in parent table '{}' for values {:?}",
+                        fk.name.as_deref().unwrap_or("unnamed"),
+                        fk.parent_table,
+                        fk_values
+                    )));
+                }
             }
         }
 
-        Ok(())
+        Ok(deferred_checks)
     }
 
     fn parse_table_name(table_name: &str) -> (String, String) {

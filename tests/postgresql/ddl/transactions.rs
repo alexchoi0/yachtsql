@@ -794,7 +794,6 @@ fn test_transaction_implicit_begin() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_constraints_deferred() {
     let mut executor = create_executor();
     executor
@@ -816,7 +815,6 @@ fn test_set_constraints_deferred() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_constraints_immediate() {
     let mut executor = create_executor();
     executor
@@ -837,7 +835,6 @@ fn test_set_constraints_immediate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_constraints_deferred_mode() {
     let mut executor = create_executor();
     executor
