@@ -3,6 +3,7 @@ use yachtsql_core::error::{Error, Result};
 use yachtsql_storage::TransactionScope;
 
 use super::QueryExecutor;
+use super::dispatcher::{TransactionAccessModeInfo, TransactionModeInfo};
 
 #[derive(Debug, Clone)]
 pub struct SessionTransactionController {
@@ -370,6 +371,33 @@ impl QueryExecutor {
         Ok(())
     }
 
+    pub fn execute_begin_transaction_with_options(
+        &mut self,
+        _isolation_level: Option<String>,
+        _read_only: Option<bool>,
+        _deferrable: Option<bool>,
+    ) -> Result<()> {
+        if self.explicit_transaction_active() {
+            return Err(Error::InvalidOperation(
+                "Transaction is already active. Use COMMIT or ROLLBACK before starting a new one."
+                    .to_string(),
+            ));
+        }
+
+        self.begin_transaction_with_scope(TransactionScope::Explicit)?;
+
+        self.session.snapshot_feature_registry();
+
+        debug_eprintln!(
+            "[executor::transaction::begin] BEGIN with options: isolation={:?}, read_only={:?}, deferrable={:?}",
+            _isolation_level,
+            _read_only,
+            _deferrable
+        );
+
+        Ok(())
+    }
+
     pub fn execute_commit_transaction(&mut self) -> Result<()> {
         {
             let manager = self.transaction_manager.borrow_mut();
@@ -461,6 +489,41 @@ impl QueryExecutor {
 
     pub fn execute_set_session_autocommit(&mut self, enabled: bool) -> Result<()> {
         self.apply_autocommit_setting(enabled)?;
+        self.clear_exception_diagnostic();
+        self.record_row_count(0);
+        Ok(())
+    }
+
+    pub fn execute_set_transaction(&mut self, modes: Vec<TransactionModeInfo>) -> Result<()> {
+        let manager = self.transaction_manager.borrow();
+        if !manager.is_active() {
+            return Err(Error::InvalidOperation(
+                "SET TRANSACTION requires an active transaction. Use BEGIN first.".to_string(),
+            ));
+        }
+        drop(manager);
+
+        for mode in &modes {
+            match mode {
+                TransactionModeInfo::IsolationLevel(level) => {
+                    debug_eprintln!(
+                        "[executor::transaction::set_transaction] SET TRANSACTION ISOLATION LEVEL {}",
+                        level
+                    );
+                }
+                TransactionModeInfo::AccessMode(access) => {
+                    debug_eprintln!(
+                        "[executor::transaction::set_transaction] SET TRANSACTION {:?}",
+                        access
+                    );
+                    match access {
+                        TransactionAccessModeInfo::ReadOnly => {}
+                        TransactionAccessModeInfo::ReadWrite => {}
+                    }
+                }
+            }
+        }
+
         self.clear_exception_diagnostic();
         self.record_row_count(0);
         Ok(())

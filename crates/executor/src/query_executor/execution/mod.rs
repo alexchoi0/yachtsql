@@ -382,6 +382,22 @@ impl QueryExecutor {
                 CustomStatement::SetConstraints { .. } => self.execute_set_constraints(custom_stmt),
                 CustomStatement::ExistsTable { name } => self.execute_exists_table(name),
                 CustomStatement::ExistsDatabase { name } => self.execute_exists_database(name),
+                CustomStatement::Abort => {
+                    self.execute_rollback_transaction()?;
+                    Self::empty_result()
+                }
+                CustomStatement::BeginTransaction {
+                    isolation_level,
+                    read_only,
+                    deferrable,
+                } => {
+                    self.execute_begin_transaction_with_options(
+                        isolation_level.clone(),
+                        *read_only,
+                        *deferrable,
+                    )?;
+                    Self::empty_result()
+                }
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
                     format!("Custom statement not yet supported: {:?}", custom_stmt),
@@ -549,14 +565,22 @@ impl QueryExecutor {
                 self.execute_begin_transaction()
             }
 
-            TxOperation::Commit => {
+            TxOperation::Commit { chain } => {
                 self.require_feature(F782_COMMIT_STATEMENT, "COMMIT statement")?;
-                self.execute_commit_transaction()
+                self.execute_commit_transaction()?;
+                if chain {
+                    self.execute_begin_transaction()?;
+                }
+                Ok(())
             }
 
-            TxOperation::Rollback => {
+            TxOperation::Rollback { chain } => {
                 self.require_feature(F783_ROLLBACK_STATEMENT, "ROLLBACK statement")?;
-                self.execute_rollback_transaction()
+                self.execute_rollback_transaction()?;
+                if chain {
+                    self.execute_begin_transaction()?;
+                }
+                Ok(())
             }
 
             TxOperation::Savepoint { name } => {
@@ -582,6 +606,8 @@ impl QueryExecutor {
             TxOperation::SetTransactionIsolation { .. } => Err(Error::unsupported_feature(
                 "SET TRANSACTION ISOLATION LEVEL not yet implemented".to_string(),
             )),
+
+            TxOperation::SetTransaction { modes } => self.execute_set_transaction(modes),
         }
     }
 
