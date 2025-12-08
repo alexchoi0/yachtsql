@@ -5,6 +5,7 @@ use std::rc::Rc;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_ir::plan::{LogicalPlan, PlanNode};
 
+use crate::information_schema::{InformationSchemaProvider, InformationSchemaTable};
 use super::evaluator::physical_plan::{
     AggregateExec, AggregateStrategy, ArrayJoinExec, CteExec, DistinctExec, DistinctOnExec,
     EmptyRelationExec, ExceptExec, ExecutionPlan, FilterExec, HashJoinExec, IndexScanExec,
@@ -884,6 +885,24 @@ impl LogicalToPhysicalPlanner {
                     return Ok(Rc::new(SubqueryScanExec::new_with_schema(
                         view_exec,
                         view_schema,
+                    )));
+                }
+
+                if dataset_name.eq_ignore_ascii_case("information_schema") {
+                    debug_print::debug_eprintln!(
+                        "[executor::logical_to_physical] Handling information_schema query for table '{}'",
+                        table_id
+                    );
+                    let info_table = InformationSchemaTable::from_str(table_id)?;
+                    let provider = InformationSchemaProvider::new(Rc::clone(&self.storage));
+                    let (schema, rows) = provider.query(info_table)?;
+
+                    let source_table = alias.as_ref().unwrap_or(table_name);
+                    let schema_with_source = schema.with_source_table(source_table);
+                    let batch = crate::Table::from_rows(schema_with_source.clone(), rows)?;
+                    return Ok(Rc::new(MaterializedViewScanExec::new(
+                        schema_with_source,
+                        batch,
                     )));
                 }
 

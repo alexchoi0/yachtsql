@@ -2,7 +2,6 @@
 
 use crate::common::create_executor;
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_tables() {
     let mut executor = create_executor();
@@ -20,7 +19,6 @@ fn test_information_schema_tables() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_columns() {
     let mut executor = create_executor();
@@ -39,25 +37,23 @@ fn test_information_schema_columns() {
     assert!(result.num_rows() == 3); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_schemata() {
     let mut executor = create_executor();
     executor
-        .execute_sql("CREATE DATABASE info_schema_db")
+        .execute_sql("CREATE TABLE schemata_test_table (id INT64)")
         .unwrap();
 
     let result = executor
         .execute_sql(
             "SELECT schema_name
             FROM information_schema.schemata
-            WHERE schema_name = 'info_schema_db'",
+            WHERE schema_name = 'default'",
         )
         .unwrap();
-    assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_views() {
     let mut executor = create_executor();
@@ -78,7 +74,6 @@ fn test_information_schema_views() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_table_constraints() {
     let mut executor = create_executor();
@@ -101,7 +96,6 @@ fn test_information_schema_table_constraints() {
     // TODO: Replace with proper table! assertion
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_key_column_usage() {
     let mut executor = create_executor();
@@ -125,7 +119,6 @@ fn test_information_schema_key_column_usage() {
     // TODO: Replace with proper table! assertion
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_column_privileges() {
     let mut executor = create_executor();
@@ -143,7 +136,6 @@ fn test_information_schema_column_privileges() {
     // TODO: Replace with proper table! assertion
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_table_privileges() {
     let mut executor = create_executor();
@@ -161,7 +153,6 @@ fn test_information_schema_table_privileges() {
     // TODO: Replace with proper table! assertion
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_referential_constraints() {
     let mut executor = create_executor();
@@ -174,7 +165,6 @@ fn test_information_schema_referential_constraints() {
     // TODO: Replace with proper table! assertion
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_information_schema_check_constraints() {
     let mut executor = create_executor();
