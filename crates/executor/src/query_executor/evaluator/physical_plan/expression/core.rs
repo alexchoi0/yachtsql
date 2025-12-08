@@ -887,6 +887,38 @@ impl ProjectionWithExprExec {
 
         if matches!(
             name,
+            FunctionName::CurrentDatabase
+                | FunctionName::CurrentUser
+                | FunctionName::Version
+                | FunctionName::Uptime
+                | FunctionName::Timezone
+                | FunctionName::ServerTimezone
+                | FunctionName::BlockNumber
+                | FunctionName::RowNumberInBlock
+                | FunctionName::RowNumberInAllBlocks
+                | FunctionName::HostName
+                | FunctionName::Fqdn
+                | FunctionName::IsFinite
+                | FunctionName::IsInfinite
+                | FunctionName::IsNan
+                | FunctionName::ToTypeName
+                | FunctionName::DumpColumnStructure
+                | FunctionName::DefaultValueOfArgumentType
+                | FunctionName::DefaultValueOfTypeName
+                | FunctionName::BlockSize
+                | FunctionName::CurrentSchemas
+                | FunctionName::QueryId
+                | FunctionName::InitialQueryId
+                | FunctionName::ServerUuid
+                | FunctionName::GetSetting
+                | FunctionName::IsDecimalOverflow
+                | FunctionName::CountDigits
+        ) {
+            return Self::evaluate_introspection_function(name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
             FunctionName::HstoreExists
                 | FunctionName::HstoreExistsAll
                 | FunctionName::HstoreExistsAny

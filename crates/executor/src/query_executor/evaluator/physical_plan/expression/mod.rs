@@ -19,6 +19,7 @@ mod encryption;
 mod fulltext;
 mod generator;
 mod geometric;
+mod introspection;
 mod json;
 mod map;
 mod math;
