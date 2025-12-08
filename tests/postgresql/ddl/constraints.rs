@@ -315,7 +315,6 @@ fn test_add_constraint() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_drop_constraint() {
     let mut executor = create_executor();
     executor
@@ -384,7 +383,6 @@ fn test_deferrable_constraint() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_not_valid_constraint() {
     let mut executor = create_executor();
     executor
@@ -401,7 +399,6 @@ fn test_not_valid_constraint() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_validate_constraint() {
     let mut executor = create_executor();
     executor
@@ -916,7 +913,6 @@ fn test_foreign_key_across_schemas() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_drop_foreign_key() {
     let mut executor = create_executor();
     executor
@@ -1045,7 +1041,6 @@ fn test_foreign_key_with_check_constraint() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_foreign_key_rename_constraint() {
     let mut executor = create_executor();
     executor
