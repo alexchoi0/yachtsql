@@ -872,6 +872,17 @@ impl QueryExecutor {
                         if let Some(enforced) = chars.enforced {
                             foreign_key = foreign_key.with_enforced(enforced);
                         }
+                        if chars.deferrable == Some(true) {
+                            use sqlparser::ast::DeferrableInitial;
+                            use yachtsql_storage::Deferrable;
+                            let deferrable = match chars.initially {
+                                Some(DeferrableInitial::Deferred) => Deferrable::InitiallyDeferred,
+                                Some(DeferrableInitial::Immediate) | None => {
+                                    Deferrable::InitiallyImmediate
+                                }
+                            };
+                            foreign_key = foreign_key.with_deferrable(deferrable);
+                        }
                     }
 
                     schema.add_foreign_key(foreign_key);

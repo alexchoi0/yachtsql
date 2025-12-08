@@ -575,7 +575,7 @@ fn test_foreign_key_self_referencing() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "Implement recursive CASCADE DELETE for self-referencing foreign keys"]
 fn test_foreign_key_self_referencing_cascade() {
     let mut executor = create_executor();
     executor.execute_sql(
@@ -782,7 +782,6 @@ fn test_foreign_key_deferrable_initially_immediate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_foreign_key_deferred_insert() {
     let mut executor = create_executor();
     executor
@@ -1517,7 +1516,6 @@ fn test_constraint_nullif() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_deferred_constraint_violation_at_commit() {
     let mut executor = create_executor();
     executor
@@ -1536,7 +1534,6 @@ fn test_deferred_constraint_violation_at_commit() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_constraints_named() {
     let mut executor = create_executor();
     executor

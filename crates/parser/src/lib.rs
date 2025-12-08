@@ -19,7 +19,7 @@ pub use parser::{
 };
 pub use sql_json::Sql2023Json;
 pub use sql_types::Sql2023Types;
-pub use validator::CustomStatement;
+pub use validator::{CustomStatement, SetConstraintsMode, SetConstraintsTarget};
 
 #[macro_export]
 macro_rules! aggregate_function_names {

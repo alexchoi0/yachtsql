@@ -379,10 +379,11 @@ impl QueryExecutor {
                     self.execute_create_composite_type(custom_stmt)
                 }
                 CustomStatement::DropType { .. } => self.execute_drop_composite_type(custom_stmt),
-                _ => Err(Error::unsupported_feature(format!(
-                    "Custom statement not yet supported: {:?}",
-                    custom_stmt
-                ))),
+                CustomStatement::SetConstraints { .. } => self.execute_set_constraints(custom_stmt),
+                CustomStatement::AlterTableRestartIdentity { .. }
+                | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
+                    format!("Custom statement not yet supported: {:?}", custom_stmt),
+                )),
             };
         }
 
