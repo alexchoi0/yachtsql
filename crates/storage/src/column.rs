@@ -639,6 +639,18 @@ impl Column {
                     data.push(v.clone());
                     nulls.push(true);
                     Ok(())
+                } else if let Some(v) = value.as_vector() {
+                    if *dimensions != 0 && v.len() != *dimensions {
+                        return Err(Error::invalid_query(format!(
+                            "VECTOR dimension mismatch: expected {}, got {}",
+                            dimensions,
+                            v.len()
+                        )));
+                    }
+                    let as_values: Vec<Value> = v.iter().map(|f| Value::float64(*f)).collect();
+                    data.push(as_values);
+                    nulls.push(true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected VECTOR({}), got {}",
@@ -1163,6 +1175,18 @@ impl Column {
                 if let Some(v) = value.as_array() {
                     Self::validate_vector_value(v, *dimensions)?;
                     data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else if let Some(v) = value.as_vector() {
+                    if *dimensions != 0 && v.len() != *dimensions {
+                        return Err(Error::invalid_query(format!(
+                            "VECTOR dimension mismatch: expected {}, got {}",
+                            dimensions,
+                            v.len()
+                        )));
+                    }
+                    let as_values: Vec<Value> = v.iter().map(|f| Value::float64(*f)).collect();
+                    data[index] = as_values;
                     nulls.set(index, true);
                     Ok(())
                 } else {

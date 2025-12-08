@@ -180,7 +180,10 @@ impl ProjectionWithExprExec {
             | BinaryOp::GreaterThan
             | BinaryOp::GreaterThanOrEqual
             | BinaryOp::And
-            | BinaryOp::Or => Some(DataType::Bool),
+            | BinaryOp::Or
+            | BinaryOp::RangeAdjacent
+            | BinaryOp::RangeStrictlyLeft
+            | BinaryOp::RangeStrictlyRight => Some(DataType::Bool),
 
             BinaryOp::Add => match (&left_type, &right_type) {
                 (Some(DataType::Range(rt)), Some(DataType::Range(_))) => {
@@ -563,24 +566,16 @@ impl ProjectionWithExprExec {
             FunctionName::Lower | FunctionName::Upper => {
                 if !args.is_empty() {
                     match Self::infer_expr_type_with_schema(&args[0], schema) {
-                        Some(DataType::Range(range_type)) => {
-                            match range_type {
-                                yachtsql_core::types::RangeType::Int4Range
-                                | yachtsql_core::types::RangeType::Int8Range => {
-                                    Some(DataType::Int64)
-                                }
-                                yachtsql_core::types::RangeType::NumRange => {
-                                    Some(DataType::Float64)
-                                }
-                                yachtsql_core::types::RangeType::DateRange => {
-                                    Some(DataType::Date)
-                                }
-                                yachtsql_core::types::RangeType::TsRange
-                                | yachtsql_core::types::RangeType::TsTzRange => {
-                                    Some(DataType::Timestamp)
-                                }
+                        Some(DataType::Range(range_type)) => match range_type {
+                            yachtsql_core::types::RangeType::Int4Range
+                            | yachtsql_core::types::RangeType::Int8Range => Some(DataType::Int64),
+                            yachtsql_core::types::RangeType::NumRange => Some(DataType::Float64),
+                            yachtsql_core::types::RangeType::DateRange => Some(DataType::Date),
+                            yachtsql_core::types::RangeType::TsRange
+                            | yachtsql_core::types::RangeType::TsTzRange => {
+                                Some(DataType::Timestamp)
                             }
-                        }
+                        },
                         _ => Some(DataType::String),
                     }
                 } else {
@@ -611,10 +606,7 @@ impl ProjectionWithExprExec {
             FunctionName::Custom(s)
                 if matches!(
                     s.as_str(),
-                    "RANGE_MERGE"
-                        | "RANGE_UNION"
-                        | "RANGE_INTERSECTION"
-                        | "RANGE_DIFFERENCE"
+                    "RANGE_MERGE" | "RANGE_UNION" | "RANGE_INTERSECTION" | "RANGE_DIFFERENCE"
                 ) =>
             {
                 if !args.is_empty() {

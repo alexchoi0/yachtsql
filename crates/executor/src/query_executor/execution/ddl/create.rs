@@ -598,7 +598,7 @@ impl DdlExecutor for QueryExecutor {
                     ))),
                 }
             }
-            SqlDataType::Custom(name, _) => {
+            SqlDataType::Custom(name, modifiers) => {
                 let type_name = name
                     .0
                     .last()
@@ -606,6 +606,15 @@ impl DdlExecutor for QueryExecutor {
                     .map(|ident| ident.value.clone())
                     .unwrap_or_default();
                 let canonical = Sql2023Types::normalize_type_name(&type_name);
+                let type_upper = type_name.to_uppercase();
+
+                if type_upper == "VECTOR" {
+                    let dims = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Vector(dims));
+                }
 
                 {
                     let storage = self.storage.borrow_mut();

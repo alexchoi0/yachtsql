@@ -679,17 +679,49 @@ impl ProjectionWithExprExec {
             return match op {
                 BinaryOp::Equal => Ok(Value::bool_val(l == r)),
                 BinaryOp::NotEqual => Ok(Value::bool_val(l != r)),
-                BinaryOp::ArrayContains => yachtsql_functions::range::range_contains_range(left, right),
-                BinaryOp::ArrayContainedBy => yachtsql_functions::range::range_contains_range(right, left),
+                BinaryOp::ArrayContains => {
+                    yachtsql_functions::range::range_contains_range(left, right)
+                }
+                BinaryOp::ArrayContainedBy => {
+                    yachtsql_functions::range::range_contains_range(right, left)
+                }
                 BinaryOp::ArrayOverlap => yachtsql_functions::range::range_overlaps(left, right),
                 BinaryOp::RangeAdjacent => yachtsql_functions::range::range_adjacent(left, right),
-                BinaryOp::RangeStrictlyLeft => yachtsql_functions::range::range_strictly_left(left, right),
-                BinaryOp::RangeStrictlyRight => yachtsql_functions::range::range_strictly_right(left, right),
+                BinaryOp::RangeStrictlyLeft => {
+                    yachtsql_functions::range::range_strictly_left(left, right)
+                }
+                BinaryOp::RangeStrictlyRight => {
+                    yachtsql_functions::range::range_strictly_right(left, right)
+                }
                 BinaryOp::Add => yachtsql_functions::range::range_union(left, right),
                 BinaryOp::Multiply => yachtsql_functions::range::range_intersection(left, right),
                 BinaryOp::Subtract => yachtsql_functions::range::range_difference(left, right),
                 _ => Err(crate::error::Error::unsupported_feature(format!(
                     "Operator {:?} not supported for RANGE",
+                    op
+                ))),
+            };
+        }
+
+        if left.as_range().is_some() && right.as_range().is_none() {
+            return match op {
+                BinaryOp::ArrayContains => {
+                    yachtsql_functions::range::range_contains_elem(left, right)
+                }
+                _ => Err(crate::error::Error::unsupported_feature(format!(
+                    "Operator {:?} not supported for RANGE @> element",
+                    op
+                ))),
+            };
+        }
+
+        if left.as_range().is_none() && right.as_range().is_some() {
+            return match op {
+                BinaryOp::ArrayContainedBy => {
+                    yachtsql_functions::range::range_contains_elem(right, left)
+                }
+                _ => Err(crate::error::Error::unsupported_feature(format!(
+                    "Operator {:?} not supported for element <@ RANGE",
                     op
                 ))),
             };

@@ -53,7 +53,7 @@ fn test_daterange_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "Parser treats '[1,10]' as a vector instead of a range"]
 fn test_range_inclusive_exclusive() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT '[1,10]'::INT4RANGE").unwrap();
@@ -103,7 +103,6 @@ fn test_range_unbounded_both() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_contains_element() {
     let mut executor = create_executor();
     let result = executor
@@ -113,7 +112,6 @@ fn test_range_contains_element() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_element_contained() {
     let mut executor = create_executor();
     let result = executor
@@ -141,7 +139,6 @@ fn test_range_overlaps() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_strictly_left() {
     let mut executor = create_executor();
     let result = executor
@@ -151,7 +148,6 @@ fn test_range_strictly_left() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_strictly_right() {
     let mut executor = create_executor();
     let result = executor
@@ -161,7 +157,6 @@ fn test_range_strictly_right() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_adjacent() {
     let mut executor = create_executor();
     let result = executor
@@ -189,7 +184,6 @@ fn test_range_intersection() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_difference() {
     let mut executor = create_executor();
     let result = executor

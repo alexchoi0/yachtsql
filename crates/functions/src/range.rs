@@ -389,6 +389,10 @@ pub fn range_upper_inf(range: &Value) -> Result<Value> {
     Ok(Value::bool_val(r.upper.is_none()))
 }
 
+pub fn range_contains_elem(range: &Value, elem: &Value) -> Result<Value> {
+    range_contains(range, elem)
+}
+
 pub fn range_adjacent(range1: &Value, range2: &Value) -> Result<Value> {
     if range1.is_null() || range2.is_null() {
         return Ok(Value::null());
@@ -462,7 +466,7 @@ pub fn range_difference(range1: &Value, range2: &Value) -> Result<Value> {
         actual: range1.data_type().to_string(),
     })?;
 
-    let _r2 = range2.as_range().ok_or_else(|| Error::TypeMismatch {
+    let r2 = range2.as_range().ok_or_else(|| Error::TypeMismatch {
         expected: "RANGE".to_string(),
         actual: range2.data_type().to_string(),
     })?;
@@ -480,6 +484,58 @@ pub fn range_difference(range1: &Value, range2: &Value) -> Result<Value> {
             upper: None,
             lower_inclusive: false,
             upper_inclusive: false,
+        }));
+    }
+
+    let r2_lower_before_r1_lower = match (&r1.lower, &r2.lower) {
+        (None, _) => false,
+        (_, None) => true,
+        (Some(l1), Some(l2)) => {
+            value_less_than(l2, l1)?
+                || (value_equal(l2, l1)? && r2.lower_inclusive && !r1.lower_inclusive)
+        }
+    };
+
+    let r2_upper_after_r1_upper = match (&r1.upper, &r2.upper) {
+        (None, _) => false,
+        (_, None) => true,
+        (Some(u1), Some(u2)) => {
+            value_greater_than(u2, u1)?
+                || (value_equal(u2, u1)? && r2.upper_inclusive && !r1.upper_inclusive)
+        }
+    };
+
+    if r2_lower_before_r1_lower && r2_upper_after_r1_upper {
+        return Ok(Value::range(Range {
+            range_type: r1.range_type.clone(),
+            lower: None,
+            upper: None,
+            lower_inclusive: false,
+            upper_inclusive: false,
+        }));
+    }
+
+    if r2_lower_before_r1_lower {
+        let new_lower = r2.upper.clone();
+        let new_lower_inclusive = !r2.upper_inclusive;
+        return Ok(Value::range(Range {
+            range_type: r1.range_type.clone(),
+            lower: new_lower,
+            upper: r1.upper.clone(),
+            lower_inclusive: new_lower_inclusive,
+            upper_inclusive: r1.upper_inclusive,
+        }));
+    }
+
+    if r2_upper_after_r1_upper {
+        let new_upper = r2.lower.clone();
+        let new_upper_inclusive = !r2.lower_inclusive;
+        return Ok(Value::range(Range {
+            range_type: r1.range_type.clone(),
+            lower: r1.lower.clone(),
+            upper: new_upper,
+            lower_inclusive: r1.lower_inclusive,
+            upper_inclusive: new_upper_inclusive,
         }));
     }
 

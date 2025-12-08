@@ -1148,10 +1148,7 @@ pub fn perform_cast(
     }
 }
 
-fn parse_range_from_string(
-    s: &str,
-    range_type: yachtsql_core::types::RangeType,
-) -> Result<Value> {
+fn parse_range_from_string(s: &str, range_type: yachtsql_core::types::RangeType) -> Result<Value> {
     use yachtsql_core::types::{Range, RangeType};
 
     let s = s.trim();
@@ -1223,9 +1220,8 @@ fn parse_range_bound(s: &str, range_type: &yachtsql_core::types::RangeType) -> R
         }
         RangeType::DateRange => {
             use chrono::NaiveDate;
-            let date = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                Error::InvalidOperation(format!("Invalid date in range: '{}'", s))
-            })?;
+            let date = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+                .map_err(|_| Error::InvalidOperation(format!("Invalid date in range: '{}'", s)))?;
             Ok(Value::date(date))
         }
         RangeType::TsRange | RangeType::TsTzRange => {
@@ -1238,11 +1234,11 @@ fn parse_range_bound(s: &str, range_type: &yachtsql_core::types::RangeType) -> R
                         .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
                 })
                 .or_else(|_| {
-                    DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z")
-                        .map(|dt| dt.naive_utc())
+                    DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z").map(|dt| dt.naive_utc())
                 })
                 .or_else(|_| {
-                    let s_no_tz = s.trim_end_matches(|c: char| c == '+' || c == '-' || c.is_numeric());
+                    let s_no_tz =
+                        s.trim_end_matches(|c: char| c == '+' || c == '-' || c.is_numeric());
                     NaiveDateTime::parse_from_str(s_no_tz.trim(), "%Y-%m-%d %H:%M:%S")
                 })
                 .map_err(|_| {

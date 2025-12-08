@@ -28,9 +28,9 @@ fn parse_range_string(s: &str, range_type: RangeType) -> Result<Value> {
     let upper_inclusive = s.ends_with(']');
 
     let inner = &s[1..s.len() - 1];
-    let comma_pos = inner.find(',').ok_or_else(|| {
-        Error::invalid_query(format!("Invalid range format (no comma): '{}'", s))
-    })?;
+    let comma_pos = inner
+        .find(',')
+        .ok_or_else(|| Error::invalid_query(format!("Invalid range format (no comma): '{}'", s)))?;
 
     let lower_str = inner[..comma_pos].trim();
     let upper_str = inner[comma_pos + 1..].trim();
@@ -59,22 +59,21 @@ fn parse_range_string(s: &str, range_type: RangeType) -> Result<Value> {
 fn parse_range_bound(s: &str, range_type: &RangeType) -> Result<Value> {
     match range_type {
         RangeType::Int4Range | RangeType::Int8Range => {
-            let val: i64 = s.parse().map_err(|_| {
-                Error::invalid_query(format!("Invalid integer in range: '{}'", s))
-            })?;
+            let val: i64 = s
+                .parse()
+                .map_err(|_| Error::invalid_query(format!("Invalid integer in range: '{}'", s)))?;
             Ok(Value::int64(val))
         }
         RangeType::NumRange => {
-            let val: f64 = s.parse().map_err(|_| {
-                Error::invalid_query(format!("Invalid number in range: '{}'", s))
-            })?;
+            let val: f64 = s
+                .parse()
+                .map_err(|_| Error::invalid_query(format!("Invalid number in range: '{}'", s)))?;
             Ok(Value::float64(val))
         }
         RangeType::DateRange => {
             use chrono::NaiveDate;
-            let date = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                Error::invalid_query(format!("Invalid date in range: '{}'", s))
-            })?;
+            let date = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+                .map_err(|_| Error::invalid_query(format!("Invalid date in range: '{}'", s)))?;
             Ok(Value::date(date))
         }
         RangeType::TsRange | RangeType::TsTzRange => {
@@ -87,11 +86,11 @@ fn parse_range_bound(s: &str, range_type: &RangeType) -> Result<Value> {
                         .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
                 })
                 .or_else(|_| {
-                    DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z")
-                        .map(|dt| dt.naive_utc())
+                    DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z").map(|dt| dt.naive_utc())
                 })
                 .or_else(|_| {
-                    let s_no_tz = s.trim_end_matches(|c: char| c == '+' || c == '-' || c.is_numeric());
+                    let s_no_tz =
+                        s.trim_end_matches(|c: char| c == '+' || c == '-' || c.is_numeric());
                     NaiveDateTime::parse_from_str(s_no_tz.trim(), "%Y-%m-%d %H:%M:%S")
                 })
                 .map_err(|_| {
@@ -591,9 +590,7 @@ impl CoercionRules {
                     };
                     let values: std::result::Result<Vec<f64>, _> = inner
                         .split(',')
-                        .map(|part| {
-                            part.trim().parse::<f64>()
-                        })
+                        .map(|part| part.trim().parse::<f64>())
                         .collect();
                     match values {
                         Ok(v) => Ok(Value::vector(v)),
