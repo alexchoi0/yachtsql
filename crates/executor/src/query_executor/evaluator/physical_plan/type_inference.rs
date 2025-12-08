@@ -533,8 +533,6 @@ impl ProjectionWithExprExec {
             | FunctionName::StrReplace
             | FunctionName::Ucase
             | FunctionName::Lcase
-            | FunctionName::Substr
-            | FunctionName::Substring
             | FunctionName::Mid
             | FunctionName::Left
             | FunctionName::Right
@@ -562,6 +560,17 @@ impl ProjectionWithExprExec {
             }
 
             FunctionName::Reverse | FunctionName::Strrev => {
+                if !args.is_empty() {
+                    match Self::infer_expr_type_with_schema(&args[0], schema) {
+                        Some(DataType::Bytes) => Some(DataType::Bytes),
+                        _ => Some(DataType::String),
+                    }
+                } else {
+                    Some(DataType::String)
+                }
+            }
+
+            FunctionName::Substr | FunctionName::Substring => {
                 if !args.is_empty() {
                     match Self::infer_expr_type_with_schema(&args[0], schema) {
                         Some(DataType::Bytes) => Some(DataType::Bytes),
@@ -769,6 +778,7 @@ impl ProjectionWithExprExec {
                 Some(DataType::Bytes)
             }
             FunctionName::Encode => Some(DataType::String),
+            FunctionName::Decode => Some(DataType::Bytes),
 
             FunctionName::Custom(s)
                 if s == "HSTORE_EXISTS"

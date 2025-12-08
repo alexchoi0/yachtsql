@@ -453,6 +453,7 @@ impl ProjectionWithExprExec {
                 | FunctionName::Len
                 | FunctionName::CharLength
                 | FunctionName::CharacterLength
+                | FunctionName::OctetLength
                 | FunctionName::Split
                 | FunctionName::SplitPart
                 | FunctionName::StringSplit

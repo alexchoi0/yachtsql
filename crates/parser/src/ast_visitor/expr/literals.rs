@@ -164,10 +164,22 @@ impl LogicalPlanBuilder {
             | ast::Value::DoubleQuotedByteStringLiteral(s)
             | ast::Value::TripleSingleQuotedByteStringLiteral(s)
             | ast::Value::TripleDoubleQuotedByteStringLiteral(s) => {
-                Ok(LiteralValue::Bytes(s.as_bytes().to_vec()))
+                if let Some(hex_str) = s.strip_prefix("\\x") {
+                    Self::parse_hex_literal(hex_str)
+                } else {
+                    Ok(LiteralValue::Bytes(s.as_bytes().to_vec()))
+                }
             }
 
             ast::Value::HexStringLiteral(s) => Self::parse_hex_literal(s),
+            ast::Value::EscapedStringLiteral(s) => {
+                let unescaped = Self::unescape_string(s);
+                if let Some(hex_str) = unescaped.strip_prefix("\\x") {
+                    Self::parse_hex_literal(hex_str)
+                } else {
+                    Ok(LiteralValue::String(unescaped))
+                }
+            }
             _ => Err(Error::unsupported_feature(format!(
                 "Value type not supported: {:?}",
                 value.value
@@ -233,5 +245,52 @@ impl LogicalPlanBuilder {
         }
 
         Ok(LiteralValue::Bytes(bytes))
+    }
+
+    fn unescape_string(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.peek() {
+                    Some('\\') => {
+                        chars.next();
+                        result.push('\\');
+                    }
+                    Some('n') => {
+                        chars.next();
+                        result.push('\n');
+                    }
+                    Some('r') => {
+                        chars.next();
+                        result.push('\r');
+                    }
+                    Some('t') => {
+                        chars.next();
+                        result.push('\t');
+                    }
+                    Some('\'') => {
+                        chars.next();
+                        result.push('\'');
+                    }
+                    Some('"') => {
+                        chars.next();
+                        result.push('"');
+                    }
+                    Some('x') => {
+                        result.push('\\');
+                        result.push(chars.next().unwrap());
+                    }
+                    _ => {
+                        result.push(c);
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+
+        result
     }
 }
