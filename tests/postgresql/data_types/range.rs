@@ -298,7 +298,7 @@ fn test_range_merge_function() {
 fn test_range_column() {
     let mut executor = create_executor();
     executor
-        .execute_sql("CREATE TABLE range_test (id INT64, r INT4RANGE)")
+        .execute_sql("CREATE TABLE range_test (id INTEGER, r INT4RANGE)")
         .unwrap();
     executor
         .execute_sql("INSERT INTO range_test VALUES (1, '[1,10)')")
@@ -313,7 +313,7 @@ fn test_range_column() {
 fn test_range_index_gist() {
     let mut executor = create_executor();
     executor
-        .execute_sql("CREATE TABLE range_gist (id INT64, r INT4RANGE)")
+        .execute_sql("CREATE TABLE range_gist (id INTEGER, r INT4RANGE)")
         .unwrap();
     executor
         .execute_sql("CREATE INDEX range_gist_idx ON range_gist USING GIST (r)")
@@ -333,8 +333,8 @@ fn test_range_exclude_constraint() {
     let mut executor = create_executor();
     let result = executor.execute_sql(
         "CREATE TABLE room_booking (
-            id INT64,
-            room INT64,
+            id INTEGER,
+            room INTEGER,
             during TSRANGE,
             EXCLUDE USING GIST (room WITH =, during WITH &&)
         )",

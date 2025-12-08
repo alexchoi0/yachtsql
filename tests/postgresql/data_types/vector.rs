@@ -14,7 +14,7 @@ fn test_vector_type_declaration() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE embeddings (id INT64, embedding VECTOR(3))");
+    let result = executor.execute_sql("CREATE TABLE embeddings (id INTEGER, embedding VECTOR(3))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -25,7 +25,7 @@ fn test_vector_type_dimension_4() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE vec4 (id INT64, vec VECTOR(4))");
+    let result = executor.execute_sql("CREATE TABLE vec4 (id INTEGER, vec VECTOR(4))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -36,7 +36,7 @@ fn test_vector_type_dimension_128() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE vec128 (id INT64, vec VECTOR(128))");
+    let result = executor.execute_sql("CREATE TABLE vec128 (id INTEGER, vec VECTOR(128))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -47,7 +47,7 @@ fn test_vector_type_dimension_1536() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE vec1536 (id INT64, vec VECTOR(1536))");
+    let result = executor.execute_sql("CREATE TABLE vec1536 (id INTEGER, vec VECTOR(1536))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -58,7 +58,7 @@ fn test_insert_vector_literal() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_test (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_test (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql("INSERT INTO vec_test VALUES (1, '[1.0, 2.0, 3.0]')");
@@ -72,7 +72,7 @@ fn test_insert_vector_array_syntax() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_arr (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_arr (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result =
@@ -88,7 +88,7 @@ fn test_insert_multiple_vectors() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_multi (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_multi (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -105,7 +105,7 @@ fn test_select_vector() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_sel (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_sel (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -123,7 +123,7 @@ fn test_l2_distance_operator() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_l2 (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_l2 (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -142,7 +142,7 @@ fn test_cosine_distance_operator() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_cos (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_cos (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -163,7 +163,7 @@ fn test_inner_product_operator() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ip (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_ip (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -182,7 +182,7 @@ fn test_l1_distance_operator() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_l1 (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_l1 (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -201,7 +201,7 @@ fn test_order_by_l2_distance() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_order (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_order (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -222,7 +222,7 @@ fn test_order_by_cosine_distance() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE vec_cos_order (id INT64, vec VECTOR(3))");
+        executor.execute_sql("CREATE TABLE vec_cos_order (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -241,7 +241,7 @@ fn test_knn_search_limit() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_knn (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_knn (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -259,7 +259,7 @@ fn test_ivfflat_index_l2() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ivf (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_ivf (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -275,7 +275,8 @@ fn test_ivfflat_index_cosine() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ivf_cos (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_ivf_cos (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -291,7 +292,7 @@ fn test_ivfflat_index_inner_product() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ivf_ip (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_ivf_ip (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -307,7 +308,7 @@ fn test_hnsw_index_l2() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_hnsw (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_hnsw (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -323,7 +324,8 @@ fn test_hnsw_index_cosine() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_hnsw_cos (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_hnsw_cos (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result =
@@ -338,7 +340,8 @@ fn test_hnsw_index_inner_product() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_hnsw_ip (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_hnsw_ip (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result =
@@ -354,7 +357,7 @@ fn test_vector_dimension_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_dim (id INT64, vec VECTOR(5))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_dim (id INTEGER, vec VECTOR(5))");
 
     if create_result.is_ok() {
         executor
@@ -372,7 +375,7 @@ fn test_vector_norm_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_norm (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_norm (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -390,7 +393,8 @@ fn test_l2_distance_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_l2_func (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_l2_func (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -409,7 +413,8 @@ fn test_cosine_distance_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_cos_func (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_cos_func (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -428,7 +433,8 @@ fn test_inner_product_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ip_func (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_ip_func (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -447,7 +453,8 @@ fn test_l1_distance_function() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_l1_func (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_l1_func (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -466,7 +473,7 @@ fn test_vector_add() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_add (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_add (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -484,7 +491,7 @@ fn test_vector_subtract() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_sub (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_sub (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -502,7 +509,7 @@ fn test_vector_multiply() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_mul (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_mul (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -531,7 +538,7 @@ fn test_vector_cast_to_array() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_to_arr (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_to_arr (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -548,7 +555,7 @@ fn test_vector_null_handling() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_null (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_null (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -566,7 +573,7 @@ fn test_vector_average() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_avg (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_avg (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -584,7 +591,7 @@ fn test_vector_sum() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_sum (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_sum (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -602,7 +609,7 @@ fn test_halfvec_type() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE halfvec_test (id INT64, vec HALFVEC(3))");
+    let result = executor.execute_sql("CREATE TABLE halfvec_test (id INTEGER, vec HALFVEC(3))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -614,7 +621,7 @@ fn test_sparsevec_type() {
         .ok();
 
     let result =
-        executor.execute_sql("CREATE TABLE sparsevec_test (id INT64, vec SPARSEVEC(1000))");
+        executor.execute_sql("CREATE TABLE sparsevec_test (id INTEGER, vec SPARSEVEC(1000))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -625,7 +632,7 @@ fn test_sparsevec_insert() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE sparse_ins (id INT64, vec SPARSEVEC(10))");
+        executor.execute_sql("CREATE TABLE sparse_ins (id INTEGER, vec SPARSEVEC(10))");
 
     if create_result.is_ok() {
         let result =
@@ -641,7 +648,7 @@ fn test_bit_vector_type() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
 
-    let result = executor.execute_sql("CREATE TABLE bitvec_test (id INT64, vec BIT(8))");
+    let result = executor.execute_sql("CREATE TABLE bitvec_test (id INTEGER, vec BIT(8))");
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -651,7 +658,7 @@ fn test_hamming_distance() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE bitvec_ham (id INT64, vec BIT(8))");
+    let create_result = executor.execute_sql("CREATE TABLE bitvec_ham (id INTEGER, vec BIT(8))");
 
     if create_result.is_ok() {
         executor
@@ -669,7 +676,7 @@ fn test_jaccard_distance() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE bitvec_jac (id INT64, vec BIT(8))");
+    let create_result = executor.execute_sql("CREATE TABLE bitvec_jac (id INTEGER, vec BIT(8))");
 
     if create_result.is_ok() {
         executor
@@ -689,7 +696,7 @@ fn test_vector_with_where_clause() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE vec_where (id INT64, category STRING, vec VECTOR(3))");
+        executor.execute_sql("CREATE TABLE vec_where (id INTEGER, category TEXT, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -709,8 +716,8 @@ fn test_vector_join() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create1 = executor.execute_sql("CREATE TABLE vec_left (id INT64, vec VECTOR(3))");
-    let create2 = executor.execute_sql("CREATE TABLE vec_right (id INT64, vec VECTOR(3))");
+    let create1 = executor.execute_sql("CREATE TABLE vec_left (id INTEGER, vec VECTOR(3))");
+    let create2 = executor.execute_sql("CREATE TABLE vec_right (id INTEGER, vec VECTOR(3))");
 
     if create1.is_ok() && create2.is_ok() {
         executor
@@ -737,7 +744,7 @@ fn test_vector_subquery() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_subq (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_subq (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -757,7 +764,7 @@ fn test_vector_cte() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_cte (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_cte (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -800,7 +807,7 @@ fn test_vector_in_view() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE vec_view_base (id INT64, vec VECTOR(3))");
+        executor.execute_sql("CREATE TABLE vec_view_base (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -820,7 +827,7 @@ fn test_vector_update() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_upd (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_upd (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -839,7 +846,7 @@ fn test_vector_delete() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_del (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_del (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -861,7 +868,7 @@ fn test_vector_normalize() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE vec_normalize (id INT64, vec VECTOR(3))");
+        executor.execute_sql("CREATE TABLE vec_normalize (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -880,7 +887,7 @@ fn test_vector_with_group_by() {
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
     let create_result =
-        executor.execute_sql("CREATE TABLE vec_group (id INT64, category STRING, vec VECTOR(3))");
+        executor.execute_sql("CREATE TABLE vec_group (id INTEGER, category TEXT, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor.execute_sql(
@@ -899,7 +906,7 @@ fn test_vector_cosine_similarity() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_sim (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_sim (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -918,7 +925,8 @@ fn test_vector_expression_index() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_expr_idx (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_expr_idx (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -934,8 +942,8 @@ fn test_vector_partial_index() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result =
-        executor.execute_sql("CREATE TABLE vec_partial (id INT64, active BOOL, vec VECTOR(3))");
+    let create_result = executor
+        .execute_sql("CREATE TABLE vec_partial (id INTEGER, active BOOLEAN, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -951,7 +959,7 @@ fn test_vector_binary_quantization() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_bq (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_bq (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(
@@ -978,7 +986,8 @@ fn test_vector_reindex() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_reindex (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_reindex (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -998,7 +1007,8 @@ fn test_vector_explain_analyze() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_explain (id INT64, vec VECTOR(3))");
+    let create_result =
+        executor.execute_sql("CREATE TABLE vec_explain (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -1018,7 +1028,7 @@ fn test_vector_returning() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_ret (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_ret (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result =
@@ -1033,7 +1043,7 @@ fn test_vector_coalesce() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_coal (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_coal (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         executor
@@ -1050,7 +1060,7 @@ fn test_vector_generate_series() {
     executor
         .execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
         .ok();
-    let create_result = executor.execute_sql("CREATE TABLE vec_gen (id INT64, vec VECTOR(3))");
+    let create_result = executor.execute_sql("CREATE TABLE vec_gen (id INTEGER, vec VECTOR(3))");
 
     if create_result.is_ok() {
         let result = executor.execute_sql(

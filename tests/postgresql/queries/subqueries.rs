@@ -5,14 +5,14 @@ use crate::common::create_executor;
 
 fn setup_tables(executor: &mut QueryExecutor) {
     executor
-        .execute_sql("CREATE TABLE users (id INT64, name STRING, dept_id INT64)")
+        .execute_sql("CREATE TABLE users (id INTEGER, name TEXT, dept_id INTEGER)")
         .unwrap();
     executor
         .execute_sql("INSERT INTO users VALUES (1, 'Alice', 1), (2, 'Bob', 2), (3, 'Charlie', 1)")
         .unwrap();
 
     executor
-        .execute_sql("CREATE TABLE orders (id INT64, user_id INT64, amount INT64)")
+        .execute_sql("CREATE TABLE orders (id INTEGER, user_id INTEGER, amount INTEGER)")
         .unwrap();
     executor
         .execute_sql("INSERT INTO orders VALUES (1, 1, 100), (2, 1, 200), (3, 2, 150)")
@@ -21,7 +21,7 @@ fn setup_tables(executor: &mut QueryExecutor) {
 
 fn setup_employees_departments(executor: &mut QueryExecutor) {
     executor
-        .execute_sql("CREATE TABLE departments (dept_id INT64, dept_name STRING)")
+        .execute_sql("CREATE TABLE departments (dept_id INTEGER, dept_name TEXT)")
         .unwrap();
     executor
         .execute_sql("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales'), (3, 'HR')")
@@ -29,7 +29,7 @@ fn setup_employees_departments(executor: &mut QueryExecutor) {
 
     executor
         .execute_sql(
-            "CREATE TABLE employees (emp_id INT64, emp_name STRING, dept_id INT64, salary INT64)",
+            "CREATE TABLE employees (emp_id INTEGER, emp_name TEXT, dept_id INTEGER, salary INTEGER)",
         )
         .unwrap();
     executor
@@ -39,7 +39,7 @@ fn setup_employees_departments(executor: &mut QueryExecutor) {
 
 fn setup_products_categories(executor: &mut QueryExecutor) {
     executor
-        .execute_sql("CREATE TABLE categories (cat_id INT64, cat_name STRING)")
+        .execute_sql("CREATE TABLE categories (cat_id INTEGER, cat_name TEXT)")
         .unwrap();
     executor
         .execute_sql(
@@ -49,7 +49,7 @@ fn setup_products_categories(executor: &mut QueryExecutor) {
 
     executor
         .execute_sql(
-            "CREATE TABLE products (prod_id INT64, prod_name STRING, cat_id INT64, price FLOAT64)",
+            "CREATE TABLE products (prod_id INTEGER, prod_name TEXT, cat_id INTEGER, price DOUBLE PRECISION)",
         )
         .unwrap();
     executor
@@ -59,7 +59,7 @@ fn setup_products_categories(executor: &mut QueryExecutor) {
 
 fn setup_nullable_table(executor: &mut QueryExecutor) {
     executor
-        .execute_sql("CREATE TABLE items (id INT64, value INT64)")
+        .execute_sql("CREATE TABLE items (id INTEGER, value INTEGER)")
         .unwrap();
     executor
         .execute_sql("INSERT INTO items VALUES (1, 10), (2, NULL), (3, 30), (4, NULL)")
