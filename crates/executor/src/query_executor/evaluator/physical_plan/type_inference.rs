@@ -1628,6 +1628,31 @@ impl ProjectionWithExprExec {
 
             FunctionName::CurrentSchemas => Some(DataType::Array(Box::new(DataType::String))),
 
+            // Tuple functions
+            FunctionName::Tuple
+            | FunctionName::TupleElement
+            | FunctionName::Untuple
+            | FunctionName::TuplePlus
+            | FunctionName::TupleMinus
+            | FunctionName::TupleMultiply
+            | FunctionName::TupleDivide
+            | FunctionName::TupleNegate
+            | FunctionName::TupleMultiplyByNumber
+            | FunctionName::TupleDivideByNumber
+            | FunctionName::TupleConcat
+            | FunctionName::TupleIntDiv
+            | FunctionName::TupleIntDivOrZero
+            | FunctionName::TupleModulo
+            | FunctionName::TupleModuloByNumber => Some(DataType::Struct(vec![])),
+
+            FunctionName::TupleHammingDistance => Some(DataType::Int64),
+
+            FunctionName::TupleToNameValuePairs => {
+                Some(DataType::Array(Box::new(DataType::Struct(vec![]))))
+            }
+
+            FunctionName::TupleNames => Some(DataType::Array(Box::new(DataType::String))),
+
             _ => None,
         }
     }
