@@ -148,12 +148,17 @@ impl ProjectionWithExprExec {
             CastDataType::Hstore => DataType::Hstore,
             CastDataType::MacAddr => DataType::MacAddr,
             CastDataType::MacAddr8 => DataType::MacAddr8,
+            CastDataType::Inet => DataType::Inet,
+            CastDataType::Cidr => DataType::Cidr,
             CastDataType::Int4Range => DataType::Range(yachtsql_core::types::RangeType::Int4Range),
             CastDataType::Int8Range => DataType::Range(yachtsql_core::types::RangeType::Int8Range),
             CastDataType::NumRange => DataType::Range(yachtsql_core::types::RangeType::NumRange),
             CastDataType::TsRange => DataType::Range(yachtsql_core::types::RangeType::TsRange),
             CastDataType::TsTzRange => DataType::Range(yachtsql_core::types::RangeType::TsTzRange),
             CastDataType::DateRange => DataType::Range(yachtsql_core::types::RangeType::DateRange),
+            CastDataType::Point => DataType::Point,
+            CastDataType::PgBox => DataType::PgBox,
+            CastDataType::Circle => DataType::Circle,
             CastDataType::Custom(name, struct_fields) => {
                 if struct_fields.is_empty() {
                     DataType::Custom(name.clone())
@@ -1471,6 +1476,43 @@ impl ProjectionWithExprExec {
 
             FunctionName::SetBit => Some(DataType::Bytes),
 
+            FunctionName::PositionCaseInsensitive
+            | FunctionName::PositionUtf8
+            | FunctionName::PositionCaseInsensitiveUtf8
+            | FunctionName::CountSubstrings
+            | FunctionName::CountSubstringsCaseInsensitive
+            | FunctionName::CountMatches
+            | FunctionName::CountMatchesCaseInsensitive
+            | FunctionName::MultiSearchFirstIndex
+            | FunctionName::MultiSearchFirstPosition
+            | FunctionName::MultiMatchAnyIndex => Some(DataType::Int64),
+
+            FunctionName::HasToken
+            | FunctionName::HasTokenCaseInsensitive
+            | FunctionName::Match
+            | FunctionName::MultiSearchAny
+            | FunctionName::MultiMatchAny => Some(DataType::Int64),
+
+            FunctionName::MultiSearchAllPositions => Some(DataType::Array(Box::new(
+                DataType::Array(Box::new(DataType::Int64)),
+            ))),
+
+            FunctionName::MultiMatchAllIndices => Some(DataType::Array(Box::new(DataType::Int64))),
+
+            FunctionName::ExtractGroups => Some(DataType::Array(Box::new(DataType::String))),
+
+            FunctionName::NgramDistance | FunctionName::NgramSearch => Some(DataType::Float64),
+
+            FunctionName::ReplaceOne
+            | FunctionName::ReplaceAll
+            | FunctionName::TrimBoth
+            | FunctionName::RegexpQuoteMeta
+            | FunctionName::TranslateUtf8
+            | FunctionName::NormalizeUtf8Nfc
+            | FunctionName::NormalizeUtf8Nfd
+            | FunctionName::NormalizeUtf8Nfkc
+            | FunctionName::NormalizeUtf8Nfkd => Some(DataType::String),
+
             FunctionName::BoolAnd | FunctionName::BoolOr | FunctionName::Every => {
                 Some(DataType::Bool)
             }
@@ -1491,6 +1533,62 @@ impl ProjectionWithExprExec {
             | FunctionName::NetIpNetMask
             | FunctionName::NetIpTrunc => Some(DataType::Bytes),
             FunctionName::NetIpv4ToInt64 => Some(DataType::Int64),
+
+            FunctionName::ToInt8
+            | FunctionName::ToInt16
+            | FunctionName::ToInt32
+            | FunctionName::ToInt64
+            | FunctionName::ToUInt8
+            | FunctionName::ToUInt16
+            | FunctionName::ToUInt32
+            | FunctionName::ToUInt64
+            | FunctionName::ToInt64OrNull
+            | FunctionName::ToInt64OrZero
+            | FunctionName::ReinterpretAsInt64 => Some(DataType::Int64),
+
+            FunctionName::ToFloat32
+            | FunctionName::ToFloat64
+            | FunctionName::ToFloat64OrNull
+            | FunctionName::ToFloat64OrZero => Some(DataType::Float64),
+
+            FunctionName::ChToString
+            | FunctionName::ToFixedString
+            | FunctionName::ReinterpretAsString
+            | FunctionName::ToTypeName => Some(DataType::String),
+
+            FunctionName::ToDateOrNull => Some(DataType::Date),
+
+            FunctionName::ChToDateTime
+            | FunctionName::ToDateTime64
+            | FunctionName::ToDateTimeOrNull
+            | FunctionName::ChParseDateTime
+            | FunctionName::ParseDateTimeBestEffort
+            | FunctionName::ParseDateTimeBestEffortOrNull => Some(DataType::Timestamp),
+
+            FunctionName::ToDecimal32 | FunctionName::ToDecimal64 | FunctionName::ToDecimal128 => {
+                Some(DataType::Numeric(None))
+            }
+
+            FunctionName::AccurateCast | FunctionName::AccurateCastOrNull => {
+                if args.len() >= 2 {
+                    if let crate::optimizer::expr::Expr::Literal(
+                        crate::optimizer::expr::LiteralValue::String(s),
+                    ) = &args[1]
+                    {
+                        return match s.to_uppercase().as_str() {
+                            "INT8" | "INT16" | "INT32" | "INT64" => Some(DataType::Int64),
+                            "UINT8" | "UINT16" | "UINT32" | "UINT64" => Some(DataType::Int64),
+                            "FLOAT32" | "FLOAT64" => Some(DataType::Float64),
+                            "STRING" => Some(DataType::String),
+                            "DATE" => Some(DataType::Date),
+                            "DATETIME" | "DATETIME64" => Some(DataType::Timestamp),
+                            _ => None,
+                        };
+                    }
+                }
+                None
+            }
+
             FunctionName::NetIpToString
             | FunctionName::NetHost
             | FunctionName::NetPublicSuffix
@@ -1694,24 +1792,57 @@ impl ProjectionWithExprExec {
             | FunctionName::ServerTimezone
             | FunctionName::HostName
             | FunctionName::Fqdn
-            | FunctionName::ToTypeName
             | FunctionName::DumpColumnStructure
             | FunctionName::QueryId
             | FunctionName::InitialQueryId
             | FunctionName::ServerUuid
-            | FunctionName::GetSetting => Some(DataType::String),
+            | FunctionName::GetSetting
+            | FunctionName::PgTypeof
+            | FunctionName::SessionUser
+            | FunctionName::CurrentSchema
+            | FunctionName::CurrentCatalog
+            | FunctionName::CurrentSetting
+            | FunctionName::SetConfig
+            | FunctionName::PgSizePretty
+            | FunctionName::PgCurrentSnapshot
+            | FunctionName::PgGetViewdef
+            | FunctionName::ObjDescription
+            | FunctionName::ColDescription
+            | FunctionName::ShobjDescription
+            | FunctionName::InetClientAddr
+            | FunctionName::InetServerAddr => Some(DataType::String),
 
             FunctionName::Uptime
             | FunctionName::BlockNumber
             | FunctionName::RowNumberInBlock
             | FunctionName::RowNumberInAllBlocks
             | FunctionName::BlockSize
-            | FunctionName::CountDigits => Some(DataType::Int64),
+            | FunctionName::CountDigits
+            | FunctionName::PgBackendPid
+            | FunctionName::PgColumnSize
+            | FunctionName::PgDatabaseSize
+            | FunctionName::PgTableSize
+            | FunctionName::PgIndexesSize
+            | FunctionName::PgTotalRelationSize
+            | FunctionName::PgRelationSize
+            | FunctionName::PgTablespaceSize
+            | FunctionName::InetClientPort
+            | FunctionName::InetServerPort
+            | FunctionName::TxidCurrent => Some(DataType::Int64),
 
             FunctionName::IsFinite
             | FunctionName::IsInfinite
             | FunctionName::IsNan
-            | FunctionName::IsDecimalOverflow => Some(DataType::Bool),
+            | FunctionName::IsDecimalOverflow
+            | FunctionName::PgIsInRecovery
+            | FunctionName::HasTablePrivilege
+            | FunctionName::HasSchemaPrivilege
+            | FunctionName::HasDatabasePrivilege
+            | FunctionName::HasColumnPrivilege => Some(DataType::Bool),
+
+            FunctionName::PgConfLoadTime | FunctionName::PgPostmasterStartTime => {
+                Some(DataType::Timestamp)
+            }
 
             FunctionName::DefaultValueOfArgumentType => {
                 if !args.is_empty() {

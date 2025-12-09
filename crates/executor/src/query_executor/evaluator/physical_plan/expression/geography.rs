@@ -2563,42 +2563,6 @@ impl ProjectionWithExprExec {
                     .to_string();
                 yachtsql_functions::encoding::base58_decode(&s)
             }
-            "BASE64URLENCODE" => {
-                if args.is_empty() {
-                    return Err(Error::invalid_query(
-                        "base64URLEncode requires 1 argument".to_string(),
-                    ));
-                }
-                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
-                    .as_str()
-                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
-                    .to_string();
-                yachtsql_functions::encoding::base64_url_encode(&s)
-            }
-            "BASE64URLDECODE" => {
-                if args.is_empty() {
-                    return Err(Error::invalid_query(
-                        "base64URLDecode requires 1 argument".to_string(),
-                    ));
-                }
-                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
-                    .as_str()
-                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
-                    .to_string();
-                yachtsql_functions::encoding::base64_url_decode(&s)
-            }
-            "TRYBASE64URLDECODE" => {
-                if args.is_empty() {
-                    return Err(Error::invalid_query(
-                        "tryBase64URLDecode requires 1 argument".to_string(),
-                    ));
-                }
-                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
-                    .as_str()
-                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
-                    .to_string();
-                yachtsql_functions::encoding::try_base64_url_decode(&s)
-            }
             "BIN" => {
                 if args.is_empty() {
                     return Err(Error::invalid_query("bin requires 1 argument".to_string()));
@@ -3004,30 +2968,335 @@ impl ProjectionWithExprExec {
                     .to_string();
                 yachtsql_functions::network::mac_string_to_oui(&s)
             }
-            "ENCRYPT" => Self::eval_encrypt(args, batch, row_idx),
-            "DECRYPT" => Self::eval_decrypt(args, batch, row_idx),
-            "AES_ENCRYPT_MYSQL" => Self::eval_aes_encrypt_mysql(args, batch, row_idx),
-            "AES_DECRYPT_MYSQL" => Self::eval_aes_decrypt_mysql(args, batch, row_idx),
-            "RAND" | "RAND32" => Self::eval_rand(args, batch, row_idx),
-            "RAND64" => Self::eval_rand64(args, batch, row_idx),
-            "RANDCONSTANT" => Self::eval_rand_constant(args, batch, row_idx),
-            "RANDUNIFORM" => Self::eval_rand_uniform(args, batch, row_idx),
-            "RANDNORMAL" => Self::eval_rand_normal(args, batch, row_idx),
-            "RANDLOGNORMAL" => Self::eval_rand_log_normal(args, batch, row_idx),
-            "RANDEXPONENTIAL" => Self::eval_rand_exponential(args, batch, row_idx),
-            "RANDCHISQUARED" => Self::eval_rand_chi_squared(args, batch, row_idx),
-            "RANDSTUDENTT" => Self::eval_rand_student_t(args, batch, row_idx),
-            "RANDFISHERF" => Self::eval_rand_fisher_f(args, batch, row_idx),
-            "RANDBERNOULLI" => Self::eval_rand_bernoulli(args, batch, row_idx),
-            "RANDBINOMIAL" => Self::eval_rand_binomial(args, batch, row_idx),
-            "RANDNEGATIVEBINOMIAL" => Self::eval_rand_negative_binomial(args, batch, row_idx),
-            "RANDPOISSON" => Self::eval_rand_poisson(args, batch, row_idx),
-            "GENERATEUUIDV4" => Self::eval_generate_uuid_v4(args, batch, row_idx),
-            "RANDOMSTRING" => Self::eval_random_string(args, batch, row_idx),
-            "RANDOMFIXEDSTRING" => Self::eval_random_fixed_string(args, batch, row_idx),
-            "RANDOMPRINTABLEASCII" => Self::eval_random_printable_ascii(args, batch, row_idx),
-            "RANDOMSTRINGUTF8" => Self::eval_random_string_utf8(args, batch, row_idx),
-            "FAKEDATA" => Self::eval_fake_data(args, batch, row_idx),
+
+            "HOST" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    Ok(Value::string(inet.addr.to_string()))
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "FAMILY" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    Ok(Value::int64(inet.family() as i64))
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "MASKLEN" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    let len = inet.prefix_len.unwrap_or(inet.max_prefix_len());
+                    Ok(Value::int64(len as i64))
+                } else if let Some(cidr) = value.as_cidr() {
+                    Ok(Value::int64(cidr.prefix_len as i64))
+                } else {
+                    Err(Error::type_mismatch(
+                        "INET or CIDR",
+                        &value.data_type().to_string(),
+                    ))
+                }
+            }
+            "NETMASK" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    match inet.netmask() {
+                        Some(mask) => Ok(Value::inet(
+                            yachtsql_core::types::network::InetAddr::new(mask),
+                        )),
+                        None => {
+                            let max_mask = if inet.is_ipv4() {
+                                std::net::IpAddr::V4(std::net::Ipv4Addr::new(255, 255, 255, 255))
+                            } else {
+                                std::net::IpAddr::V6(std::net::Ipv6Addr::new(
+                                    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+                                ))
+                            };
+                            Ok(Value::inet(yachtsql_core::types::network::InetAddr::new(
+                                max_mask,
+                            )))
+                        }
+                    }
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "NETWORK" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    match inet.network() {
+                        Some(cidr) => Ok(Value::cidr(cidr)),
+                        None => {
+                            let prefix = inet.max_prefix_len();
+                            Ok(Value::cidr(yachtsql_core::types::network::CidrAddr {
+                                network: inet.addr,
+                                prefix_len: prefix,
+                            }))
+                        }
+                    }
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "BROADCAST" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    match inet.broadcast() {
+                        Some(bcast) => Ok(Value::inet(
+                            yachtsql_core::types::network::InetAddr::new(bcast),
+                        )),
+                        None => Ok(value.clone()),
+                    }
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "HOSTMASK" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    let prefix = inet.prefix_len.unwrap_or(inet.max_prefix_len());
+                    let hostmask = if inet.is_ipv4() {
+                        let mask = if prefix >= 32 { 0u32 } else { !0u32 >> prefix };
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::from(mask.to_be_bytes()))
+                    } else {
+                        let mask = if prefix >= 128 {
+                            0u128
+                        } else {
+                            !0u128 >> prefix
+                        };
+                        std::net::IpAddr::V6(std::net::Ipv6Addr::from(mask.to_be_bytes()))
+                    };
+                    Ok(Value::inet(yachtsql_core::types::network::InetAddr::new(
+                        hostmask,
+                    )))
+                } else {
+                    Err(Error::type_mismatch("INET", &value.data_type().to_string()))
+                }
+            }
+            "INET_SAME_FAMILY" => {
+                let a = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let b = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                if a.is_null() || b.is_null() {
+                    return Ok(Value::null());
+                }
+                match (a.as_inet(), b.as_inet()) {
+                    (Some(ia), Some(ib)) => Ok(Value::bool_val(ia.is_ipv4() == ib.is_ipv4())),
+                    _ => Err(Error::type_mismatch(
+                        "INET, INET",
+                        &format!("{:?}, {:?}", a.data_type(), b.data_type()),
+                    )),
+                }
+            }
+            "ABBREV" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    match inet.prefix_len {
+                        Some(prefix) if prefix == inet.max_prefix_len() => {
+                            Ok(Value::string(inet.addr.to_string()))
+                        }
+                        Some(_) => Ok(Value::string(inet.to_string())),
+                        None => Ok(Value::string(inet.addr.to_string())),
+                    }
+                } else if let Some(cidr) = value.as_cidr() {
+                    Ok(Value::string(cidr.to_string()))
+                } else {
+                    Err(Error::type_mismatch(
+                        "INET or CIDR",
+                        &value.data_type().to_string(),
+                    ))
+                }
+            }
+            "SET_MASKLEN" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let len = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                if value.is_null() || len.is_null() {
+                    return Ok(Value::null());
+                }
+                let new_len = len
+                    .as_i64()
+                    .ok_or_else(|| Error::type_mismatch("INT64", &len.data_type().to_string()))?
+                    as u8;
+                if let Some(inet) = value.as_inet() {
+                    Ok(Value::inet(yachtsql_core::types::network::InetAddr {
+                        addr: inet.addr,
+                        prefix_len: Some(new_len),
+                    }))
+                } else if let Some(cidr) = value.as_cidr() {
+                    match yachtsql_core::types::network::CidrAddr::new(cidr.network, new_len) {
+                        Ok(new_cidr) => Ok(Value::cidr(new_cidr)),
+                        Err(e) => Err(Error::invalid_operation(format!(
+                            "Invalid prefix length: {}",
+                            e
+                        ))),
+                    }
+                } else {
+                    Err(Error::type_mismatch(
+                        "INET or CIDR",
+                        &value.data_type().to_string(),
+                    ))
+                }
+            }
+            "TEXT" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(inet) = value.as_inet() {
+                    Ok(Value::string(inet.to_string()))
+                } else if let Some(cidr) = value.as_cidr() {
+                    Ok(Value::string(cidr.to_string()))
+                } else {
+                    Ok(Value::string(format!("{:?}", value)))
+                }
+            }
+            "INET_MERGE" => {
+                let a = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let b = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                if a.is_null() || b.is_null() {
+                    return Ok(Value::null());
+                }
+                match (a.as_inet(), b.as_inet()) {
+                    (Some(ia), Some(ib)) => {
+                        if ia.is_ipv4() != ib.is_ipv4() {
+                            return Err(Error::invalid_operation(
+                                "Cannot merge IPv4 and IPv6 addresses".to_string(),
+                            ));
+                        }
+                        if ia.is_ipv4() {
+                            let a_bytes: [u8; 4] = match ia.addr {
+                                std::net::IpAddr::V4(ip) => ip.octets(),
+                                _ => unreachable!(),
+                            };
+                            let b_bytes: [u8; 4] = match ib.addr {
+                                std::net::IpAddr::V4(ip) => ip.octets(),
+                                _ => unreachable!(),
+                            };
+                            let a_u32 = u32::from_be_bytes(a_bytes);
+                            let b_u32 = u32::from_be_bytes(b_bytes);
+                            let xor = a_u32 ^ b_u32;
+                            let common_bits = if xor == 0 {
+                                32
+                            } else {
+                                xor.leading_zeros() as u8
+                            };
+                            let mask = if common_bits == 0 {
+                                0u32
+                            } else {
+                                !(!0u32 >> common_bits)
+                            };
+                            let network = a_u32 & mask;
+                            let network_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::from(
+                                network.to_be_bytes(),
+                            ));
+                            Ok(Value::cidr(
+                                yachtsql_core::types::network::CidrAddr::new(
+                                    network_ip,
+                                    common_bits,
+                                )
+                                .unwrap(),
+                            ))
+                        } else {
+                            let a_bytes: [u8; 16] = match ia.addr {
+                                std::net::IpAddr::V6(ip) => ip.octets(),
+                                _ => unreachable!(),
+                            };
+                            let b_bytes: [u8; 16] = match ib.addr {
+                                std::net::IpAddr::V6(ip) => ip.octets(),
+                                _ => unreachable!(),
+                            };
+                            let a_u128 = u128::from_be_bytes(a_bytes);
+                            let b_u128 = u128::from_be_bytes(b_bytes);
+                            let xor = a_u128 ^ b_u128;
+                            let common_bits = if xor == 0 {
+                                128
+                            } else {
+                                xor.leading_zeros() as u8
+                            };
+                            let mask = if common_bits == 0 {
+                                0u128
+                            } else {
+                                !(!0u128 >> common_bits)
+                            };
+                            let network = a_u128 & mask;
+                            let network_ip = std::net::IpAddr::V6(std::net::Ipv6Addr::from(
+                                network.to_be_bytes(),
+                            ));
+                            Ok(Value::cidr(
+                                yachtsql_core::types::network::CidrAddr::new(
+                                    network_ip,
+                                    common_bits,
+                                )
+                                .unwrap(),
+                            ))
+                        }
+                    }
+                    _ => Err(Error::type_mismatch(
+                        "INET, INET",
+                        &format!("{:?}, {:?}", a.data_type(), b.data_type()),
+                    )),
+                }
+            }
+            "TRUNC" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(mac) = value.as_macaddr() {
+                    Ok(Value::macaddr(mac.trunc()))
+                } else {
+                    Err(Error::type_mismatch(
+                        "MACADDR",
+                        &value.data_type().to_string(),
+                    ))
+                }
+            }
+            "MACADDR8_SET7BIT" => {
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(mac) = value.as_macaddr8() {
+                    let mut octets = mac.octets;
+                    octets[0] |= 0x02;
+                    let new_mac = yachtsql_core::types::MacAddress {
+                        octets,
+                        is_eui64: mac.is_eui64,
+                    };
+                    Ok(Value::macaddr8(new_mac))
+                } else {
+                    Err(Error::type_mismatch(
+                        "MACADDR8",
+                        &value.data_type().to_string(),
+                    ))
+                }
+            }
+
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown custom function: {}",
                 name

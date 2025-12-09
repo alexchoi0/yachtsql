@@ -1,4 +1,3 @@
-use regex::Regex;
 use yachtsql_core::error::Result;
 use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
@@ -37,9 +36,9 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.len() < 2 || args.len() > 3 {
+        if args.len() < 2 {
             return Err(crate::error::Error::invalid_query(
-                "splitByChar requires 2 or 3 arguments",
+                "SPLITBYCHAR requires at least 2 arguments",
             ));
         }
         let values = Self::evaluate_args(args, batch, row_idx)?;
@@ -59,20 +58,29 @@ impl ProjectionWithExprExec {
                 expected: "STRING".to_string(),
                 actual: values[1].data_type().to_string(),
             })?;
-        let max_substrings = if args.len() == 3 {
+
+        let max_parts = if args.len() >= 3 {
             values[2].as_i64().unwrap_or(0) as usize
         } else {
             0
         };
 
-        let delim_char = delimiter.chars().next().unwrap_or('\0');
-        let parts: Vec<&str> = if max_substrings > 0 {
-            s.splitn(max_substrings, delim_char).collect()
+        if delimiter.len() != 1 {
+            return Err(crate::error::Error::invalid_query(
+                "SPLITBYCHAR: delimiter must be a single character",
+            ));
+        }
+
+        let parts: Vec<Value> = if max_parts > 0 {
+            s.splitn(max_parts, delimiter)
+                .map(|part| Value::string(part.to_string()))
+                .collect()
         } else {
-            s.split(delim_char).collect()
+            s.split(delimiter)
+                .map(|part| Value::string(part.to_string()))
+                .collect()
         };
-        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
-        Ok(Value::array(result))
+        Ok(Value::array(parts))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_string(
@@ -80,9 +88,9 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.len() < 2 || args.len() > 3 {
+        if args.len() < 2 {
             return Err(crate::error::Error::invalid_query(
-                "splitByString requires 2 or 3 arguments",
+                "SPLITBYSTRING requires at least 2 arguments",
             ));
         }
         let values = Self::evaluate_args(args, batch, row_idx)?;
@@ -102,19 +110,23 @@ impl ProjectionWithExprExec {
                 expected: "STRING".to_string(),
                 actual: values[1].data_type().to_string(),
             })?;
-        let max_substrings = if args.len() == 3 {
+
+        let max_parts = if args.len() >= 3 {
             values[2].as_i64().unwrap_or(0) as usize
         } else {
             0
         };
 
-        let parts: Vec<&str> = if max_substrings > 0 {
-            s.splitn(max_substrings, delimiter).collect()
+        let parts: Vec<Value> = if max_parts > 0 {
+            s.splitn(max_parts, delimiter)
+                .map(|part| Value::string(part.to_string()))
+                .collect()
         } else {
-            s.split(delimiter).collect()
+            s.split(delimiter)
+                .map(|part| Value::string(part.to_string()))
+                .collect()
         };
-        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
-        Ok(Value::array(result))
+        Ok(Value::array(parts))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_regexp(
@@ -122,9 +134,9 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.len() < 2 || args.len() > 3 {
+        if args.len() < 2 {
             return Err(crate::error::Error::invalid_query(
-                "splitByRegexp requires 2 or 3 arguments",
+                "SPLITBYREGEXP requires at least 2 arguments",
             ));
         }
         let values = Self::evaluate_args(args, batch, row_idx)?;
@@ -144,22 +156,14 @@ impl ProjectionWithExprExec {
                 expected: "STRING".to_string(),
                 actual: values[1].data_type().to_string(),
             })?;
-        let max_substrings = if args.len() == 3 {
-            values[2].as_i64().unwrap_or(0) as usize
-        } else {
-            0
-        };
 
-        let re = Regex::new(pattern)
-            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
-
-        let parts: Vec<&str> = if max_substrings > 0 {
-            re.splitn(s, max_substrings).collect()
-        } else {
-            re.split(s).collect()
-        };
-        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
-        Ok(Value::array(result))
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(e.to_string()))?;
+        let parts: Vec<Value> = re
+            .split(s)
+            .map(|part| Value::string(part.to_string()))
+            .collect();
+        Ok(Value::array(parts))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_whitespace(
@@ -167,11 +171,7 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.is_empty() || args.len() > 2 {
-            return Err(crate::error::Error::invalid_query(
-                "splitByWhitespace requires 1 or 2 arguments",
-            ));
-        }
+        Self::validate_arg_count("SPLITBYWHITESPACE", args, 1)?;
         let values = Self::evaluate_args(args, batch, row_idx)?;
         if values[0].is_null() {
             return Ok(Value::null());
@@ -186,7 +186,7 @@ impl ProjectionWithExprExec {
 
         let parts: Vec<Value> = s
             .split_whitespace()
-            .map(|p| Value::string(p.to_string()))
+            .map(|part| Value::string(part.to_string()))
             .collect();
         Ok(Value::array(parts))
     }
@@ -196,11 +196,7 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.is_empty() || args.len() > 2 {
-            return Err(crate::error::Error::invalid_query(
-                "splitByNonAlpha requires 1 or 2 arguments",
-            ));
-        }
+        Self::validate_arg_count("SPLITBYNONALPHA", args, 1)?;
         let values = Self::evaluate_args(args, batch, row_idx)?;
         if values[0].is_null() {
             return Ok(Value::null());
@@ -213,11 +209,10 @@ impl ProjectionWithExprExec {
                 actual: values[0].data_type().to_string(),
             })?;
 
-        let re = Regex::new(r"[^a-zA-Z]+").unwrap();
-        let parts: Vec<Value> = re
-            .split(s)
-            .filter(|p| !p.is_empty())
-            .map(|p| Value::string(p.to_string()))
+        let parts: Vec<Value> = s
+            .split(|c: char| !c.is_alphabetic())
+            .filter(|part| !part.is_empty())
+            .map(|part| Value::string(part.to_string()))
             .collect();
         Ok(Value::array(parts))
     }
@@ -227,11 +222,7 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.is_empty() || args.len() > 2 {
-            return Err(crate::error::Error::invalid_query(
-                "alphaTokens requires 1 or 2 arguments",
-            ));
-        }
+        Self::validate_arg_count("ALPHATOKENS", args, 1)?;
         let values = Self::evaluate_args(args, batch, row_idx)?;
         if values[0].is_null() {
             return Ok(Value::null());
@@ -244,10 +235,10 @@ impl ProjectionWithExprExec {
                 actual: values[0].data_type().to_string(),
             })?;
 
-        let re = Regex::new(r"[a-zA-Z]+").unwrap();
-        let parts: Vec<Value> = re
-            .find_iter(s)
-            .map(|m| Value::string(m.as_str().to_string()))
+        let parts: Vec<Value> = s
+            .split(|c: char| !c.is_alphabetic())
+            .filter(|part| !part.is_empty())
+            .map(|part| Value::string(part.to_string()))
             .collect();
         Ok(Value::array(parts))
     }
@@ -257,11 +248,7 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.is_empty() || args.len() > 2 {
-            return Err(crate::error::Error::invalid_query(
-                "tokens requires 1 or 2 arguments",
-            ));
-        }
+        Self::validate_arg_count("TOKENS", args, 1)?;
         let values = Self::evaluate_args(args, batch, row_idx)?;
         if values[0].is_null() {
             return Ok(Value::null());
@@ -274,10 +261,10 @@ impl ProjectionWithExprExec {
                 actual: values[0].data_type().to_string(),
             })?;
 
-        let re = Regex::new(r"[a-zA-Z0-9]+").unwrap();
-        let parts: Vec<Value> = re
-            .find_iter(s)
-            .map(|m| Value::string(m.as_str().to_string()))
+        let parts: Vec<Value> = s
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .map(|part| Value::string(part.to_string()))
             .collect();
         Ok(Value::array(parts))
     }
@@ -287,7 +274,7 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        Self::validate_arg_count("ngrams", args, 2)?;
+        Self::validate_arg_count("NGRAMS", args, 2)?;
         let values = Self::evaluate_args(args, batch, row_idx)?;
         if values[0].is_null() || values[1].is_null() {
             return Ok(Value::null());
@@ -306,132 +293,14 @@ impl ProjectionWithExprExec {
                 actual: values[1].data_type().to_string(),
             })? as usize;
 
-        let chars: Vec<char> = s.chars().collect();
-        let result: Vec<Value> = if n == 0 || n > chars.len() {
-            vec![]
-        } else {
-            (0..=chars.len() - n)
-                .map(|i| Value::string(chars[i..i + n].iter().collect()))
-                .collect()
-        };
-        Ok(Value::array(result))
-    }
-
-    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all(
-        args: &[Expr],
-        batch: &Table,
-        row_idx: usize,
-    ) -> Result<Value> {
-        Self::validate_arg_count("extractAll", args, 2)?;
-        let values = Self::evaluate_args(args, batch, row_idx)?;
-        if values[0].is_null() || values[1].is_null() {
-            return Ok(Value::null());
+        if n == 0 || s.len() < n {
+            return Ok(Value::array(vec![]));
         }
 
-        let s = values[0]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[0].data_type().to_string(),
-            })?;
-        let pattern = values[1]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[1].data_type().to_string(),
-            })?;
-
-        let re = Regex::new(pattern)
-            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
-
-        let matches: Vec<Value> = re
-            .find_iter(s)
-            .map(|m| Value::string(m.as_str().to_string()))
+        let ngrams: Vec<Value> = (0..=s.len() - n)
+            .map(|i| Value::string(s[i..i + n].to_string()))
             .collect();
-        Ok(Value::array(matches))
-    }
-
-    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_horizontal(
-        args: &[Expr],
-        batch: &Table,
-        row_idx: usize,
-    ) -> Result<Value> {
-        Self::validate_arg_count("extractAllGroupsHorizontal", args, 2)?;
-        let values = Self::evaluate_args(args, batch, row_idx)?;
-        if values[0].is_null() || values[1].is_null() {
-            return Ok(Value::null());
-        }
-
-        let s = values[0]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[0].data_type().to_string(),
-            })?;
-        let pattern = values[1]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[1].data_type().to_string(),
-            })?;
-
-        let re = Regex::new(pattern)
-            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
-
-        let captures: Vec<regex::Captures> = re.captures_iter(s).collect();
-        let num_groups = re.captures_len() - 1;
-
-        let mut result: Vec<Vec<Value>> = vec![vec![]; num_groups];
-        for cap in captures {
-            for i in 1..=num_groups {
-                if let Some(m) = cap.get(i) {
-                    result[i - 1].push(Value::string(m.as_str().to_string()));
-                }
-            }
-        }
-
-        let arrays: Vec<Value> = result.into_iter().map(Value::array).collect();
-        Ok(Value::array(arrays))
-    }
-
-    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_vertical(
-        args: &[Expr],
-        batch: &Table,
-        row_idx: usize,
-    ) -> Result<Value> {
-        Self::validate_arg_count("extractAllGroupsVertical", args, 2)?;
-        let values = Self::evaluate_args(args, batch, row_idx)?;
-        if values[0].is_null() || values[1].is_null() {
-            return Ok(Value::null());
-        }
-
-        let s = values[0]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[0].data_type().to_string(),
-            })?;
-        let pattern = values[1]
-            .as_str()
-            .ok_or_else(|| crate::error::Error::TypeMismatch {
-                expected: "STRING".to_string(),
-                actual: values[1].data_type().to_string(),
-            })?;
-
-        let re = Regex::new(pattern)
-            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
-
-        let result: Vec<Value> = re
-            .captures_iter(s)
-            .map(|cap| {
-                let groups: Vec<Value> = (1..cap.len())
-                    .filter_map(|i| cap.get(i))
-                    .map(|m| Value::string(m.as_str().to_string()))
-                    .collect();
-                Value::array(groups)
-            })
-            .collect();
-        Ok(Value::array(result))
+        Ok(Value::array(ngrams))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_array_string_concat(
@@ -439,9 +308,9 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        if args.is_empty() || args.len() > 2 {
+        if args.is_empty() {
             return Err(crate::error::Error::invalid_query(
-                "arrayStringConcat requires 1 or 2 arguments",
+                "ARRAYSTRINGCONCAT requires at least 1 argument",
             ));
         }
         let values = Self::evaluate_args(args, batch, row_idx)?;
@@ -456,7 +325,7 @@ impl ProjectionWithExprExec {
                 actual: values[0].data_type().to_string(),
             })?;
 
-        let separator = if args.len() == 2 && !values[1].is_null() {
+        let separator = if args.len() >= 2 && !values[1].is_null() {
             values[1].as_str().unwrap_or("")
         } else {
             ""
@@ -467,6 +336,123 @@ impl ProjectionWithExprExec {
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect();
         Ok(Value::string(strings.join(separator)))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("EXTRACTALL", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(e.to_string()))?;
+        let matches: Vec<Value> = re
+            .find_iter(s)
+            .map(|m| Value::string(m.as_str().to_string()))
+            .collect();
+        Ok(Value::array(matches))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_horizontal(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("EXTRACTALLGROUPSHORIZONTAL", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(e.to_string()))?;
+
+        let num_groups = re.captures_len() - 1;
+        let mut groups: Vec<Vec<Value>> = (0..num_groups).map(|_| Vec::new()).collect();
+
+        for caps in re.captures_iter(s) {
+            for (i, group) in groups.iter_mut().enumerate() {
+                if let Some(m) = caps.get(i + 1) {
+                    group.push(Value::string(m.as_str().to_string()));
+                }
+            }
+        }
+
+        let result: Vec<Value> = groups.into_iter().map(|g| Value::array(g)).collect();
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_vertical(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("EXTRACTALLGROUPSVERTICAL", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(e.to_string()))?;
+
+        let mut result: Vec<Value> = Vec::new();
+
+        for caps in re.captures_iter(s) {
+            let mut groups: Vec<Value> = Vec::new();
+            for i in 1..caps.len() {
+                if let Some(m) = caps.get(i) {
+                    groups.push(Value::string(m.as_str().to_string()));
+                }
+            }
+            result.push(Value::array(groups));
+        }
+
+        Ok(Value::array(result))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_part(

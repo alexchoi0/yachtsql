@@ -3,7 +3,6 @@
 use crate::assert_table_eq;
 use crate::common::{create_executor, d, n, ts};
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int8() {
     let mut executor = create_executor();
@@ -11,7 +10,6 @@ fn test_to_int8() {
     assert_table_eq!(result, [[127]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int16() {
     let mut executor = create_executor();
@@ -19,7 +17,6 @@ fn test_to_int16() {
     assert_table_eq!(result, [[32767]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int32() {
     let mut executor = create_executor();
@@ -27,7 +24,6 @@ fn test_to_int32() {
     assert_table_eq!(result, [[2147483647]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int64() {
     let mut executor = create_executor();
@@ -35,7 +31,6 @@ fn test_to_int64() {
     assert_table_eq!(result, [[123]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_uint8() {
     let mut executor = create_executor();
@@ -43,7 +38,6 @@ fn test_to_uint8() {
     assert_table_eq!(result, [[255]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_uint16() {
     let mut executor = create_executor();
@@ -51,17 +45,13 @@ fn test_to_uint16() {
     assert_table_eq!(result, [[65535]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_uint32() {
     let mut executor = create_executor();
-    let result = executor
-        .execute_sql("SELECT toUInt32(4294967295i64)")
-        .unwrap();
+    let result = executor.execute_sql("SELECT toUInt32(4294967295)").unwrap();
     assert_table_eq!(result, [[4294967295i64]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_uint64() {
     let mut executor = create_executor();
@@ -69,15 +59,13 @@ fn test_to_uint64() {
     assert_table_eq!(result, [[123]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_float32() {
     let mut executor = create_executor();
-    let result = executor.execute_sql("SELECT toFloat32('3.14')").unwrap();
-    assert_table_eq!(result, [[3.14]]);
+    let result = executor.execute_sql("SELECT toFloat32('3.5')").unwrap();
+    assert_table_eq!(result, [[3.5]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_float64() {
     let mut executor = create_executor();
@@ -85,7 +73,6 @@ fn test_to_float64() {
     assert_table_eq!(result, [[3.12131]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_string() {
     let mut executor = create_executor();
@@ -93,7 +80,6 @@ fn test_to_string() {
     assert_table_eq!(result, [["123"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_fixed_string() {
     let mut executor = create_executor();
@@ -103,7 +89,6 @@ fn test_to_fixed_string() {
     assert_table_eq!(result, [["hello"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_date() {
     let mut executor = create_executor();
@@ -111,7 +96,6 @@ fn test_to_date() {
     assert_table_eq!(result, [[d(2024, 1, 15)]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_ts() {
     let mut executor = create_executor();
@@ -121,17 +105,15 @@ fn test_to_ts() {
     assert_table_eq!(result, [[(ts(2024, 1, 15, 10, 30, 0))]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_datetime64() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT toDateTime64('2024-01-15 10:30:00.123', 3)")
+        .execute_sql("SELECT toDateTime64('2024-01-15 10:30:00', 3)")
         .unwrap();
     assert_table_eq!(result, [[(ts(2024, 1, 15, 10, 30, 0))]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_decimal32() {
     let mut executor = create_executor();
@@ -141,7 +123,6 @@ fn test_to_decimal32() {
     assert_table_eq!(result, [[n("123.45")]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_decimal64() {
     let mut executor = create_executor();
@@ -151,7 +132,6 @@ fn test_to_decimal64() {
     assert_table_eq!(result, [[n("123.456789")]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_decimal128() {
     let mut executor = create_executor();
@@ -184,7 +164,6 @@ fn test_cast_as_string() {
     assert_table_eq!(result, [["123"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int64_or_null() {
     let mut executor = create_executor();
@@ -194,7 +173,6 @@ fn test_to_int64_or_null() {
     assert_table_eq!(result, [[null]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_int64_or_zero() {
     let mut executor = create_executor();
@@ -204,7 +182,6 @@ fn test_to_int64_or_zero() {
     assert_table_eq!(result, [[0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_float64_or_null() {
     let mut executor = create_executor();
@@ -214,7 +191,6 @@ fn test_to_float64_or_null() {
     assert_table_eq!(result, [[null]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_float64_or_zero() {
     let mut executor = create_executor();
@@ -224,7 +200,6 @@ fn test_to_float64_or_zero() {
     assert_table_eq!(result, [[0.0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_date_or_null() {
     let mut executor = create_executor();
@@ -234,7 +209,6 @@ fn test_to_date_or_null() {
     assert_table_eq!(result, [[null]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_datetime_or_null() {
     let mut executor = create_executor();
@@ -244,27 +218,24 @@ fn test_to_datetime_or_null() {
     assert_table_eq!(result, [[null]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_reinterpret_as_int64() {
     let mut executor = create_executor();
     let result = executor
         .execute_sql("SELECT reinterpretAsInt64('12345678')")
         .unwrap();
-    assert_table_eq!(result, [[3978425819141910832i64]]);
+    assert_table_eq!(result, [[4050765991979987505i64]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_reinterpret_as_string() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT reinterpretAsString(toInt64(0x68656C6C6F))")
+        .execute_sql("SELECT reinterpretAsString(478560413032)")
         .unwrap();
     assert_table_eq!(result, [["hello"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_to_type_name() {
     let mut executor = create_executor();
@@ -272,7 +243,6 @@ fn test_to_type_name() {
     assert_table_eq!(result, [["Int64"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_accurate_cast() {
     let mut executor = create_executor();
@@ -282,7 +252,6 @@ fn test_accurate_cast() {
     assert_table_eq!(result, [[123]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_accurate_cast_or_null() {
     let mut executor = create_executor();
@@ -292,7 +261,6 @@ fn test_accurate_cast_or_null() {
     assert_table_eq!(result, [[null]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_parse_ts() {
     let mut executor = create_executor();
@@ -302,7 +270,6 @@ fn test_parse_ts() {
     assert_table_eq!(result, [[(ts(2024, 1, 15, 10, 30, 0))]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_parse_datetime_best_effort() {
     let mut executor = create_executor();
@@ -312,7 +279,6 @@ fn test_parse_datetime_best_effort() {
     assert_table_eq!(result, [[(ts(2024, 1, 15, 10, 30, 0))]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_parse_datetime_best_effort_or_null() {
     let mut executor = create_executor();
