@@ -189,6 +189,20 @@ pub enum CustomStatement {
     ClickHouseUse {
         database: String,
     },
+
+    ClickHouseCreateTableWithProjection {
+        original: String,
+        stripped: String,
+    },
+
+    ClickHouseCreateTablePassthrough {
+        original: String,
+        stripped: String,
+    },
+
+    ClickHouseAlterTable {
+        statement: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -454,6 +468,18 @@ impl StatementValidator {
             }
             CustomStatement::ClickHouseUse { .. } => {
                 self.require_clickhouse("USE")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseCreateTableWithProjection { .. } => {
+                self.require_clickhouse("CREATE TABLE WITH PROJECTION")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseCreateTablePassthrough { .. } => {
+                self.require_clickhouse("CREATE TABLE")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseAlterTable { .. } => {
+                self.require_clickhouse("ALTER TABLE")?;
                 Ok(())
             }
         }

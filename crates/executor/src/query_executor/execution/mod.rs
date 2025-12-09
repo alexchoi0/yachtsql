@@ -405,7 +405,9 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseRowPolicy { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseSettingsProfile { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseDictionary { .. } => Self::empty_result(),
-                CustomStatement::ClickHouseShow { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseShow { statement } => {
+                    return self.execute_clickhouse_show(statement);
+                }
                 CustomStatement::ClickHouseFunction { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseMaterializedView { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseProjection { .. } => Self::empty_result(),
@@ -416,6 +418,13 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseDatabase { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseRenameDatabase { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseUse { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateTableWithProjection { stripped, .. } => {
+                    return self.execute_sql(stripped);
+                }
+                CustomStatement::ClickHouseCreateTablePassthrough { stripped, .. } => {
+                    return self.execute_sql(stripped);
+                }
+                CustomStatement::ClickHouseAlterTable { .. } => Self::empty_result(),
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
                     format!("Custom statement not yet supported: {:?}", custom_stmt),
@@ -508,6 +517,10 @@ impl QueryExecutor {
                         Self::empty_result()
                     }
 
+                    DdlOperation::DropDatabase => {
+                        self.execute_drop_database(&stmt)?;
+                        Self::empty_result()
+                    }
                     DdlOperation::CreateUser => Self::empty_result(),
                     DdlOperation::DropUser => Self::empty_result(),
                     DdlOperation::AlterUser => Self::empty_result(),
@@ -923,6 +936,80 @@ impl QueryExecutor {
         Table::from_values(schema, rows)
     }
 
+    fn execute_clickhouse_show(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+
+        match statement_upper.as_str() {
+            s if s.starts_with("SHOW DATABASES") => self.execute_show_databases(),
+            s if s.starts_with("SHOW QUOTAS") => self.execute_show_quotas(),
+            s if s.starts_with("SHOW ROW POLICIES") => self.execute_show_row_policies(),
+            s if s.starts_with("SHOW SETTINGS PROFILES") => self.execute_show_settings_profiles(),
+            s if s.starts_with("SHOW DICTIONARIES") => self.execute_show_dictionaries(),
+            _ => Self::empty_result(),
+        }
+    }
+
+    fn execute_show_databases(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+
+        let mut rows = Vec::new();
+        let storage = self.storage.borrow();
+
+        for db_id in storage.list_datasets() {
+            rows.push(vec![Value::string(db_id.to_string())]);
+        }
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_quotas(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("id".to_string(), DataType::String),
+        ]);
+
+        let rows = Vec::new();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_row_policies(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("database".to_string(), DataType::String),
+            yachtsql_storage::Field::required("table".to_string(), DataType::String),
+        ]);
+
+        let rows = Vec::new();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_settings_profiles(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("id".to_string(), DataType::String),
+        ]);
+
+        let rows = Vec::new();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_dictionaries(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+
+        let rows = Vec::new();
+
+        Table::from_values(schema, rows)
+    }
+
     fn execute_exists_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
         let table_str = table_name.to_string();
         let (dataset_id, table_id) = self.parse_ddl_table_name(&table_str)?;
@@ -982,6 +1069,42 @@ impl QueryExecutor {
         Ok(())
     }
 
+    fn execute_drop_database(&mut self, stmt: &sqlparser::ast::Statement) -> Result<()> {
+        use sqlparser::ast::Statement;
+
+        let Statement::Drop {
+            names, if_exists, ..
+        } = stmt
+        else {
+            return Err(Error::InternalError(
+                "Not a DROP DATABASE statement".to_string(),
+            ));
+        };
+
+        for db_name_obj in names {
+            let db_id = db_name_obj.to_string();
+
+            let mut storage = self.storage.borrow_mut();
+
+            match storage.get_dataset(&db_id) {
+                Some(_) => {
+                    storage.delete_dataset(&db_id)?;
+                }
+                None => {
+                    if !*if_exists {
+                        return Err(Error::DatasetNotFound(format!(
+                            "Database '{}' not found",
+                            db_id
+                        )));
+                    }
+                }
+            }
+        }
+
+        self.plan_cache.borrow_mut().invalidate_all();
+
+        Ok(())
+    }
     fn execute_show_users(&mut self) -> Result<Table> {
         let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
             "name".to_string(),
