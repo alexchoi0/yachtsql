@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::create_executor;
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array() {
     let mut executor = create_executor();
@@ -25,7 +24,6 @@ fn test_group_array() {
     assert!(result.num_rows() == 2); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_with_limit() {
     let mut executor = create_executor();
@@ -95,7 +93,6 @@ fn test_group_array_insert_at() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_moving_avg() {
     let mut executor = create_executor();
@@ -114,7 +111,6 @@ fn test_group_array_moving_avg() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_moving_sum() {
     let mut executor = create_executor();
@@ -131,7 +127,6 @@ fn test_group_array_moving_sum() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_uniq_array() {
     let mut executor = create_executor();
@@ -182,13 +177,13 @@ fn test_group_bit_and() {
         .execute_sql("CREATE TABLE group_bit_and (value UInt8)")
         .unwrap();
     executor
-        .execute_sql("INSERT INTO group_bit_and VALUES (0b1111), (0b1110), (0b1100)")
+        .execute_sql("INSERT INTO group_bit_and VALUES (15), (14), (12)")
         .unwrap();
 
     let result = executor
         .execute_sql("SELECT groupBitAnd(value) FROM group_bit_and")
         .unwrap();
-    assert_table_eq!(result, [[0b1100]]);
+    assert_table_eq!(result, [[12]]);
 }
 
 #[ignore = "Implement me!"]
@@ -199,13 +194,13 @@ fn test_group_bit_or() {
         .execute_sql("CREATE TABLE group_bit_or (value UInt8)")
         .unwrap();
     executor
-        .execute_sql("INSERT INTO group_bit_or VALUES (0b0001), (0b0010), (0b0100)")
+        .execute_sql("INSERT INTO group_bit_or VALUES (1), (2), (4)")
         .unwrap();
 
     let result = executor
         .execute_sql("SELECT groupBitOr(value) FROM group_bit_or")
         .unwrap();
-    assert_table_eq!(result, [[0b0111]]);
+    assert_table_eq!(result, [[7]]);
 }
 
 #[ignore = "Implement me!"]
@@ -369,7 +364,6 @@ fn test_count_map() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_grouped() {
     let mut executor = create_executor();
