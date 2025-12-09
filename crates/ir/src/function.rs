@@ -295,6 +295,34 @@ pub enum FunctionName {
     GroupBitmapAnd,
     GroupBitmapOr,
     GroupBitmapXor,
+    GroupBitAnd,
+    GroupBitOr,
+    GroupBitXor,
+    GroupArraySample,
+    GroupArrayInsertAt,
+    GroupArrayLast,
+    GroupArraySorted,
+    GroupArrayIntersect,
+    AvgMap,
+    QuantileExactLow,
+    QuantileExactHigh,
+    QuantileExactWeighted,
+    QuantileTimingWeighted,
+    QuantileTDigestWeighted,
+    QuantileDeterministic,
+    QuantileBFloat16,
+    QuantileBFloat16Weighted,
+    QuantileDD,
+    QuantileGK,
+    QuantileInterpolatedWeighted,
+    Quantiles,
+    QuantilesExact,
+    TopKWeighted,
+    Histogram,
+    SumDistinct,
+    AvgDistinct,
+    UniqTheta,
+    UniqUpTo,
     RankCorr,
     ExponentialMovingAverage,
     IntervalLengthSum,
@@ -1315,6 +1343,60 @@ impl FunctionName {
             "GROUPBITMAPOR" => Self::GroupBitmapOr,
             "GROUP_BITMAP_XOR" => Self::GroupBitmapXor,
             "GROUPBITMAPXOR" => Self::GroupBitmapXor,
+            "GROUP_BIT_AND" => Self::GroupBitAnd,
+            "GROUPBITAND" => Self::GroupBitAnd,
+            "GROUP_BIT_OR" => Self::GroupBitOr,
+            "GROUPBITOR" => Self::GroupBitOr,
+            "GROUP_BIT_XOR" => Self::GroupBitXor,
+            "GROUPBITXOR" => Self::GroupBitXor,
+            "GROUP_ARRAY_SAMPLE" => Self::GroupArraySample,
+            "GROUPARRAYSAMPLE" => Self::GroupArraySample,
+            "GROUP_ARRAY_INSERT_AT" => Self::GroupArrayInsertAt,
+            "GROUPARRAYINSERTAT" => Self::GroupArrayInsertAt,
+            "GROUP_ARRAY_LAST" => Self::GroupArrayLast,
+            "GROUPARRAYLAST" => Self::GroupArrayLast,
+            "GROUP_ARRAY_SORTED" => Self::GroupArraySorted,
+            "GROUPARRAYSORTED" => Self::GroupArraySorted,
+            "GROUP_ARRAY_INTERSECT" => Self::GroupArrayIntersect,
+            "GROUPARRAYINTERSECT" => Self::GroupArrayIntersect,
+            "AVG_MAP" => Self::AvgMap,
+            "AVGMAP" => Self::AvgMap,
+            "QUANTILE_EXACT_LOW" => Self::QuantileExactLow,
+            "QUANTILEEXACTLOW" => Self::QuantileExactLow,
+            "QUANTILE_EXACT_HIGH" => Self::QuantileExactHigh,
+            "QUANTILEEXACTHIGH" => Self::QuantileExactHigh,
+            "QUANTILE_EXACT_WEIGHTED" => Self::QuantileExactWeighted,
+            "QUANTILEEXACTWEIGHTED" => Self::QuantileExactWeighted,
+            "QUANTILE_TIMING_WEIGHTED" => Self::QuantileTimingWeighted,
+            "QUANTILETIMINGWEIGHTED" => Self::QuantileTimingWeighted,
+            "QUANTILE_TDIGEST_WEIGHTED" => Self::QuantileTDigestWeighted,
+            "QUANTILETDIGESTWEIGHTED" => Self::QuantileTDigestWeighted,
+            "QUANTILE_DETERMINISTIC" => Self::QuantileDeterministic,
+            "QUANTILEDETERMINISTIC" => Self::QuantileDeterministic,
+            "QUANTILE_BFLOAT16" => Self::QuantileBFloat16,
+            "QUANTILEBFLOAT16" => Self::QuantileBFloat16,
+            "QUANTILE_BFLOAT16_WEIGHTED" => Self::QuantileBFloat16Weighted,
+            "QUANTILEBFLOAT16WEIGHTED" => Self::QuantileBFloat16Weighted,
+            "QUANTILE_DD" => Self::QuantileDD,
+            "QUANTILEDD" => Self::QuantileDD,
+            "QUANTILE_GK" => Self::QuantileGK,
+            "QUANTILEGK" => Self::QuantileGK,
+            "QUANTILE_INTERPOLATED_WEIGHTED" => Self::QuantileInterpolatedWeighted,
+            "QUANTILEINTERPOLATEDWEIGHTED" => Self::QuantileInterpolatedWeighted,
+            "QUANTILES" => Self::Quantiles,
+            "QUANTILES_EXACT" => Self::QuantilesExact,
+            "QUANTILESEXACT" => Self::QuantilesExact,
+            "TOP_K_WEIGHTED" => Self::TopKWeighted,
+            "TOPKWEIGHTED" => Self::TopKWeighted,
+            "HISTOGRAM" => Self::Histogram,
+            "SUM_DISTINCT" => Self::SumDistinct,
+            "SUMDISTINCT" => Self::SumDistinct,
+            "AVG_DISTINCT" => Self::AvgDistinct,
+            "AVGDISTINCT" => Self::AvgDistinct,
+            "UNIQ_THETA" => Self::UniqTheta,
+            "UNIQTHETA" => Self::UniqTheta,
+            "UNIQ_UP_TO" => Self::UniqUpTo,
+            "UNIQUPTOS" => Self::UniqUpTo,
             "RANK_CORR" => Self::RankCorr,
             "RANKCORR" => Self::RankCorr,
             "EXPONENTIAL_MOVING_AVERAGE" => Self::ExponentialMovingAverage,
@@ -2360,6 +2442,34 @@ impl FunctionName {
             Self::GroupBitmapAnd => "GROUP_BITMAP_AND",
             Self::GroupBitmapOr => "GROUP_BITMAP_OR",
             Self::GroupBitmapXor => "GROUP_BITMAP_XOR",
+            Self::GroupBitAnd => "GROUP_BIT_AND",
+            Self::GroupBitOr => "GROUP_BIT_OR",
+            Self::GroupBitXor => "GROUP_BIT_XOR",
+            Self::GroupArraySample => "GROUP_ARRAY_SAMPLE",
+            Self::GroupArrayInsertAt => "GROUP_ARRAY_INSERT_AT",
+            Self::GroupArrayLast => "GROUP_ARRAY_LAST",
+            Self::GroupArraySorted => "GROUP_ARRAY_SORTED",
+            Self::GroupArrayIntersect => "GROUP_ARRAY_INTERSECT",
+            Self::AvgMap => "AVG_MAP",
+            Self::QuantileExactLow => "QUANTILE_EXACT_LOW",
+            Self::QuantileExactHigh => "QUANTILE_EXACT_HIGH",
+            Self::QuantileExactWeighted => "QUANTILE_EXACT_WEIGHTED",
+            Self::QuantileTimingWeighted => "QUANTILE_TIMING_WEIGHTED",
+            Self::QuantileTDigestWeighted => "QUANTILE_TDIGEST_WEIGHTED",
+            Self::QuantileDeterministic => "QUANTILE_DETERMINISTIC",
+            Self::QuantileBFloat16 => "QUANTILE_BFLOAT16",
+            Self::QuantileBFloat16Weighted => "QUANTILE_BFLOAT16_WEIGHTED",
+            Self::QuantileDD => "QUANTILE_DD",
+            Self::QuantileGK => "QUANTILE_GK",
+            Self::QuantileInterpolatedWeighted => "QUANTILE_INTERPOLATED_WEIGHTED",
+            Self::Quantiles => "QUANTILES",
+            Self::QuantilesExact => "QUANTILES_EXACT",
+            Self::TopKWeighted => "TOP_K_WEIGHTED",
+            Self::Histogram => "HISTOGRAM",
+            Self::SumDistinct => "SUM_DISTINCT",
+            Self::AvgDistinct => "AVG_DISTINCT",
+            Self::UniqTheta => "UNIQ_THETA",
+            Self::UniqUpTo => "UNIQ_UP_TO",
             Self::RankCorr => "RANK_CORR",
             Self::ExponentialMovingAverage => "EXPONENTIAL_MOVING_AVERAGE",
             Self::IntervalLengthSum => "INTERVAL_LENGTH_SUM",
@@ -3130,6 +3240,34 @@ impl FunctionName {
                 | Self::GroupBitmapOr
                 | Self::GroupBitmapXor
                 | Self::GroupBitmapState
+                | Self::GroupBitAnd
+                | Self::GroupBitOr
+                | Self::GroupBitXor
+                | Self::GroupArraySample
+                | Self::GroupArrayInsertAt
+                | Self::GroupArrayLast
+                | Self::GroupArraySorted
+                | Self::GroupArrayIntersect
+                | Self::AvgMap
+                | Self::QuantileExactLow
+                | Self::QuantileExactHigh
+                | Self::QuantileExactWeighted
+                | Self::QuantileTimingWeighted
+                | Self::QuantileTDigestWeighted
+                | Self::QuantileDeterministic
+                | Self::QuantileBFloat16
+                | Self::QuantileBFloat16Weighted
+                | Self::QuantileDD
+                | Self::QuantileGK
+                | Self::QuantileInterpolatedWeighted
+                | Self::Quantiles
+                | Self::QuantilesExact
+                | Self::TopKWeighted
+                | Self::Histogram
+                | Self::SumDistinct
+                | Self::AvgDistinct
+                | Self::UniqTheta
+                | Self::UniqUpTo
                 | Self::RankCorr
                 | Self::ExponentialMovingAverage
                 | Self::IntervalLengthSum

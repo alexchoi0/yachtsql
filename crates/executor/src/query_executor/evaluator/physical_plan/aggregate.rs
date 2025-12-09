@@ -1642,6 +1642,48 @@ impl AggregateExec {
                         }
                         Value::int64(unique_values.len() as i64)
                     }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
                     FunctionName::GroupBitmapState => {
                         let mut unique_values = std::collections::BTreeSet::new();
                         for val in &values {
@@ -2996,6 +3038,48 @@ impl SortAggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
                     }
                     FunctionName::GroupBitmapState => {
                         let mut unique_values = std::collections::BTreeSet::new();
