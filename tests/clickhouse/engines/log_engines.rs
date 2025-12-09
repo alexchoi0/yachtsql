@@ -156,7 +156,6 @@ fn test_log_nullable() {
     assert_table_eq!(result, [[2]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_log_array_column() {
     let mut executor = create_executor();

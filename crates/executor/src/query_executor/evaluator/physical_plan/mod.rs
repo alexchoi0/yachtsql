@@ -6,7 +6,7 @@ use yachtsql_capability::FeatureId;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::DataType;
 use yachtsql_optimizer::expr::Expr;
-use yachtsql_storage::Schema;
+use yachtsql_storage::{Schema, TableEngine};
 
 use crate::Table;
 
@@ -328,6 +328,7 @@ pub struct TableScanExec {
     statistics: ExecutionStatistics,
     storage: Rc<RefCell<yachtsql_storage::Storage>>,
     only: bool,
+    final_modifier: bool,
 }
 
 impl TableScanExec {
@@ -343,6 +344,7 @@ impl TableScanExec {
             statistics: ExecutionStatistics::default(),
             storage,
             only: false,
+            final_modifier: false,
         }
     }
 
@@ -359,6 +361,25 @@ impl TableScanExec {
             statistics: ExecutionStatistics::default(),
             storage,
             only,
+            final_modifier: false,
+        }
+    }
+
+    pub fn new_with_final(
+        schema: Schema,
+        table_name: String,
+        storage: Rc<RefCell<yachtsql_storage::Storage>>,
+        only: bool,
+        final_modifier: bool,
+    ) -> Self {
+        Self {
+            schema,
+            table_name,
+            projection: None,
+            statistics: ExecutionStatistics::default(),
+            storage,
+            only,
+            final_modifier,
         }
     }
 
@@ -373,6 +394,7 @@ impl TableScanExec {
             statistics: ExecutionStatistics::default(),
             storage,
             only: false,
+            final_modifier: false,
         }
     }
 
@@ -384,6 +406,239 @@ impl TableScanExec {
     pub fn with_statistics(mut self, statistics: ExecutionStatistics) -> Self {
         self.statistics = statistics;
         self
+    }
+
+    fn apply_final_merge(
+        &self,
+        rows: Vec<yachtsql_storage::Row>,
+        engine: &TableEngine,
+        table_schema: &Schema,
+    ) -> Result<Vec<yachtsql_storage::Row>> {
+        use std::collections::HashMap;
+
+        use yachtsql_core::types::Value;
+
+        match engine {
+            TableEngine::SummingMergeTree {
+                order_by,
+                sum_columns,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sum_indices = if sum_columns.is_empty() {
+                    self.get_numeric_column_indices(table_schema, &key_indices)
+                } else {
+                    self.get_column_indices(sum_columns, table_schema)
+                };
+
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+
+                    groups
+                        .entry(key)
+                        .and_modify(|existing| {
+                            for &idx in &sum_indices {
+                                let existing_val =
+                                    existing.get(idx).cloned().unwrap_or(Value::null());
+                                let new_val = row.get(idx).cloned().unwrap_or(Value::null());
+                                if let (Some(e), Some(n)) =
+                                    (existing_val.as_i64(), new_val.as_i64())
+                                {
+                                    let _ = existing.set(idx, Value::int64(e + n));
+                                } else if let (Some(e), Some(n)) =
+                                    (existing_val.as_f64(), new_val.as_f64())
+                                {
+                                    let _ = existing.set(idx, Value::float64(e + n));
+                                }
+                            }
+                        })
+                        .or_insert(row);
+                }
+
+                Ok(groups.into_values().collect())
+            }
+
+            TableEngine::ReplacingMergeTree {
+                order_by,
+                version_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let version_idx = version_column
+                    .as_ref()
+                    .and_then(|vc| self.get_column_index(vc, table_schema));
+
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+
+                    let should_replace = if let Some(ver_idx) = version_idx {
+                        groups.get(&key).is_none_or(|existing| {
+                            let existing_ver =
+                                existing.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            let new_ver = row.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            new_ver >= existing_ver
+                        })
+                    } else {
+                        true
+                    };
+
+                    if should_replace {
+                        groups.insert(key, row);
+                    }
+                }
+
+                Ok(groups.into_values().collect())
+            }
+
+            TableEngine::CollapsingMergeTree {
+                order_by,
+                sign_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sign_idx = self
+                    .get_column_index(sign_column, table_schema)
+                    .unwrap_or(0);
+
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+
+                let mut result = Vec::new();
+                for (_key, group_rows) in groups {
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+                    let mut last_negative: Option<yachtsql_storage::Row> = None;
+
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        } else {
+                            last_negative = Some(row);
+                        }
+                    }
+
+                    if sum_sign > 0 {
+                        if let Some(row) = last_positive {
+                            result.push(row);
+                        }
+                    } else if sum_sign < 0 {
+                        if let Some(row) = last_negative {
+                            result.push(row);
+                        }
+                    }
+                }
+
+                Ok(result)
+            }
+
+            TableEngine::VersionedCollapsingMergeTree {
+                order_by,
+                sign_column,
+                version_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sign_idx = self
+                    .get_column_index(sign_column, table_schema)
+                    .unwrap_or(0);
+                let version_idx = self
+                    .get_column_index(version_column, table_schema)
+                    .unwrap_or(0);
+
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+
+                let mut result = Vec::new();
+                for (_key, mut group_rows) in groups {
+                    group_rows.sort_by(|a, b| {
+                        let va = a.get(version_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                        let vb = b.get(version_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                        va.cmp(&vb)
+                    });
+
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        }
+                    }
+
+                    if sum_sign > 0 {
+                        if let Some(row) = last_positive {
+                            result.push(row);
+                        }
+                    }
+                }
+
+                Ok(result)
+            }
+
+            _ => Ok(rows),
+        }
+    }
+
+    fn get_key_column_indices(&self, order_by: &[String], schema: &Schema) -> Vec<usize> {
+        order_by
+            .iter()
+            .filter_map(|col| self.get_column_index(col, schema))
+            .collect()
+    }
+
+    fn get_column_index(&self, col_name: &str, schema: &Schema) -> Option<usize> {
+        let col_lower = col_name.to_lowercase();
+        schema
+            .fields()
+            .iter()
+            .position(|f| f.name.to_lowercase() == col_lower)
+    }
+
+    fn get_column_indices(&self, col_names: &[String], schema: &Schema) -> Vec<usize> {
+        col_names
+            .iter()
+            .filter_map(|col| self.get_column_index(col, schema))
+            .collect()
+    }
+
+    fn get_numeric_column_indices(&self, schema: &Schema, exclude: &[usize]) -> Vec<usize> {
+        schema
+            .fields()
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| {
+                !exclude.contains(i)
+                    && matches!(
+                        f.data_type,
+                        DataType::Int64 | DataType::Float64 | DataType::Numeric(_)
+                    )
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 }
 
@@ -451,6 +706,10 @@ impl ExecutionPlan for TableScanExec {
                     }
                 }
             }
+        }
+
+        if self.final_modifier {
+            all_rows = self.apply_final_merge(all_rows, table.engine(), table.schema())?;
         }
 
         if all_rows.is_empty() {

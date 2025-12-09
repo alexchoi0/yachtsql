@@ -309,6 +309,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let filter1 = PlanNode::Filter {
@@ -360,6 +361,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {
@@ -388,6 +390,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let filter1 = PlanNode::Filter {
@@ -455,6 +458,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let filter1 = PlanNode::Filter {

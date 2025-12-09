@@ -31,7 +31,6 @@ fn test_replacing_basic() {
     assert_table_eq!(result, [[1, "second"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_replacing_with_version() {
     let mut executor = create_executor();
@@ -61,7 +60,6 @@ fn test_replacing_with_version() {
     assert_table_eq!(result, [[1, 3, "v3"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_replacing_multiple_keys() {
     let mut executor = create_executor();
@@ -122,7 +120,6 @@ fn test_replacing_with_partition() {
     assert_table_eq!(result, [[1, "jan_v2"], [1, "feb_v1"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_replacing_final_query() {
     let mut executor = create_executor();
@@ -151,7 +148,6 @@ fn test_replacing_final_query() {
     assert_table_eq!(result, [[1, 5, "data5"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_replacing_is_deleted() {
     let mut executor = create_executor();
@@ -228,7 +224,6 @@ fn test_replacing_aggregate() {
     assert_table_eq!(result, [["A", 30], ["B", 30]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_replacing_with_ttl() {
     let mut executor = create_executor();

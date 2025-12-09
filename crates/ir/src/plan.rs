@@ -47,6 +47,7 @@ pub enum PlanNode {
         alias: Option<String>,
         projection: Option<Vec<String>>,
         only: bool,
+        final_modifier: bool,
     },
 
     IndexScan {

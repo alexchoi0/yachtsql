@@ -26,6 +26,7 @@ fn test_cache_statistics() {
         alias: None,
         projection: None,
         only: false,
+        final_modifier: false,
     };
 
     let cached = CachedPlan::new(plan, sql.to_string());

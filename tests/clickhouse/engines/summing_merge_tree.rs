@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::create_executor;
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_basic() {
     let mut executor = create_executor();
@@ -88,7 +87,6 @@ fn test_summing_with_partition() {
     assert_table_eq!(result, [[1, 30], [1, 30]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_compound_key() {
     let mut executor = create_executor();
@@ -118,7 +116,6 @@ fn test_summing_compound_key() {
     assert_table_eq!(result, [["US", "A", 300], ["US", "B", 300]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_no_columns_specified() {
     let mut executor = create_executor();
@@ -160,7 +157,6 @@ fn test_summing_with_map() {
         .unwrap();
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_negative_values() {
     let mut executor = create_executor();
@@ -186,7 +182,6 @@ fn test_summing_negative_values() {
     assert_table_eq!(result, [[1, 50]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_zero_result() {
     let mut executor = create_executor();
@@ -212,7 +207,6 @@ fn test_summing_zero_result() {
     assert_table_eq!(result, [[1, 0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_summing_with_non_summed_columns() {
     let mut executor = create_executor();

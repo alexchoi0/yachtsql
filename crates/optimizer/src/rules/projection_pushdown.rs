@@ -218,6 +218,7 @@ impl ProjectionPushdown {
             alias,
             projection,
             only,
+            final_modifier: false,
         } = scan
             && projection.is_none()
             && !required_cols.is_empty()
@@ -227,6 +228,7 @@ impl ProjectionPushdown {
                 alias: alias.clone(),
                 projection: Some(required_cols.iter().cloned().collect()),
                 only: *only,
+                final_modifier: false,
             });
         }
         None

@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::create_executor;
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_collapsing_basic() {
     let mut executor = create_executor();
@@ -31,7 +30,6 @@ fn test_collapsing_basic() {
     assert_table_eq!(result, [[1, 200]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_collapsing_delete() {
     let mut executor = create_executor();
@@ -58,7 +56,6 @@ fn test_collapsing_delete() {
     assert_table_eq!(result, []);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_collapsing_update() {
     let mut executor = create_executor();
@@ -88,7 +85,6 @@ fn test_collapsing_update() {
     assert_table_eq!(result, [[1, "complete", 150]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_collapsing_multiple_rows() {
     let mut executor = create_executor();
@@ -115,7 +111,6 @@ fn test_collapsing_multiple_rows() {
     assert_table_eq!(result, [[1, 100], [3, 300]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_collapsing_with_partition() {
     let mut executor = create_executor();
@@ -197,7 +192,6 @@ fn test_collapsing_count() {
     assert_table_eq!(result, [[2]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_versioned_collapsing() {
     let mut executor = create_executor();
@@ -225,7 +219,6 @@ fn test_versioned_collapsing() {
     assert_table_eq!(result, [[1, 2, 200]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_versioned_collapsing_out_of_order() {
     let mut executor = create_executor();

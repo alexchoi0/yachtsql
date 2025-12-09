@@ -2265,11 +2265,13 @@ impl LogicalPlanBuilder {
                 } else {
                     alias.as_ref().map(|a| a.name.value.clone())
                 };
+                let final_modifier = self.has_final_modifier(&table_name);
                 Ok(LogicalPlan::new(PlanNode::Scan {
                     table_name,
                     alias: table_alias,
                     projection: None,
                     only,
+                    final_modifier,
                 }))
             }
             ast::TableFactor::Derived {

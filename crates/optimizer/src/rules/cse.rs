@@ -796,6 +796,7 @@ mod tests {
             table_name: "test".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let plan = LogicalPlan::new(scan);

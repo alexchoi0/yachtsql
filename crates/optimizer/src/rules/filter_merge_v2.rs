@@ -77,6 +77,7 @@ mod tests {
                     alias: None,
                     projection: None,
                     only: false,
+                    final_modifier: false,
                 }),
             }),
         });
@@ -112,6 +113,7 @@ mod tests {
                         alias: None,
                         projection: None,
                         only: false,
+                        final_modifier: false,
                     }),
                 }),
             }),
@@ -145,6 +147,7 @@ mod tests {
                         alias: None,
                         projection: None,
                         only: false,
+                        final_modifier: false,
                     }),
                 }),
             }),

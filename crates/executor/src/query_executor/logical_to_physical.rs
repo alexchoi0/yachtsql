@@ -816,6 +816,7 @@ impl LogicalToPhysicalPlanner {
                 alias,
                 projection: _,
                 only,
+                final_modifier,
             } => {
                 {
                     let cte_plans = self.cte_plans.borrow();
@@ -973,11 +974,12 @@ impl LogicalToPhysicalPlanner {
 
                 let schema = self.expand_schema_custom_types(&base_schema);
 
-                Ok(Rc::new(TableScanExec::new_with_only(
+                Ok(Rc::new(TableScanExec::new_with_final(
                     schema,
                     table_name.clone(),
                     Rc::clone(&self.storage),
                     *only,
+                    *final_modifier,
                 )))
             }
 

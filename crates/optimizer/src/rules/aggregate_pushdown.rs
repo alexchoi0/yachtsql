@@ -345,6 +345,7 @@ mod tests {
             table_name: "left_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let right_scan = PlanNode::Scan {
@@ -352,6 +353,7 @@ mod tests {
             table_name: "right_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let join = PlanNode::Join {
@@ -398,6 +400,7 @@ mod tests {
             table_name: "left_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let right_scan = PlanNode::Scan {
@@ -405,6 +408,7 @@ mod tests {
             table_name: "right_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let join = PlanNode::Join {
@@ -442,6 +446,7 @@ mod tests {
             table_name: "left_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let right_scan = PlanNode::Scan {
@@ -449,6 +454,7 @@ mod tests {
             table_name: "right_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let join = PlanNode::Join {
@@ -485,6 +491,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let plan = LogicalPlan::new(scan);
@@ -502,6 +509,7 @@ mod tests {
             table_name: "test".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let inner_agg = PlanNode::aggregate(

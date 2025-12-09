@@ -581,6 +581,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let projection = PlanNode::Projection {
@@ -700,6 +701,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {
@@ -727,6 +729,7 @@ mod tests {
             table_name: "test_table".to_string(),
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let proj1 = PlanNode::Projection {

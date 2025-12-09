@@ -687,6 +687,7 @@ mod tests {
             alias: None,
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -722,6 +723,7 @@ mod tests {
             alias: None,
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -748,6 +750,7 @@ mod tests {
             alias: None,
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {
@@ -779,6 +782,7 @@ mod tests {
             alias: None,
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {
@@ -817,6 +821,7 @@ mod tests {
             alias: None,
             projection: None,
             only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {

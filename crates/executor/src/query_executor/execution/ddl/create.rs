@@ -3,7 +3,129 @@ use sqlparser::ast::{ColumnDef, ColumnOption, DataType as SqlDataType};
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::{DataType, Value};
 use yachtsql_parser::Sql2023Types;
-use yachtsql_storage::{DefaultValue, Field, Schema, TableIndexOps, TableSchemaOps};
+use yachtsql_storage::{DefaultValue, Field, Schema, TableEngine, TableIndexOps, TableSchemaOps};
+
+fn parse_engine_from_sql(
+    sql: &str,
+    order_by: Option<&sqlparser::ast::OneOrManyWithParens<sqlparser::ast::Expr>>,
+) -> TableEngine {
+    let upper = sql.to_uppercase();
+
+    let order_by_cols: Vec<String> = order_by
+        .map(|o| match o {
+            sqlparser::ast::OneOrManyWithParens::One(expr) => vec![expr.to_string()],
+            sqlparser::ast::OneOrManyWithParens::Many(exprs) => {
+                exprs.iter().map(|e| e.to_string()).collect()
+            }
+        })
+        .unwrap_or_default();
+
+    if let Some(engine_pos) = upper.find("ENGINE") {
+        let after_engine = &sql[engine_pos + 6..].trim_start();
+        if let Some(after_eq) = after_engine.strip_prefix('=').or(Some(after_engine)) {
+            let after_eq = after_eq.trim_start();
+
+            let engine_with_params: &str = after_eq.split_whitespace().next().unwrap_or("");
+            let engine_upper = engine_with_params.to_uppercase();
+
+            if engine_upper.starts_with("SUMMINGMERGETREE") {
+                let sum_columns = extract_parenthesized_params(after_eq);
+                return TableEngine::SummingMergeTree {
+                    order_by: order_by_cols,
+                    sum_columns,
+                };
+            }
+            if engine_upper.starts_with("REPLACINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let version_column = params.first().cloned();
+                return TableEngine::ReplacingMergeTree {
+                    order_by: order_by_cols,
+                    version_column,
+                };
+            }
+            if engine_upper.starts_with("COLLAPSINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let sign_column = params
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "sign".to_string());
+                return TableEngine::CollapsingMergeTree {
+                    order_by: order_by_cols,
+                    sign_column,
+                };
+            }
+            if engine_upper.starts_with("VERSIONEDCOLLAPSINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let sign_column = params
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "sign".to_string());
+                let version_column = params
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_else(|| "version".to_string());
+                return TableEngine::VersionedCollapsingMergeTree {
+                    order_by: order_by_cols,
+                    sign_column,
+                    version_column,
+                };
+            }
+            if engine_upper.starts_with("AGGREGATINGMERGETREE") {
+                return TableEngine::AggregatingMergeTree {
+                    order_by: order_by_cols,
+                };
+            }
+            if engine_upper.starts_with("MERGETREE") {
+                return TableEngine::MergeTree {
+                    order_by: order_by_cols,
+                };
+            }
+            if engine_upper.starts_with("DISTRIBUTED") {
+                let params = extract_parenthesized_params(after_eq);
+                return TableEngine::Distributed {
+                    cluster: params.first().cloned().unwrap_or_default(),
+                    database: params.get(1).cloned().unwrap_or_default(),
+                    table: params.get(2).cloned().unwrap_or_default(),
+                    sharding_key: params.get(3).cloned(),
+                };
+            }
+            if engine_upper.starts_with("BUFFER") {
+                let params = extract_parenthesized_params(after_eq);
+                return TableEngine::Buffer {
+                    database: params.first().cloned().unwrap_or_default(),
+                    table: params.get(1).cloned().unwrap_or_default(),
+                };
+            }
+            if engine_upper.starts_with("LOG") {
+                return TableEngine::Log;
+            }
+            if engine_upper.starts_with("TINYLOG") {
+                return TableEngine::TinyLog;
+            }
+            if engine_upper.starts_with("STRIPELOG") {
+                return TableEngine::StripeLog;
+            }
+            if engine_upper.starts_with("MEMORY") {
+                return TableEngine::Memory;
+            }
+        }
+    }
+    TableEngine::Memory
+}
+
+fn extract_parenthesized_params(s: &str) -> Vec<String> {
+    if let Some(start) = s.find('(') {
+        if let Some(end) = s.find(')') {
+            let params_str = &s[start + 1..end];
+            return params_str
+                .split(',')
+                .map(|p| p.trim().trim_matches('\'').to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
 
 use super::super::QueryExecutor;
 
@@ -49,7 +171,7 @@ impl DdlExecutor for QueryExecutor {
     fn execute_create_table(
         &mut self,
         stmt: &sqlparser::ast::Statement,
-        _original_sql: &str,
+        original_sql: &str,
     ) -> Result<()> {
         use sqlparser::ast::Statement;
 
@@ -132,6 +254,11 @@ impl DdlExecutor for QueryExecutor {
             }
 
             dataset.create_table(table_id.clone(), schema.clone())?;
+
+            let engine = parse_engine_from_sql(original_sql, create_table.order_by.as_ref());
+            if let Some(table) = dataset.get_table_mut(&table_id) {
+                table.set_engine(engine);
+            }
 
             for field in schema.fields() {
                 if let (Some(seq_name), Some(config)) = (

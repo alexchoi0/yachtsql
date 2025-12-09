@@ -157,7 +157,6 @@ fn test_memory_null_handling() {
     assert_table_eq!(result, [[2]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_memory_all_types() {
     let mut executor = create_executor();

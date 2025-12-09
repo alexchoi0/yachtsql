@@ -646,6 +646,7 @@ impl LogicalPlanBuilder {
                     projection: None,
                     alias: None,
                     only: false,
+                    final_modifier: false,
                 };
                 Ok((plan, alias))
             }

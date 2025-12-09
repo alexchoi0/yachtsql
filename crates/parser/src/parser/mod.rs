@@ -96,7 +96,13 @@ impl Parser {
             sql_with_asof_left
         };
 
-        let rewritten_sql = self.rewrite_json_item_methods(&sql_with_asof_join)?;
+        let sql_without_final = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_final_modifier(&sql_with_asof_join)
+        } else {
+            sql_with_asof_join
+        };
+
+        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_final)?;
         let parse_result = SqlParser::parse_sql(&*self.dialect, &rewritten_sql);
 
         let sql_statements = match parse_result {
@@ -423,6 +429,11 @@ impl Parser {
         }
 
         result
+    }
+
+    fn strip_final_modifier(sql: &str) -> String {
+        let re = regex::Regex::new(r"(?i)\bFINAL\b").unwrap();
+        re.replace_all(sql, "").to_string()
     }
 
     fn rewrite_asof_join(sql: &str) -> String {

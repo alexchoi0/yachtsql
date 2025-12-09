@@ -55,6 +55,7 @@ pub struct LogicalPlanBuilder {
     merge_returning: RefCell<Option<String>>,
     session_variables: HashMap<String, SessionVariable>,
     udfs: HashMap<String, UdfDefinition>,
+    final_tables: RefCell<HashSet<String>>,
 }
 
 mod ddl;
@@ -80,12 +81,42 @@ impl LogicalPlanBuilder {
             merge_returning: RefCell::new(None),
             session_variables: HashMap::new(),
             udfs: HashMap::new(),
+            final_tables: RefCell::new(HashSet::new()),
         }
     }
 
     pub fn with_sql(self, sql: &str) -> Self {
+        let final_tables = Self::extract_final_tables(sql);
         *self.current_sql.borrow_mut() = Some(sql.to_string());
+        *self.final_tables.borrow_mut() = final_tables;
         self
+    }
+
+    fn extract_final_tables(sql: &str) -> HashSet<String> {
+        let mut final_tables = HashSet::new();
+        let upper = sql.to_uppercase();
+        let word_re = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_.]*)\s+FINAL\b").unwrap();
+        for cap in word_re.captures_iter(&upper) {
+            if let Some(table_name) = cap.get(1) {
+                let name = table_name.as_str();
+                if ![
+                    "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "JOIN", "WHERE", "AND", "OR",
+                    "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
+                ]
+                .contains(&name)
+                {
+                    final_tables.insert(name.to_lowercase());
+                }
+            }
+        }
+        final_tables
+    }
+
+    pub fn has_final_modifier(&self, table_name: &str) -> bool {
+        let final_tables = self.final_tables.borrow();
+        let lower = table_name.to_lowercase();
+        let simple_name = lower.split('.').next_back().unwrap_or(&lower);
+        final_tables.contains(simple_name) || final_tables.contains(&lower)
     }
 
     pub fn with_storage(self, storage: std::rc::Rc<RefCell<yachtsql_storage::Storage>>) -> Self {
@@ -99,6 +130,7 @@ impl LogicalPlanBuilder {
             merge_returning: self.merge_returning,
             session_variables: self.session_variables,
             udfs: self.udfs,
+            final_tables: self.final_tables,
         }
     }
 
@@ -113,6 +145,7 @@ impl LogicalPlanBuilder {
             merge_returning: self.merge_returning,
             session_variables: self.session_variables,
             udfs: self.udfs,
+            final_tables: self.final_tables,
         }
     }
 
@@ -132,6 +165,7 @@ impl LogicalPlanBuilder {
             merge_returning: self.merge_returning,
             session_variables: variables,
             udfs: self.udfs,
+            final_tables: self.final_tables,
         }
     }
 
@@ -146,6 +180,7 @@ impl LogicalPlanBuilder {
             merge_returning: self.merge_returning,
             session_variables: self.session_variables,
             udfs,
+            final_tables: self.final_tables,
         }
     }
 

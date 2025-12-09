@@ -435,6 +435,7 @@ impl QueryExecutor {
                     drop(cache);
 
                     let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
+                        .with_sql(original_sql)
                         .with_storage(Rc::clone(&self.storage))
                         .with_dialect(self.dialect());
                     let logical_plan = plan_builder.query_to_plan(&query_for_plan)?;
@@ -473,6 +474,7 @@ impl QueryExecutor {
                     .collect();
 
                 let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
+                    .with_sql(original_sql)
                     .with_storage(Rc::clone(&self.storage))
                     .with_dialect(self.dialect())
                     .with_variables(parser_vars)

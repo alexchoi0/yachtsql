@@ -17,7 +17,6 @@ fn test_merge_tree_basic() {
     assert_table_eq!(result, [[1, "alice"], [2, "bob"]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_merge_tree_partition_by() {
     let mut executor = create_executor();
@@ -92,7 +91,6 @@ fn test_merge_tree_sample_by() {
     assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_merge_tree_ttl() {
     let mut executor = create_executor();
@@ -115,7 +113,6 @@ fn test_merge_tree_ttl() {
     assert_table_eq!(result, [[1]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_merge_tree_settings() {
     let mut executor = create_executor();
@@ -233,7 +230,6 @@ fn test_merge_tree_compound_order() {
     assert_table_eq!(result, [[2], [1]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_merge_tree_projection() {
     let mut executor = create_executor();

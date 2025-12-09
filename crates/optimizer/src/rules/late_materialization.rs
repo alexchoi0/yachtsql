@@ -86,6 +86,7 @@ impl LateMaterialization {
             projection: Some(filter_columns.iter().cloned().collect()),
             alias: None,
             only: false,
+            final_modifier: false,
         };
 
         let combined_predicate = if filter.len() == 1 {
@@ -111,6 +112,7 @@ impl LateMaterialization {
             projection: Some(projection_columns.iter().cloned().collect()),
             alias: Some(format!("{}_late", table_name)),
             only: false,
+            final_modifier: false,
         };
 
         let final_project = PlanNode::Projection {
@@ -351,6 +353,7 @@ mod tests {
             projection: Some(columns),
             alias: None,
             only: false,
+            final_modifier: false,
         }
     }
 
