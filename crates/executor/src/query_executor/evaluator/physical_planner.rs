@@ -41,6 +41,7 @@ impl PhysicalPlanner {
                 table_name,
                 alias,
                 projection,
+                ..
             } => self.create_table_scan(table_name, alias.as_deref(), projection.as_deref()),
 
 

@@ -208,6 +208,7 @@ impl ProjectionPushdown {
             table_name,
             alias,
             projection,
+            only,
         } = scan
             && projection.is_none()
             && !required_cols.is_empty()
@@ -216,6 +217,7 @@ impl ProjectionPushdown {
                 table_name: table_name.clone(),
                 alias: alias.clone(),
                 projection: Some(required_cols.iter().cloned().collect()),
+                only: *only,
             });
         }
         None

@@ -639,6 +639,7 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -673,6 +674,7 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -698,6 +700,7 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
         };
 
         let sort = PlanNode::Sort {
@@ -728,6 +731,7 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
         };
 
         let sort = PlanNode::Sort {
@@ -765,6 +769,7 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
         };
 
         let sort = PlanNode::Sort {
