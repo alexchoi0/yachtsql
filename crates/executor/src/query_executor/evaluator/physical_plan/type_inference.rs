@@ -1342,9 +1342,23 @@ impl ProjectionWithExprExec {
             | FunctionName::Sha512
             | FunctionName::Blake3 => Some(DataType::String),
 
-            FunctionName::FarmFingerprint | FunctionName::Crc32 | FunctionName::Crc32c => {
-                Some(DataType::Int64)
-            }
+            FunctionName::FarmFingerprint
+            | FunctionName::Crc32
+            | FunctionName::Crc32c
+            | FunctionName::XxHash32
+            | FunctionName::XxHash64
+            | FunctionName::CityHash64
+            | FunctionName::SipHash64
+            | FunctionName::MurmurHash2_32
+            | FunctionName::MurmurHash2_64
+            | FunctionName::MurmurHash3_32
+            | FunctionName::MurmurHash3_64
+            | FunctionName::JavaHash
+            | FunctionName::HalfMd5
+            | FunctionName::FarmHash64
+            | FunctionName::MetroHash64 => Some(DataType::Int64),
+
+            FunctionName::MurmurHash3_128 => Some(DataType::String),
 
             FunctionName::ToHex => Some(DataType::String),
             FunctionName::FromHex => Some(DataType::Bytes),
@@ -1794,7 +1808,18 @@ impl ProjectionWithExprExec {
             | FunctionName::JsonbDeletePath
             | FunctionName::JsonbSet => Some(DataType::Json),
             FunctionName::JsonLength | FunctionName::JsonArrayLength => Some(DataType::Int64),
-            FunctionName::JsonKeys => Some(DataType::Json),
+            FunctionName::JsonKeys | FunctionName::JsonExtractKeys => Some(DataType::Json),
+
+            FunctionName::JsonExtractString | FunctionName::JsonExtractRaw => {
+                Some(DataType::String)
+            }
+            FunctionName::JsonExtractInt
+            | FunctionName::JsonExtractBool
+            | FunctionName::JsonHas => Some(DataType::Int64),
+            FunctionName::JsonExtractFloat => Some(DataType::Float64),
+            FunctionName::JsonExtractArrayRaw | FunctionName::JsonExtractKeysAndValues => {
+                Some(DataType::Array(Box::new(DataType::String)))
+            }
 
             FunctionName::IsJsonValue
             | FunctionName::IsJsonArray
@@ -1830,7 +1855,6 @@ impl ProjectionWithExprExec {
                     }
                 })
                 .or(Some(DataType::String)),
-            FunctionName::JsonExtractString => Some(DataType::String),
             FunctionName::JsonValueText => Some(DataType::String),
             FunctionName::JsonExtractPathArray => Some(DataType::Json),
             FunctionName::JsonExtractPathArrayText => Some(DataType::String),
