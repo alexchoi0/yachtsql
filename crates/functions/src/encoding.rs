@@ -1,5 +1,5 @@
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE};
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::Value;
 
@@ -59,6 +59,32 @@ pub fn base64_decode(input: &str) -> Result<Value> {
 
 pub fn try_base64_decode(input: &str) -> Result<Value> {
     match STANDARD.decode(input.trim()) {
+        Ok(decoded) => match String::from_utf8(decoded.clone()) {
+            Ok(s) => Ok(Value::string(s)),
+            Err(_) => Ok(Value::bytes(decoded)),
+        },
+        Err(_) => Ok(Value::null()),
+    }
+}
+
+pub fn base64_url_encode(input: &str) -> Result<Value> {
+    let encoded = URL_SAFE.encode(input.as_bytes());
+    Ok(Value::string(encoded))
+}
+
+pub fn base64_url_decode(input: &str) -> Result<Value> {
+    let decoded = URL_SAFE
+        .decode(input.trim())
+        .map_err(|e| Error::invalid_query(format!("Invalid base64 URL string: {}", e)))?;
+
+    match String::from_utf8(decoded.clone()) {
+        Ok(s) => Ok(Value::string(s)),
+        Err(_) => Ok(Value::bytes(decoded)),
+    }
+}
+
+pub fn try_base64_url_decode(input: &str) -> Result<Value> {
+    match URL_SAFE.decode(input.trim()) {
         Ok(decoded) => match String::from_utf8(decoded.clone()) {
             Ok(s) => Ok(Value::string(s)),
             Err(_) => Ok(Value::bytes(decoded)),

@@ -11,6 +11,7 @@ mod sequence;
 mod subqueries;
 
 mod array;
+mod bitmap;
 mod conditional;
 mod conversion;
 mod crypto;
@@ -23,6 +24,7 @@ mod introspection;
 mod json;
 mod map;
 mod math;
+mod random;
 mod range;
 mod string;
 mod system;

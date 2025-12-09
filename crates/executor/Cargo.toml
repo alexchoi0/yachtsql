@@ -42,6 +42,7 @@ regex = "1.11"
 
 # Random number generation
 rand = "0.8"
+rand_distr = "0.4"
 
 # Decimal arithmetic for NUMERIC/DECIMAL types
 rust_decimal = { version = "1.36", features = ["serde"] }
@@ -72,6 +73,12 @@ base64 = "0.22"
 farmhash = "1.1"
 crc32fast = "1.4"
 crc32c = "0.6"
+blake3 = "1.5"
+
+# AES encryption
+aes = "0.8"
+cbc = "0.1"
+ecb = "0.1"
 
 # Network operations
 ipnetwork = "0.20"

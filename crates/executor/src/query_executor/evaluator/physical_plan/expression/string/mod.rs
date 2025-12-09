@@ -62,7 +62,22 @@ impl ProjectionWithExprExec {
             "BYTE_LENGTH" => Self::evaluate_byte_length(args, batch, row_idx),
             "SPLIT" | "STRING_TO_ARRAY" => Self::evaluate_split(args, batch, row_idx),
             "SPLIT_PART" => Self::evaluate_split_part(args, batch, row_idx),
-            "SPLITBYCHAR" | "SPLITBYSTRING" => Self::evaluate_split(args, batch, row_idx),
+            "SPLITBYCHAR" => Self::evaluate_split_by_char(args, batch, row_idx),
+            "SPLITBYSTRING" => Self::evaluate_split_by_string(args, batch, row_idx),
+            "SPLITBYREGEXP" => Self::evaluate_split_by_regexp(args, batch, row_idx),
+            "SPLITBYWHITESPACE" => Self::evaluate_split_by_whitespace(args, batch, row_idx),
+            "SPLITBYNONALPHA" => Self::evaluate_split_by_non_alpha(args, batch, row_idx),
+            "ARRAYSTRINGCONCAT" => Self::evaluate_array_string_concat(args, batch, row_idx),
+            "ALPHATOKENS" => Self::evaluate_alpha_tokens(args, batch, row_idx),
+            "EXTRACTALL" => Self::evaluate_extract_all(args, batch, row_idx),
+            "EXTRACTALLGROUPSHORIZONTAL" => {
+                Self::evaluate_extract_all_groups_horizontal(args, batch, row_idx)
+            }
+            "EXTRACTALLGROUPSVERTICAL" => {
+                Self::evaluate_extract_all_groups_vertical(args, batch, row_idx)
+            }
+            "NGRAMS" => Self::evaluate_ngrams(args, batch, row_idx),
+            "TOKENS" => Self::evaluate_tokens(args, batch, row_idx),
             "STARTS_WITH" | "STARTSWITH" => Self::evaluate_starts_with(args, batch, row_idx),
             "ENDS_WITH" | "ENDSWITH" => Self::evaluate_ends_with(args, batch, row_idx),
             "REGEXP_CONTAINS" => Self::evaluate_regexp_contains(args, batch, row_idx),

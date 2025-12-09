@@ -2563,6 +2563,42 @@ impl ProjectionWithExprExec {
                     .to_string();
                 yachtsql_functions::encoding::base58_decode(&s)
             }
+            "BASE64URLENCODE" => {
+                if args.is_empty() {
+                    return Err(Error::invalid_query(
+                        "base64URLEncode requires 1 argument".to_string(),
+                    ));
+                }
+                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
+                    .as_str()
+                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
+                    .to_string();
+                yachtsql_functions::encoding::base64_url_encode(&s)
+            }
+            "BASE64URLDECODE" => {
+                if args.is_empty() {
+                    return Err(Error::invalid_query(
+                        "base64URLDecode requires 1 argument".to_string(),
+                    ));
+                }
+                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
+                    .as_str()
+                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
+                    .to_string();
+                yachtsql_functions::encoding::base64_url_decode(&s)
+            }
+            "TRYBASE64URLDECODE" => {
+                if args.is_empty() {
+                    return Err(Error::invalid_query(
+                        "tryBase64URLDecode requires 1 argument".to_string(),
+                    ));
+                }
+                let s = Self::evaluate_expr(&args[0], batch, row_idx)?
+                    .as_str()
+                    .ok_or_else(|| Error::type_mismatch("STRING", "other"))?
+                    .to_string();
+                yachtsql_functions::encoding::try_base64_url_decode(&s)
+            }
             "BIN" => {
                 if args.is_empty() {
                     return Err(Error::invalid_query("bin requires 1 argument".to_string()));
@@ -2968,6 +3004,30 @@ impl ProjectionWithExprExec {
                     .to_string();
                 yachtsql_functions::network::mac_string_to_oui(&s)
             }
+            "ENCRYPT" => Self::eval_encrypt(args, batch, row_idx),
+            "DECRYPT" => Self::eval_decrypt(args, batch, row_idx),
+            "AES_ENCRYPT_MYSQL" => Self::eval_aes_encrypt_mysql(args, batch, row_idx),
+            "AES_DECRYPT_MYSQL" => Self::eval_aes_decrypt_mysql(args, batch, row_idx),
+            "RAND" | "RAND32" => Self::eval_rand(args, batch, row_idx),
+            "RAND64" => Self::eval_rand64(args, batch, row_idx),
+            "RANDCONSTANT" => Self::eval_rand_constant(args, batch, row_idx),
+            "RANDUNIFORM" => Self::eval_rand_uniform(args, batch, row_idx),
+            "RANDNORMAL" => Self::eval_rand_normal(args, batch, row_idx),
+            "RANDLOGNORMAL" => Self::eval_rand_log_normal(args, batch, row_idx),
+            "RANDEXPONENTIAL" => Self::eval_rand_exponential(args, batch, row_idx),
+            "RANDCHISQUARED" => Self::eval_rand_chi_squared(args, batch, row_idx),
+            "RANDSTUDENTT" => Self::eval_rand_student_t(args, batch, row_idx),
+            "RANDFISHERF" => Self::eval_rand_fisher_f(args, batch, row_idx),
+            "RANDBERNOULLI" => Self::eval_rand_bernoulli(args, batch, row_idx),
+            "RANDBINOMIAL" => Self::eval_rand_binomial(args, batch, row_idx),
+            "RANDNEGATIVEBINOMIAL" => Self::eval_rand_negative_binomial(args, batch, row_idx),
+            "RANDPOISSON" => Self::eval_rand_poisson(args, batch, row_idx),
+            "GENERATEUUIDV4" => Self::eval_generate_uuid_v4(args, batch, row_idx),
+            "RANDOMSTRING" => Self::eval_random_string(args, batch, row_idx),
+            "RANDOMFIXEDSTRING" => Self::eval_random_fixed_string(args, batch, row_idx),
+            "RANDOMPRINTABLEASCII" => Self::eval_random_printable_ascii(args, batch, row_idx),
+            "RANDOMSTRINGUTF8" => Self::eval_random_string_utf8(args, batch, row_idx),
+            "FAKEDATA" => Self::eval_fake_data(args, batch, row_idx),
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown custom function: {}",
                 name

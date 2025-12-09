@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use md5;
 use rust_decimal::prelude::ToPrimitive;
 use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use yachtsql_core::error::Result;
 use yachtsql_core::types::{DataType, Value};
 
@@ -385,6 +385,44 @@ pub fn eval_sha512(value: &Value, return_hex: bool) -> Result<Value> {
             hasher.finalize().to_vec()
         },
         "SHA512",
+        return_hex,
+    )
+}
+
+pub fn eval_sha224(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let mut hasher = Sha224::new();
+            hasher.update(bytes);
+            hasher.finalize().to_vec()
+        },
+        "SHA224",
+        return_hex,
+    )
+}
+
+pub fn eval_sha384(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let mut hasher = Sha384::new();
+            hasher.update(bytes);
+            hasher.finalize().to_vec()
+        },
+        "SHA384",
+        return_hex,
+    )
+}
+
+pub fn eval_blake3(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let hash = blake3::hash(bytes);
+            hash.as_bytes().to_vec()
+        },
+        "BLAKE3",
         return_hex,
     )
 }

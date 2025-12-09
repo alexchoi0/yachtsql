@@ -512,6 +512,16 @@ impl ProjectionWithExprExec {
                 | FunctionName::Casefold
                 | FunctionName::SplitByChar
                 | FunctionName::SplitByString
+                | FunctionName::SplitByRegexp
+                | FunctionName::SplitByWhitespace
+                | FunctionName::SplitByNonAlpha
+                | FunctionName::ArrayStringConcat
+                | FunctionName::AlphaTokens
+                | FunctionName::ExtractAll
+                | FunctionName::ExtractAllGroupsHorizontal
+                | FunctionName::ExtractAllGroupsVertical
+                | FunctionName::Ngrams
+                | FunctionName::Tokens
                 | FunctionName::BitCount
                 | FunctionName::GetBit
                 | FunctionName::SetBit
@@ -716,7 +726,10 @@ impl ProjectionWithExprExec {
                 | FunctionName::Sha2
                 | FunctionName::Encode
                 | FunctionName::Sha1
+                | FunctionName::Sha224
+                | FunctionName::Sha384
                 | FunctionName::Sha512
+                | FunctionName::Blake3
                 | FunctionName::FarmFingerprint
                 | FunctionName::ToHex
                 | FunctionName::FromHex
@@ -1066,6 +1079,32 @@ impl ProjectionWithExprExec {
                 | FunctionName::TupleNames
         ) {
             return Self::evaluate_tuple_function(name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::BitmapBuild
+                | FunctionName::BitmapToArray
+                | FunctionName::BitmapCardinality
+                | FunctionName::BitmapAnd
+                | FunctionName::BitmapOr
+                | FunctionName::BitmapXor
+                | FunctionName::BitmapAndnot
+                | FunctionName::BitmapContains
+                | FunctionName::BitmapHasAny
+                | FunctionName::BitmapHasAll
+                | FunctionName::BitmapAndCardinality
+                | FunctionName::BitmapOrCardinality
+                | FunctionName::BitmapXorCardinality
+                | FunctionName::BitmapAndnotCardinality
+                | FunctionName::BitmapMin
+                | FunctionName::BitmapMax
+                | FunctionName::BitmapSubsetInRange
+                | FunctionName::BitmapSubsetLimit
+                | FunctionName::BitmapTransform
+                | FunctionName::SubBitmap
+        ) {
+            return Self::evaluate_bitmap_function(name, args, batch, row_idx);
         }
 
         if let FunctionName::Custom(custom_name) = name {

@@ -13,7 +13,6 @@ fn test_tuple_constructor() {
     );
 }
 
-#[ignore = "tupleElement with tuple literal needs parsing fix"]
 #[test]
 fn test_tuple_element_index() {
     let mut executor = create_executor();

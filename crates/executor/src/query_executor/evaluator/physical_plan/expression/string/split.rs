@@ -1,3 +1,4 @@
+use regex::Regex;
 use yachtsql_core::error::Result;
 use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
@@ -29,6 +30,443 @@ impl ProjectionWithExprExec {
                 actual: format!("{}, {}", values[0].data_type(), values[1].data_type()),
             })
         }
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_char(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(crate::error::Error::invalid_query(
+                "splitByChar requires 2 or 3 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let delimiter = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let s = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+        let max_substrings = if args.len() == 3 {
+            values[2].as_i64().unwrap_or(0) as usize
+        } else {
+            0
+        };
+
+        let delim_char = delimiter.chars().next().unwrap_or('\0');
+        let parts: Vec<&str> = if max_substrings > 0 {
+            s.splitn(max_substrings, delim_char).collect()
+        } else {
+            s.split(delim_char).collect()
+        };
+        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_string(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(crate::error::Error::invalid_query(
+                "splitByString requires 2 or 3 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let delimiter = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let s = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+        let max_substrings = if args.len() == 3 {
+            values[2].as_i64().unwrap_or(0) as usize
+        } else {
+            0
+        };
+
+        let parts: Vec<&str> = if max_substrings > 0 {
+            s.splitn(max_substrings, delimiter).collect()
+        } else {
+            s.split(delimiter).collect()
+        };
+        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_regexp(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(crate::error::Error::invalid_query(
+                "splitByRegexp requires 2 or 3 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let pattern = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let s = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+        let max_substrings = if args.len() == 3 {
+            values[2].as_i64().unwrap_or(0) as usize
+        } else {
+            0
+        };
+
+        let re = Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
+
+        let parts: Vec<&str> = if max_substrings > 0 {
+            re.splitn(s, max_substrings).collect()
+        } else {
+            re.split(s).collect()
+        };
+        let result: Vec<Value> = parts.iter().map(|p| Value::string(p.to_string())).collect();
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_whitespace(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "splitByWhitespace requires 1 or 2 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+
+        let parts: Vec<Value> = s
+            .split_whitespace()
+            .map(|p| Value::string(p.to_string()))
+            .collect();
+        Ok(Value::array(parts))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_by_non_alpha(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "splitByNonAlpha requires 1 or 2 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(r"[^a-zA-Z]+").unwrap();
+        let parts: Vec<Value> = re
+            .split(s)
+            .filter(|p| !p.is_empty())
+            .map(|p| Value::string(p.to_string()))
+            .collect();
+        Ok(Value::array(parts))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_alpha_tokens(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "alphaTokens requires 1 or 2 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(r"[a-zA-Z]+").unwrap();
+        let parts: Vec<Value> = re
+            .find_iter(s)
+            .map(|m| Value::string(m.as_str().to_string()))
+            .collect();
+        Ok(Value::array(parts))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_tokens(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "tokens requires 1 or 2 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(r"[a-zA-Z0-9]+").unwrap();
+        let parts: Vec<Value> = re
+            .find_iter(s)
+            .map(|m| Value::string(m.as_str().to_string()))
+            .collect();
+        Ok(Value::array(parts))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_ngrams(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("ngrams", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let n = values[1]
+            .as_i64()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "INT64".to_string(),
+                actual: values[1].data_type().to_string(),
+            })? as usize;
+
+        let chars: Vec<char> = s.chars().collect();
+        let result: Vec<Value> = if n == 0 || n > chars.len() {
+            vec![]
+        } else {
+            (0..=chars.len() - n)
+                .map(|i| Value::string(chars[i..i + n].iter().collect()))
+                .collect()
+        };
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("extractAll", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
+
+        let matches: Vec<Value> = re
+            .find_iter(s)
+            .map(|m| Value::string(m.as_str().to_string()))
+            .collect();
+        Ok(Value::array(matches))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_horizontal(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("extractAllGroupsHorizontal", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
+
+        let captures: Vec<regex::Captures> = re.captures_iter(s).collect();
+        let num_groups = re.captures_len() - 1;
+
+        let mut result: Vec<Vec<Value>> = vec![vec![]; num_groups];
+        for cap in captures {
+            for i in 1..=num_groups {
+                if let Some(m) = cap.get(i) {
+                    result[i - 1].push(Value::string(m.as_str().to_string()));
+                }
+            }
+        }
+
+        let arrays: Vec<Value> = result.into_iter().map(Value::array).collect();
+        Ok(Value::array(arrays))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_extract_all_groups_vertical(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("extractAllGroupsVertical", args, 2)?;
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() || values[1].is_null() {
+            return Ok(Value::null());
+        }
+
+        let s = values[0]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+        let pattern = values[1]
+            .as_str()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                actual: values[1].data_type().to_string(),
+            })?;
+
+        let re = Regex::new(pattern)
+            .map_err(|e| crate::error::Error::invalid_query(format!("Invalid regex: {}", e)))?;
+
+        let result: Vec<Value> = re
+            .captures_iter(s)
+            .map(|cap| {
+                let groups: Vec<Value> = (1..cap.len())
+                    .filter_map(|i| cap.get(i))
+                    .map(|m| Value::string(m.as_str().to_string()))
+                    .collect();
+                Value::array(groups)
+            })
+            .collect();
+        Ok(Value::array(result))
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_array_string_concat(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "arrayStringConcat requires 1 or 2 arguments",
+            ));
+        }
+        let values = Self::evaluate_args(args, batch, row_idx)?;
+        if values[0].is_null() {
+            return Ok(Value::null());
+        }
+
+        let arr = values[0]
+            .as_array()
+            .ok_or_else(|| crate::error::Error::TypeMismatch {
+                expected: "ARRAY".to_string(),
+                actual: values[0].data_type().to_string(),
+            })?;
+
+        let separator = if args.len() == 2 && !values[1].is_null() {
+            values[1].as_str().unwrap_or("")
+        } else {
+            ""
+        };
+
+        let strings: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        Ok(Value::string(strings.join(separator)))
     }
 
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_split_part(

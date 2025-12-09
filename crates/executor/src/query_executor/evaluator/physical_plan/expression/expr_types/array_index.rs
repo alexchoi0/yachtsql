@@ -51,11 +51,14 @@ impl ProjectionWithExprExec {
             });
         };
 
-        if idx < 1 || idx > arr.len() as i64 {
+        let len = arr.len() as i64;
+        let actual_idx = if idx < 0 { len + idx } else { idx - 1 };
+
+        if actual_idx < 0 || actual_idx >= len {
             return Ok(Value::null());
         }
 
-        Ok(arr[(idx - 1) as usize].clone())
+        Ok(arr[actual_idx as usize].clone())
     }
 }
 
@@ -168,7 +171,7 @@ mod tests {
         let result =
             ProjectionWithExprExec::evaluate_array_index(&array_expr, &index_expr, &batch, 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::null());
+        assert_eq!(result.unwrap(), Value::int64(30));
     }
 
     #[test]

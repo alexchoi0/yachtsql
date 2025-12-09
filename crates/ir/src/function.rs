@@ -341,6 +341,16 @@ pub enum FunctionName {
     Casefold,
     SplitByChar,
     SplitByString,
+    SplitByRegexp,
+    SplitByWhitespace,
+    SplitByNonAlpha,
+    ArrayStringConcat,
+    AlphaTokens,
+    ExtractAll,
+    ExtractAllGroupsHorizontal,
+    ExtractAllGroupsVertical,
+    Ngrams,
+    Tokens,
     BitCount,
     GetBit,
     SetBit,
@@ -428,7 +438,10 @@ pub enum FunctionName {
 
     // Crypto/hash functions
     Sha1,
+    Sha224,
+    Sha384,
     Sha512,
+    Blake3,
     FarmFingerprint,
     ToHex,
     FromHex,
@@ -749,6 +762,29 @@ pub enum FunctionName {
     TupleModuloByNumber,
     TupleToNameValuePairs,
     TupleNames,
+
+    // Bitmap functions (ClickHouse)
+    BitmapBuild,
+    BitmapToArray,
+    BitmapCardinality,
+    BitmapAnd,
+    BitmapOr,
+    BitmapXor,
+    BitmapAndnot,
+    BitmapContains,
+    BitmapHasAny,
+    BitmapHasAll,
+    BitmapAndCardinality,
+    BitmapOrCardinality,
+    BitmapXorCardinality,
+    BitmapAndnotCardinality,
+    BitmapMin,
+    BitmapMax,
+    BitmapSubsetInRange,
+    BitmapSubsetLimit,
+    BitmapTransform,
+    SubBitmap,
+    GroupBitmapState,
 
     /// Reserved for internal use only. Not part of any SQL dialect.
     /// Used for internal engine functions like `YACHTSQL.IS_FEATURE_ENABLED`.
@@ -1143,6 +1179,16 @@ impl FunctionName {
             "CASEFOLD" => Self::Casefold,
             "SPLITBYCHAR" => Self::SplitByChar,
             "SPLITBYSTRING" => Self::SplitByString,
+            "SPLITBYREGEXP" => Self::SplitByRegexp,
+            "SPLITBYWHITESPACE" => Self::SplitByWhitespace,
+            "SPLITBYNONALPHA" => Self::SplitByNonAlpha,
+            "ARRAYSTRINGCONCAT" => Self::ArrayStringConcat,
+            "ALPHATOKENS" => Self::AlphaTokens,
+            "EXTRACTALL" => Self::ExtractAll,
+            "EXTRACTALLGROUPSHORIZONTAL" => Self::ExtractAllGroupsHorizontal,
+            "EXTRACTALLGROUPSVERTICAL" => Self::ExtractAllGroupsVertical,
+            "NGRAMS" => Self::Ngrams,
+            "TOKENS" => Self::Tokens,
             "BIT_COUNT" => Self::BitCount,
             "GET_BIT" => Self::GetBit,
             "SET_BIT" => Self::SetBit,
@@ -1230,7 +1276,10 @@ impl FunctionName {
 
             // Crypto/hash functions
             "SHA1" => Self::Sha1,
+            "SHA224" => Self::Sha224,
+            "SHA384" => Self::Sha384,
             "SHA512" => Self::Sha512,
+            "BLAKE3" => Self::Blake3,
             "FARM_FINGERPRINT" => Self::FarmFingerprint,
             "TO_HEX" => Self::ToHex,
             "FROM_HEX" => Self::FromHex,
@@ -1591,6 +1640,29 @@ impl FunctionName {
             "TUPLENAMES" => Self::TupleNames,
             "TUPLE_NAMES" => Self::TupleNames,
 
+            // Bitmap functions
+            "BITMAPBUILD" => Self::BitmapBuild,
+            "BITMAPTOARRAY" => Self::BitmapToArray,
+            "BITMAPCARDINALITY" => Self::BitmapCardinality,
+            "BITMAPAND" => Self::BitmapAnd,
+            "BITMAPOR" => Self::BitmapOr,
+            "BITMAPXOR" => Self::BitmapXor,
+            "BITMAPANDNOT" => Self::BitmapAndnot,
+            "BITMAPCONTAINS" => Self::BitmapContains,
+            "BITMAPHASANY" => Self::BitmapHasAny,
+            "BITMAPHASALL" => Self::BitmapHasAll,
+            "BITMAPANDCARDINALITY" => Self::BitmapAndCardinality,
+            "BITMAPORCARDINALITY" => Self::BitmapOrCardinality,
+            "BITMAPXORCARDINALITY" => Self::BitmapXorCardinality,
+            "BITMAPANDNOTCARDINALITY" => Self::BitmapAndnotCardinality,
+            "BITMAPMIN" => Self::BitmapMin,
+            "BITMAPMAX" => Self::BitmapMax,
+            "BITMAPSUBSETINRANGE" => Self::BitmapSubsetInRange,
+            "BITMAPSUBSETLIMIT" => Self::BitmapSubsetLimit,
+            "BITMAPTRANSFORM" => Self::BitmapTransform,
+            "SUBBITMAP" => Self::SubBitmap,
+            "GROUPBITMAPSTATE" => Self::GroupBitmapState,
+
             _ => Self::Custom(s.to_uppercase()),
         }
     }
@@ -1938,6 +2010,16 @@ impl FunctionName {
             Self::Casefold => "CASEFOLD",
             Self::SplitByChar => "SPLITBYCHAR",
             Self::SplitByString => "SPLITBYSTRING",
+            Self::SplitByRegexp => "SPLITBYREGEXP",
+            Self::SplitByWhitespace => "SPLITBYWHITESPACE",
+            Self::SplitByNonAlpha => "SPLITBYNONALPHA",
+            Self::ArrayStringConcat => "ARRAYSTRINGCONCAT",
+            Self::AlphaTokens => "ALPHATOKENS",
+            Self::ExtractAll => "EXTRACTALL",
+            Self::ExtractAllGroupsHorizontal => "EXTRACTALLGROUPSHORIZONTAL",
+            Self::ExtractAllGroupsVertical => "EXTRACTALLGROUPSVERTICAL",
+            Self::Ngrams => "NGRAMS",
+            Self::Tokens => "TOKENS",
             Self::BitCount => "BIT_COUNT",
             Self::GetBit => "GET_BIT",
             Self::SetBit => "SET_BIT",
@@ -2025,7 +2107,10 @@ impl FunctionName {
 
             // Crypto/hash functions
             Self::Sha1 => "SHA1",
+            Self::Sha224 => "SHA224",
+            Self::Sha384 => "SHA384",
             Self::Sha512 => "SHA512",
+            Self::Blake3 => "BLAKE3",
             Self::FarmFingerprint => "FARM_FINGERPRINT",
             Self::ToHex => "TO_HEX",
             Self::FromHex => "FROM_HEX",
@@ -2347,6 +2432,28 @@ impl FunctionName {
             Self::TupleToNameValuePairs => "TUPLETONAMEVALUEPAIRS",
             Self::TupleNames => "TUPLENAMES",
 
+            Self::BitmapBuild => "BITMAPBUILD",
+            Self::BitmapToArray => "BITMAPTOARRAY",
+            Self::BitmapCardinality => "BITMAPCARDINALITY",
+            Self::BitmapAnd => "BITMAPAND",
+            Self::BitmapOr => "BITMAPOR",
+            Self::BitmapXor => "BITMAPXOR",
+            Self::BitmapAndnot => "BITMAPANDNOT",
+            Self::BitmapContains => "BITMAPCONTAINS",
+            Self::BitmapHasAny => "BITMAPHASANY",
+            Self::BitmapHasAll => "BITMAPHASALL",
+            Self::BitmapAndCardinality => "BITMAPANDCARDINALITY",
+            Self::BitmapOrCardinality => "BITMAPORCARDINALITY",
+            Self::BitmapXorCardinality => "BITMAPXORCARDINALITY",
+            Self::BitmapAndnotCardinality => "BITMAPANDNOTCARDINALITY",
+            Self::BitmapMin => "BITMAPMIN",
+            Self::BitmapMax => "BITMAPMAX",
+            Self::BitmapSubsetInRange => "BITMAPSUBSETINRANGE",
+            Self::BitmapSubsetLimit => "BITMAPSUBSETLIMIT",
+            Self::BitmapTransform => "BITMAPTRANSFORM",
+            Self::SubBitmap => "SUBBITMAP",
+            Self::GroupBitmapState => "GROUPBITMAPSTATE",
+
             Self::Custom(name) => name,
         }
     }
@@ -2431,6 +2538,7 @@ impl FunctionName {
                 | Self::GroupBitmapAnd
                 | Self::GroupBitmapOr
                 | Self::GroupBitmapXor
+                | Self::GroupBitmapState
                 | Self::RankCorr
                 | Self::ExponentialMovingAverage
                 | Self::IntervalLengthSum

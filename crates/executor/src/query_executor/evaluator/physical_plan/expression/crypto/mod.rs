@@ -1,3 +1,5 @@
+mod aes_encrypt;
+mod blake3;
 mod crc32;
 mod farm_fingerprint;
 mod from_base64;
@@ -5,7 +7,9 @@ mod from_hex;
 mod md5;
 mod net_functions;
 mod sha1;
+mod sha224;
 mod sha256;
+mod sha384;
 mod sha512;
 mod to_base64;
 mod to_hex;
@@ -28,8 +32,11 @@ impl ProjectionWithExprExec {
         match name {
             "MD5" => Self::eval_md5_with_dialect(args, batch, row_idx, dialect),
             "SHA1" => Self::eval_sha1_with_dialect(args, batch, row_idx, dialect),
+            "SHA224" => Self::eval_sha224_with_dialect(args, batch, row_idx, dialect),
             "SHA256" => Self::eval_sha256_with_dialect(args, batch, row_idx, dialect),
+            "SHA384" => Self::eval_sha384_with_dialect(args, batch, row_idx, dialect),
             "SHA512" => Self::eval_sha512_with_dialect(args, batch, row_idx, dialect),
+            "BLAKE3" => Self::eval_blake3_with_dialect(args, batch, row_idx, dialect),
             "FARM_FINGERPRINT" => Self::eval_farm_fingerprint(args, batch, row_idx),
             "TO_HEX" => Self::eval_to_hex(args, batch, row_idx),
             "FROM_HEX" => Self::eval_from_hex(args, batch, row_idx),

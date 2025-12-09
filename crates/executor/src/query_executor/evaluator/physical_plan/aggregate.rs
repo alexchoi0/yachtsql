@@ -542,6 +542,8 @@ impl AggregateExec {
                 | FunctionName::JsonObjectAgg
                 | FunctionName::JsonbObjectAgg => Some(DataType::Json),
 
+                FunctionName::GroupBitmapState => Some(DataType::Array(Box::new(DataType::Int64))),
+
                 _ => Some(DataType::Float64),
             },
             _ => None,
@@ -1609,6 +1611,17 @@ impl AggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::GroupBitmapState => {
+                        let mut unique_values = std::collections::BTreeSet::new();
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                unique_values.insert(i);
+                            }
+                        }
+                        let arr: Vec<Value> =
+                            unique_values.iter().map(|&n| Value::int64(n)).collect();
+                        Value::array(arr)
                     }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values
@@ -2819,6 +2832,17 @@ impl SortAggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::GroupBitmapState => {
+                        let mut unique_values = std::collections::BTreeSet::new();
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                unique_values.insert(i);
+                            }
+                        }
+                        let arr: Vec<Value> =
+                            unique_values.iter().map(|&n| Value::int64(n)).collect();
+                        Value::array(arr)
                     }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values

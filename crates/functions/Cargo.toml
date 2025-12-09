@@ -10,7 +10,7 @@ default = ["core", "json", "network", "encryption", "approximate"]
 core = []
 json = ["dep:serde_json", "dep:serde_json_path", "dep:sqlparser"]
 network = ["dep:ipnetwork", "dep:url", "dep:publicsuffix", "dep:urlencoding"]
-encryption = ["dep:md5", "dep:sha1", "dep:sha2", "dep:hex", "dep:farmhash"]
+encryption = ["dep:md5", "dep:sha1", "dep:sha2", "dep:hex", "dep:farmhash", "dep:blake3"]
 approximate = ["dep:bloomfilter", "dep:ahash"]
 all = ["core", "json", "network", "encryption", "approximate"]
 
@@ -62,6 +62,9 @@ base64 = "0.22"
 
 # Non-cryptographic hash functions
 farmhash = { version = "1.1", optional = true }
+
+# Modern cryptographic hash function
+blake3 = { version = "1.5", optional = true }
 
 # Network operations
 ipnetwork = { version = "0.20", optional = true }
