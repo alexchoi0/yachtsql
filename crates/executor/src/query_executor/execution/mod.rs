@@ -411,6 +411,8 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseProjection { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseAlterUser { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseGrant { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseSystem { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateDictionary { .. } => Self::empty_result(),
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
                     format!("Custom statement not yet supported: {:?}", custom_stmt),

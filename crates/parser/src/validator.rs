@@ -169,6 +169,14 @@ pub enum CustomStatement {
     ClickHouseGrant {
         statement: String,
     },
+
+    ClickHouseSystem {
+        command: ClickHouseSystemCommand,
+    },
+
+    ClickHouseCreateDictionary {
+        name: sqlparser::ast::ObjectName,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +184,65 @@ pub enum ClickHouseTtlOperation {
     Modify { expression: String },
     Remove,
     Materialize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClickHouseSystemCommand {
+    ReloadDictionary {
+        name: Option<String>,
+    },
+    ReloadDictionaries,
+    DropDnsCache,
+    DropMarkCache,
+    DropUncompressedCache,
+    DropCompiledExpressionCache,
+    FlushLogs,
+    StopMerges {
+        table: Option<String>,
+    },
+    StartMerges {
+        table: Option<String>,
+    },
+    StopTtlMerges {
+        table: Option<String>,
+    },
+    StartTtlMerges {
+        table: Option<String>,
+    },
+    StopMoves {
+        table: Option<String>,
+    },
+    StartMoves {
+        table: Option<String>,
+    },
+    StopFetches {
+        table: Option<String>,
+    },
+    StartFetches {
+        table: Option<String>,
+    },
+    StopSends {
+        table: Option<String>,
+    },
+    StartSends {
+        table: Option<String>,
+    },
+    StopReplicationQueues {
+        table: Option<String>,
+    },
+    StartReplicationQueues {
+        table: Option<String>,
+    },
+    SyncReplica {
+        table: String,
+    },
+    DropReplica {
+        replica_name: String,
+        from_table: Option<String>,
+    },
+    ReloadConfig,
+    Shutdown,
+    Kill,
 }
 
 use crate::parser::ClickHouseIndexType;
@@ -355,6 +422,14 @@ impl StatementValidator {
             }
             CustomStatement::ClickHouseGrant { .. } => {
                 self.require_clickhouse("GRANT/REVOKE")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseSystem { .. } => {
+                self.require_clickhouse("SYSTEM commands")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseCreateDictionary { .. } => {
+                self.require_clickhouse("CREATE DICTIONARY")?;
                 Ok(())
             }
         }

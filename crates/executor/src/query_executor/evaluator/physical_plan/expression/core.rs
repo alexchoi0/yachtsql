@@ -1046,6 +1046,20 @@ impl ProjectionWithExprExec {
                 | FunctionName::InetServerAddr
                 | FunctionName::InetServerPort
                 | FunctionName::TxidCurrent
+                | FunctionName::TxidCurrentIfAssigned
+                | FunctionName::TxidCurrentSnapshot
+                | FunctionName::TxidSnapshotXmin
+                | FunctionName::TxidSnapshotXmax
+                | FunctionName::TxidSnapshotXip
+                | FunctionName::TxidVisibleInSnapshot
+                | FunctionName::TxidStatus
+                | FunctionName::PgCurrentXactId
+                | FunctionName::PgCurrentXactIdIfAssigned
+                | FunctionName::PgSnapshotXmin
+                | FunctionName::PgSnapshotXmax
+                | FunctionName::PgSnapshotXip
+                | FunctionName::PgVisibleInSnapshot
+                | FunctionName::PgXactStatus
         ) {
             return Self::evaluate_introspection_function(name, args, batch, row_idx);
         }
@@ -1149,6 +1163,7 @@ impl ProjectionWithExprExec {
                 | FunctionName::LowerInf
                 | FunctionName::UpperInf
                 | FunctionName::Isempty
+                | FunctionName::Range
                 | FunctionName::RangeMerge
                 | FunctionName::RangeIsempty
                 | FunctionName::RangeContains
@@ -1160,6 +1175,8 @@ impl ProjectionWithExprExec {
                 | FunctionName::RangeStrictlyLeft
                 | FunctionName::RangeStrictlyRight
                 | FunctionName::RangeDifference
+                | FunctionName::RangeStart
+                | FunctionName::RangeEnd
         ) {
             return Self::evaluate_range_function(func_name, args, batch, row_idx);
         }
