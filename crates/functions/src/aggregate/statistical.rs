@@ -1830,3 +1830,461 @@ impl AggregateFunction for MaxFunction {
         Box::new(MaxAccumulator::default())
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SkewPopAccumulator {
+    count: usize,
+    mean: f64,
+    m2: f64,
+    m3: f64,
+}
+
+impl Default for SkewPopAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SkewPopAccumulator {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            mean: 0.0,
+            m2: 0.0,
+            m3: 0.0,
+        }
+    }
+}
+
+impl Accumulator for SkewPopAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let x = value.as_f64().ok_or_else(|| Error::TypeMismatch {
+            expected: "FLOAT64 or numeric type".to_string(),
+            actual: value.data_type().to_string(),
+        })?;
+
+        let n1 = self.count as f64;
+        self.count += 1;
+        let n = self.count as f64;
+
+        let delta = x - self.mean;
+        let delta_n = delta / n;
+        let term1 = delta * delta_n * n1;
+
+        self.mean += delta_n;
+        self.m3 += term1 * delta_n * (n - 2.0) - 3.0 * delta_n * self.m2;
+        self.m2 += term1;
+
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "SKEW_POP merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count < 3 {
+            return Ok(Value::null());
+        }
+        let n = self.count as f64;
+        let variance = self.m2 / n;
+        if variance == 0.0 {
+            return Ok(Value::float64(0.0));
+        }
+        let skewness = (self.m3 / n) / variance.powf(1.5);
+        Ok(Value::float64(skewness))
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.mean = 0.0;
+        self.m2 = 0.0;
+        self.m3 = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SkewSampAccumulator {
+    count: usize,
+    mean: f64,
+    m2: f64,
+    m3: f64,
+}
+
+impl Default for SkewSampAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SkewSampAccumulator {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            mean: 0.0,
+            m2: 0.0,
+            m3: 0.0,
+        }
+    }
+}
+
+impl Accumulator for SkewSampAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let x = value.as_f64().ok_or_else(|| Error::TypeMismatch {
+            expected: "FLOAT64 or numeric type".to_string(),
+            actual: value.data_type().to_string(),
+        })?;
+
+        let n1 = self.count as f64;
+        self.count += 1;
+        let n = self.count as f64;
+
+        let delta = x - self.mean;
+        let delta_n = delta / n;
+        let term1 = delta * delta_n * n1;
+
+        self.mean += delta_n;
+        self.m3 += term1 * delta_n * (n - 2.0) - 3.0 * delta_n * self.m2;
+        self.m2 += term1;
+
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "SKEW_SAMP merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count < 3 {
+            return Ok(Value::null());
+        }
+        let n = self.count as f64;
+        let m2 = self.m2;
+        let m3 = self.m3;
+        if m2 == 0.0 {
+            return Ok(Value::float64(0.0));
+        }
+        let skewness = (n.sqrt() * (n - 1.0).sqrt() / (n - 2.0)) * (m3 / m2.powf(1.5));
+        Ok(Value::float64(skewness))
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.mean = 0.0;
+        self.m2 = 0.0;
+        self.m3 = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KurtPopAccumulator {
+    count: usize,
+    mean: f64,
+    m2: f64,
+    m4: f64,
+}
+
+impl Default for KurtPopAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KurtPopAccumulator {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            mean: 0.0,
+            m2: 0.0,
+            m4: 0.0,
+        }
+    }
+}
+
+impl Accumulator for KurtPopAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let x = value.as_f64().ok_or_else(|| Error::TypeMismatch {
+            expected: "FLOAT64 or numeric type".to_string(),
+            actual: value.data_type().to_string(),
+        })?;
+
+        let n1 = self.count as f64;
+        self.count += 1;
+        let n = self.count as f64;
+
+        let delta = x - self.mean;
+        let delta_n = delta / n;
+        let delta_n2 = delta_n * delta_n;
+        let term1 = delta * delta_n * n1;
+
+        self.mean += delta_n;
+        self.m4 += term1 * delta_n2 * (n * n - 3.0 * n + 3.0) + 6.0 * delta_n2 * self.m2
+            - 4.0 * delta_n * 0.0;
+        self.m2 += term1;
+
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "KURT_POP merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count < 4 {
+            return Ok(Value::null());
+        }
+        let n = self.count as f64;
+        let variance = self.m2 / n;
+        if variance == 0.0 {
+            return Ok(Value::float64(0.0));
+        }
+        let kurtosis = (n * self.m4) / (self.m2 * self.m2) - 3.0;
+        Ok(Value::float64(kurtosis))
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.mean = 0.0;
+        self.m2 = 0.0;
+        self.m4 = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KurtSampAccumulator {
+    count: usize,
+    mean: f64,
+    m2: f64,
+    m4: f64,
+}
+
+impl Default for KurtSampAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KurtSampAccumulator {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            mean: 0.0,
+            m2: 0.0,
+            m4: 0.0,
+        }
+    }
+}
+
+impl Accumulator for KurtSampAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let x = value.as_f64().ok_or_else(|| Error::TypeMismatch {
+            expected: "FLOAT64 or numeric type".to_string(),
+            actual: value.data_type().to_string(),
+        })?;
+
+        let n1 = self.count as f64;
+        self.count += 1;
+        let n = self.count as f64;
+
+        let delta = x - self.mean;
+        let delta_n = delta / n;
+        let delta_n2 = delta_n * delta_n;
+        let term1 = delta * delta_n * n1;
+
+        self.mean += delta_n;
+        self.m4 += term1 * delta_n2 * (n * n - 3.0 * n + 3.0) + 6.0 * delta_n2 * self.m2
+            - 4.0 * delta_n * 0.0;
+        self.m2 += term1;
+
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "KURT_SAMP merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count < 4 {
+            return Ok(Value::null());
+        }
+        let n = self.count as f64;
+        if self.m2 == 0.0 {
+            return Ok(Value::float64(0.0));
+        }
+        let g2 = (n * self.m4) / (self.m2 * self.m2) - 3.0;
+        let kurtosis = ((n - 1.0) / ((n - 2.0) * (n - 3.0))) * ((n + 1.0) * g2 + 6.0);
+        Ok(Value::float64(kurtosis))
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.mean = 0.0;
+        self.m2 = 0.0;
+        self.m4 = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AvgWeightedAccumulator {
+    weighted_sum: f64,
+    total_weight: f64,
+}
+
+impl Default for AvgWeightedAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AvgWeightedAccumulator {
+    pub fn new() -> Self {
+        Self {
+            weighted_sum: 0.0,
+            total_weight: 0.0,
+        }
+    }
+}
+
+impl Accumulator for AvgWeightedAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let (val, weight) = if let Some(arr) = value.as_array() {
+            if arr.len() == 2 {
+                let v = arr[0].as_f64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "FLOAT64".to_string(),
+                    actual: arr[0].data_type().to_string(),
+                })?;
+                let w = arr[1].as_f64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "FLOAT64".to_string(),
+                    actual: arr[1].data_type().to_string(),
+                })?;
+                (v, w)
+            } else {
+                return Err(Error::TypeMismatch {
+                    expected: "ARRAY with 2 values [value, weight]".to_string(),
+                    actual: value.data_type().to_string(),
+                });
+            }
+        } else {
+            return Err(Error::TypeMismatch {
+                expected: "ARRAY with 2 values [value, weight]".to_string(),
+                actual: value.data_type().to_string(),
+            });
+        };
+
+        self.weighted_sum += val * weight;
+        self.total_weight += weight;
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "AVG_WEIGHTED merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.total_weight == 0.0 {
+            return Ok(Value::null());
+        }
+        Ok(Value::float64(self.weighted_sum / self.total_weight))
+    }
+
+    fn reset(&mut self) {
+        self.weighted_sum = 0.0;
+        self.total_weight = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+simple_numeric_aggregate!(
+    SkewPopFunction,
+    "SKEW_POP",
+    DataType::Float64,
+    SkewPopAccumulator
+);
+simple_numeric_aggregate!(
+    SkewSampFunction,
+    "SKEW_SAMP",
+    DataType::Float64,
+    SkewSampAccumulator
+);
+simple_numeric_aggregate!(
+    KurtPopFunction,
+    "KURT_POP",
+    DataType::Float64,
+    KurtPopAccumulator
+);
+simple_numeric_aggregate!(
+    KurtSampFunction,
+    "KURT_SAMP",
+    DataType::Float64,
+    KurtSampAccumulator
+);
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AvgWeightedFunction;
+
+impl AggregateFunction for AvgWeightedFunction {
+    fn name(&self) -> &str {
+        "AVG_WEIGHTED"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown, DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(AvgWeightedAccumulator::new())
+    }
+}

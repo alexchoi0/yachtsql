@@ -197,7 +197,6 @@ fn test_avg_weighted() {
     assert_table_eq!(result, [[23.333333333333332]]); // (10*1 + 20*2 + 30*3) / 6 = 23.33...
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_skew_pop() {
     let mut executor = create_executor();
@@ -214,7 +213,6 @@ fn test_skew_pop() {
     assert!(result.num_rows() == 1); // Skewness value is implementation-specific
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_skew_samp() {
     let mut executor = create_executor();
@@ -231,7 +229,6 @@ fn test_skew_samp() {
     assert!(result.num_rows() == 1); // Skewness value is implementation-specific
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_kurt_pop() {
     let mut executor = create_executor();
@@ -250,7 +247,6 @@ fn test_kurt_pop() {
     assert!(result.num_rows() == 1); // Kurtosis value is implementation-specific
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_kurt_samp() {
     let mut executor = create_executor();
