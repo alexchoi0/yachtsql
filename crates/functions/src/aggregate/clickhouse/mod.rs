@@ -5419,3 +5419,1231 @@ impl AggregateFunction for MaxArrayFunction {
         Box::new(MaxArrayAccumulator::new())
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct AvgMapAccumulator {
+    sums: HashMap<String, f64>,
+    counts: HashMap<String, usize>,
+}
+
+impl Default for AvgMapAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AvgMapAccumulator {
+    pub fn new() -> Self {
+        Self {
+            sums: HashMap::new(),
+            counts: HashMap::new(),
+        }
+    }
+}
+
+impl Accumulator for AvgMapAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        let (keys, values) = if let Some(arr) = value.as_array() {
+            if arr.len() == 2 {
+                if let (Some(k), Some(v)) = (arr[0].as_array(), arr[1].as_array()) {
+                    (k, v)
+                } else {
+                    return Err(Error::TypeMismatch {
+                        expected: "ARRAY[ARRAY, ARRAY]".to_string(),
+                        actual: value.data_type().to_string(),
+                    });
+                }
+            } else {
+                return Err(Error::TypeMismatch {
+                    expected: "ARRAY[keys, values]".to_string(),
+                    actual: value.data_type().to_string(),
+                });
+            }
+        } else {
+            return Err(Error::TypeMismatch {
+                expected: "ARRAY[keys, values]".to_string(),
+                actual: value.data_type().to_string(),
+            });
+        };
+
+        for (key, val) in keys.iter().zip(values.iter()) {
+            let key_str = value_to_string(key);
+            if let Some(val_f64) = numeric_value_to_f64(val)? {
+                *self.sums.entry(key_str.clone()).or_insert(0.0) += val_f64;
+                *self.counts.entry(key_str).or_insert(0) += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "AVG_MAP merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        let mut keys: Vec<_> = self.sums.keys().collect();
+        keys.sort();
+
+        let key_values: Vec<Value> = keys.iter().map(|k| Value::string((*k).clone())).collect();
+
+        let avg_values: Vec<Value> = keys
+            .iter()
+            .filter_map(|k| {
+                let sum = self.sums.get(*k)?;
+                let count = *self.counts.get(*k)? as f64;
+                if count > 0.0 {
+                    Some(Value::float64(sum / count))
+                } else {
+                    Some(Value::null())
+                }
+            })
+            .collect();
+
+        Ok(Value::array(vec![
+            Value::array(key_values),
+            Value::array(avg_values),
+        ]))
+    }
+
+    fn reset(&mut self) {
+        self.sums.clear();
+        self.counts.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AvgMapFunction;
+
+impl AggregateFunction for AvgMapFunction {
+    fn name(&self) -> &str {
+        "AVG_MAP"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Array(Box::new(DataType::Array(Box::new(
+            DataType::Unknown,
+        )))))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(AvgMapAccumulator::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupArrayIntersectAccumulator {
+    intersection: Option<std::collections::HashSet<String>>,
+}
+
+impl Default for GroupArrayIntersectAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GroupArrayIntersectAccumulator {
+    pub fn new() -> Self {
+        Self { intersection: None }
+    }
+}
+
+impl Accumulator for GroupArrayIntersectAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        if let Some(arr) = value.as_array() {
+            let current_set: std::collections::HashSet<String> =
+                arr.iter().map(value_to_string).collect();
+
+            if let Some(ref mut intersection) = self.intersection {
+                *intersection = intersection.intersection(&current_set).cloned().collect();
+            } else {
+                self.intersection = Some(current_set);
+            }
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "GROUP_ARRAY_INTERSECT merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if let Some(ref intersection) = self.intersection {
+            let mut values: Vec<String> = intersection.iter().cloned().collect();
+            values.sort();
+            let value_array: Vec<Value> = values.into_iter().map(Value::string).collect();
+            Ok(Value::array(value_array))
+        } else {
+            Ok(Value::array(Vec::new()))
+        }
+    }
+
+    fn reset(&mut self) {
+        self.intersection = None;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GroupArrayIntersectFunction;
+
+impl AggregateFunction for GroupArrayIntersectFunction {
+    fn name(&self) -> &str {
+        "GROUP_ARRAY_INTERSECT"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Array(Box::new(DataType::Unknown)))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(GroupArrayIntersectAccumulator::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupArraySortedAccumulator {
+    values: Vec<Value>,
+    max_size: usize,
+}
+
+impl Default for GroupArraySortedAccumulator {
+    fn default() -> Self {
+        Self::new(10)
+    }
+}
+
+impl GroupArraySortedAccumulator {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            values: Vec::new(),
+            max_size,
+        }
+    }
+}
+
+impl Accumulator for GroupArraySortedAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        self.values.push(value.clone());
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "GROUP_ARRAY_SORTED merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| {
+            if let (Some(a_i), Some(b_i)) = (a.as_i64(), b.as_i64()) {
+                a_i.cmp(&b_i)
+            } else if let (Some(a_f), Some(b_f)) = (a.as_f64(), b.as_f64()) {
+                a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
+            } else if let (Some(a_s), Some(b_s)) = (a.as_str(), b.as_str()) {
+                a_s.cmp(b_s)
+            } else {
+                Ordering::Equal
+            }
+        });
+        let result: Vec<Value> = sorted.into_iter().take(self.max_size).collect();
+        Ok(Value::array(result))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupArraySortedFunction {
+    max_size: usize,
+}
+
+impl Default for GroupArraySortedFunction {
+    fn default() -> Self {
+        Self { max_size: 10 }
+    }
+}
+
+impl GroupArraySortedFunction {
+    pub fn new(max_size: usize) -> Self {
+        Self { max_size }
+    }
+}
+
+impl AggregateFunction for GroupArraySortedFunction {
+    fn name(&self) -> &str {
+        "GROUP_ARRAY_SORTED"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Array(Box::new(DataType::Unknown)))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(GroupArraySortedAccumulator::new(self.max_size))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupArrayLastAccumulator {
+    values: std::collections::VecDeque<Value>,
+    max_size: usize,
+}
+
+impl Default for GroupArrayLastAccumulator {
+    fn default() -> Self {
+        Self::new(10)
+    }
+}
+
+impl GroupArrayLastAccumulator {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            values: std::collections::VecDeque::new(),
+            max_size,
+        }
+    }
+}
+
+impl Accumulator for GroupArrayLastAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        self.values.push_back(value.clone());
+        if self.values.len() > self.max_size {
+            self.values.pop_front();
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "GROUP_ARRAY_LAST merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        let result: Vec<Value> = self.values.iter().cloned().collect();
+        Ok(Value::array(result))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupArrayLastFunction {
+    max_size: usize,
+}
+
+impl Default for GroupArrayLastFunction {
+    fn default() -> Self {
+        Self { max_size: 10 }
+    }
+}
+
+impl GroupArrayLastFunction {
+    pub fn new(max_size: usize) -> Self {
+        Self { max_size }
+    }
+}
+
+impl AggregateFunction for GroupArrayLastFunction {
+    fn name(&self) -> &str {
+        "GROUP_ARRAY_LAST"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Array(Box::new(DataType::Unknown)))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(GroupArrayLastAccumulator::new(self.max_size))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SumDistinctAccumulator {
+    values: std::collections::HashSet<String>,
+    sum: f64,
+}
+
+impl Default for SumDistinctAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SumDistinctAccumulator {
+    pub fn new() -> Self {
+        Self {
+            values: std::collections::HashSet::new(),
+            sum: 0.0,
+        }
+    }
+}
+
+impl Accumulator for SumDistinctAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        let key = value_to_string(value);
+        if self.values.insert(key) {
+            if let Some(v) = numeric_value_to_f64(value)? {
+                self.sum += v;
+            }
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "SUM_DISTINCT merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(Value::float64(self.sum))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+        self.sum = 0.0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SumDistinctFunction;
+
+impl AggregateFunction for SumDistinctFunction {
+    fn name(&self) -> &str {
+        "SUM_DISTINCT"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(SumDistinctAccumulator::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AvgDistinctAccumulator {
+    values: std::collections::HashSet<String>,
+    sum: f64,
+    count: usize,
+}
+
+impl Default for AvgDistinctAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AvgDistinctAccumulator {
+    pub fn new() -> Self {
+        Self {
+            values: std::collections::HashSet::new(),
+            sum: 0.0,
+            count: 0,
+        }
+    }
+}
+
+impl Accumulator for AvgDistinctAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        let key = value_to_string(value);
+        if self.values.insert(key) {
+            if let Some(v) = numeric_value_to_f64(value)? {
+                self.sum += v;
+                self.count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "AVG_DISTINCT merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count == 0 {
+            return Ok(Value::null());
+        }
+        Ok(Value::float64(self.sum / self.count as f64))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+        self.sum = 0.0;
+        self.count = 0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AvgDistinctFunction;
+
+impl AggregateFunction for AvgDistinctFunction {
+    fn name(&self) -> &str {
+        "AVG_DISTINCT"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(AvgDistinctAccumulator::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistogramAccumulator {
+    values: Vec<f64>,
+    num_bins: usize,
+}
+
+impl Default for HistogramAccumulator {
+    fn default() -> Self {
+        Self::new(10)
+    }
+}
+
+impl HistogramAccumulator {
+    pub fn new(num_bins: usize) -> Self {
+        Self {
+            values: Vec::new(),
+            num_bins,
+        }
+    }
+}
+
+impl Accumulator for HistogramAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "HISTOGRAM merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::array(Vec::new()));
+        }
+
+        let min_val = self.values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_val = self
+            .values
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        if min_val == max_val {
+            let result = vec![Value::array(vec![
+                Value::float64(min_val),
+                Value::float64(max_val),
+                Value::int64(self.values.len() as i64),
+            ])];
+            return Ok(Value::array(result));
+        }
+
+        let bin_width = (max_val - min_val) / self.num_bins as f64;
+        let mut counts = vec![0usize; self.num_bins];
+
+        for &v in &self.values {
+            let bin = ((v - min_val) / bin_width).floor() as usize;
+            let bin = bin.min(self.num_bins - 1);
+            counts[bin] += 1;
+        }
+
+        let result: Vec<Value> = counts
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| **c > 0)
+            .map(|(i, count)| {
+                let lower = min_val + i as f64 * bin_width;
+                let upper = min_val + (i + 1) as f64 * bin_width;
+                Value::array(vec![
+                    Value::float64(lower),
+                    Value::float64(upper),
+                    Value::int64(*count as i64),
+                ])
+            })
+            .collect();
+
+        Ok(Value::array(result))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistogramFunction {
+    num_bins: usize,
+}
+
+impl Default for HistogramFunction {
+    fn default() -> Self {
+        Self { num_bins: 10 }
+    }
+}
+
+impl HistogramFunction {
+    pub fn new(num_bins: usize) -> Self {
+        Self { num_bins }
+    }
+}
+
+impl AggregateFunction for HistogramFunction {
+    fn name(&self) -> &str {
+        "HISTOGRAM"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Array(Box::new(DataType::Array(Box::new(
+            DataType::Unknown,
+        )))))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(HistogramAccumulator::new(self.num_bins))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileExactLowAccumulator {
+    values: Vec<f64>,
+    percentile: f64,
+}
+
+impl Default for QuantileExactLowAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileExactLowAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileExactLowAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_EXACT_LOW merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let idx = ((sorted.len() as f64 * self.percentile).floor() as usize).min(sorted.len() - 1);
+        Ok(Value::float64(sorted[idx]))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileExactLowFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileExactLowFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileExactLowFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_EXACT_LOW"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileExactLowAccumulator::new(self.percentile))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileExactHighAccumulator {
+    values: Vec<f64>,
+    percentile: f64,
+}
+
+impl Default for QuantileExactHighAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileExactHighAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileExactHighAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_EXACT_HIGH merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let idx = ((sorted.len() as f64 * self.percentile).ceil() as usize).min(sorted.len() - 1);
+        Ok(Value::float64(sorted[idx]))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileExactHighFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileExactHighFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileExactHighFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_EXACT_HIGH"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileExactHighAccumulator::new(self.percentile))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileDDAccumulator {
+    values: Vec<f64>,
+    percentile: f64,
+}
+
+impl Default for QuantileDDAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileDDAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileDDAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_DD merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let idx = ((sorted.len() as f64 - 1.0) * self.percentile).round() as usize;
+        Ok(Value::float64(sorted[idx.min(sorted.len() - 1)]))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileDDFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileDDFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileDDFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_DD"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileDDAccumulator::new(self.percentile))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileGKAccumulator {
+    values: Vec<f64>,
+    percentile: f64,
+}
+
+impl Default for QuantileGKAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileGKAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileGKAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_GK merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let idx = ((sorted.len() as f64 - 1.0) * self.percentile).round() as usize;
+        Ok(Value::float64(sorted[idx.min(sorted.len() - 1)]))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileGKFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileGKFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileGKFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_GK"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileGKAccumulator::new(self.percentile))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileInterpolatedWeightedAccumulator {
+    values: Vec<(f64, f64)>,
+    percentile: f64,
+}
+
+impl Default for QuantileInterpolatedWeightedAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileInterpolatedWeightedAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileInterpolatedWeightedAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        if let Some(arr) = value.as_array() {
+            if arr.len() >= 2 {
+                if let (Some(v), Some(w)) = (
+                    numeric_value_to_f64(&arr[0])?,
+                    numeric_value_to_f64(&arr[1])?,
+                ) {
+                    self.values.push((v, w));
+                }
+            }
+        } else if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push((v, 1.0));
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_INTERPOLATED_WEIGHTED merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        let total_weight: f64 = sorted.iter().map(|(_, w)| w).sum();
+        let target = total_weight * self.percentile;
+        let mut cumulative = 0.0;
+
+        for &(val, weight) in &sorted {
+            cumulative += weight;
+            if cumulative >= target {
+                return Ok(Value::float64(val));
+            }
+        }
+        Ok(Value::float64(
+            sorted.last().map(|(v, _)| *v).unwrap_or(0.0),
+        ))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileInterpolatedWeightedFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileInterpolatedWeightedFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileInterpolatedWeightedFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_INTERPOLATED_WEIGHTED"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileInterpolatedWeightedAccumulator::new(
+            self.percentile,
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileBFloat16WeightedAccumulator {
+    values: Vec<(f64, f64)>,
+    percentile: f64,
+}
+
+impl Default for QuantileBFloat16WeightedAccumulator {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl QuantileBFloat16WeightedAccumulator {
+    pub fn new(percentile: f64) -> Self {
+        Self {
+            values: Vec::new(),
+            percentile,
+        }
+    }
+}
+
+impl Accumulator for QuantileBFloat16WeightedAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        if let Some(arr) = value.as_array() {
+            if arr.len() >= 2 {
+                if let (Some(v), Some(w)) = (
+                    numeric_value_to_f64(&arr[0])?,
+                    numeric_value_to_f64(&arr[1])?,
+                ) {
+                    self.values.push((v, w));
+                }
+            }
+        } else if let Some(v) = numeric_value_to_f64(value)? {
+            self.values.push((v, 1.0));
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "QUANTILE_BFLOAT16_WEIGHTED merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.values.is_empty() {
+            return Ok(Value::null());
+        }
+        let mut sorted = self.values.clone();
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        let total_weight: f64 = sorted.iter().map(|(_, w)| w).sum();
+        let target = total_weight * self.percentile;
+        let mut cumulative = 0.0;
+
+        for &(val, weight) in &sorted {
+            cumulative += weight;
+            if cumulative >= target {
+                return Ok(Value::float64(val));
+            }
+        }
+        Ok(Value::float64(
+            sorted.last().map(|(v, _)| *v).unwrap_or(0.0),
+        ))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantileBFloat16WeightedFunction {
+    percentile: f64,
+}
+
+impl Default for QuantileBFloat16WeightedFunction {
+    fn default() -> Self {
+        Self { percentile: 0.5 }
+    }
+}
+
+impl AggregateFunction for QuantileBFloat16WeightedFunction {
+    fn name(&self) -> &str {
+        "QUANTILE_BFLOAT16_WEIGHTED"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(QuantileBFloat16WeightedAccumulator::new(self.percentile))
+    }
+}
