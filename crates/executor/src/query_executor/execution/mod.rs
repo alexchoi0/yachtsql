@@ -2085,7 +2085,19 @@ impl QueryExecutor {
                 use chrono::TimeZone;
 
                 if let Ok(naive_ts) =
+                    chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%d %H:%M:%S%.f")
+                {
+                    let ts = chrono::Utc.from_utc_datetime(&naive_ts);
+                    return Ok(Value::timestamp(ts));
+                }
+                if let Ok(naive_ts) =
                     chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%d %H:%M:%S")
+                {
+                    let ts = chrono::Utc.from_utc_datetime(&naive_ts);
+                    return Ok(Value::timestamp(ts));
+                }
+                if let Ok(naive_ts) =
+                    chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%dT%H:%M:%S%.f")
                 {
                     let ts = chrono::Utc.from_utc_datetime(&naive_ts);
                     return Ok(Value::timestamp(ts));

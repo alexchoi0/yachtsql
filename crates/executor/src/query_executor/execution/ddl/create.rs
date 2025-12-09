@@ -645,7 +645,8 @@ impl DdlExecutor for QueryExecutor {
             SqlDataType::String(_)
             | SqlDataType::Varchar(_)
             | SqlDataType::Char(_)
-            | SqlDataType::Text => Ok(DataType::String),
+            | SqlDataType::Text
+            | SqlDataType::FixedString(_) => Ok(DataType::String),
             SqlDataType::Bytea | SqlDataType::Bytes(_) => Ok(DataType::Bytes),
             SqlDataType::Bit(_) | SqlDataType::BitVarying(_) => Ok(DataType::Bytes),
             SqlDataType::Date => Ok(DataType::Date),
@@ -750,6 +751,38 @@ impl DdlExecutor for QueryExecutor {
                         .and_then(|s| s.parse::<usize>().ok())
                         .unwrap_or(0);
                     return Ok(DataType::Vector(dims));
+                }
+
+                if type_upper == "DECIMAL32" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((9, scale))));
+                }
+
+                if type_upper == "DECIMAL64" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((18, scale))));
+                }
+
+                if type_upper == "DECIMAL128" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((38, scale))));
+                }
+
+                if type_upper == "DATETIME64" {
+                    return Ok(DataType::Timestamp);
+                }
+
+                if type_upper == "FIXEDSTRING" {
+                    return Ok(DataType::String);
                 }
 
                 {

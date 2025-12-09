@@ -749,6 +749,49 @@ impl ProjectionWithExprExec {
             FunctionName::Custom(s)
                 if matches!(
                     s.as_str(),
+                    "TOYEAR"
+                        | "TOMONTH"
+                        | "TODAYOFMONTH"
+                        | "TOHOUR"
+                        | "TOMINUTE"
+                        | "TOSECOND"
+                        | "TODAYOFWEEK"
+                        | "TODAYOFYEAR"
+                        | "TOQUARTER"
+                        | "TOWEEK"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "NOW64"
+                        | "ADDSECONDS"
+                        | "SUBTRACTSECONDS"
+                        | "ADDMINUTES"
+                        | "SUBTRACTMINUTES"
+                        | "ADDHOURS"
+                        | "SUBTRACTHOURS"
+                        | "ADDDAYS"
+                        | "SUBTRACTDAYS"
+                        | "ADDWEEKS"
+                        | "SUBTRACTWEEKS"
+                        | "ADDMONTHS"
+                        | "SUBTRACTMONTHS"
+                        | "ADDYEARS"
+                        | "SUBTRACTYEARS"
+                ) =>
+            {
+                Some(DataType::Timestamp)
+            }
+
+            FunctionName::Custom(s) if s == "TODATE" => Some(DataType::Date),
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
                     "IPV4NUMTOSTRING"
                         | "IPV4NUMTOSTRINGCLASSC"
                         | "IPV4CIDRTORANGE"
