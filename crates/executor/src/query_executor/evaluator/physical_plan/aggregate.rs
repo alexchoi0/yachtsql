@@ -1654,6 +1654,48 @@ impl AggregateExec {
                             unique_values.iter().map(|&n| Value::int64(n)).collect();
                         Value::array(arr)
                     }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values
                             .iter()
@@ -3009,6 +3051,48 @@ impl SortAggregateExec {
                         let arr: Vec<Value> =
                             unique_values.iter().map(|&n| Value::int64(n)).collect();
                         Value::array(arr)
+                    }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
                     }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values
