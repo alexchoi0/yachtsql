@@ -108,7 +108,19 @@ impl Parser {
             sql_with_array_join
         };
 
-        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_final)?;
+        let sql_without_settings = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_settings_clause(&sql_without_final)
+        } else {
+            sql_without_final
+        };
+
+        let sql_without_global = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_global_keyword(&sql_without_settings)
+        } else {
+            sql_without_settings
+        };
+
+        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_global)?;
         let parse_result = SqlParser::parse_sql(&*self.dialect, &rewritten_sql);
 
         let sql_statements = match parse_result {
@@ -440,6 +452,18 @@ impl Parser {
     fn strip_final_modifier(sql: &str) -> String {
         let re = regex::Regex::new(r"(?i)\bFINAL\b").unwrap();
         re.replace_all(sql, "").to_string()
+    }
+
+    fn strip_settings_clause(sql: &str) -> String {
+        let re =
+            regex::Regex::new(r"(?i)\bSETTINGS\s+\w+\s*=\s*'?[^']*'?(\s*,\s*\w+\s*=\s*'?[^']*'?)*")
+                .unwrap();
+        re.replace_all(sql, "").to_string()
+    }
+
+    fn strip_global_keyword(sql: &str) -> String {
+        let re = regex::Regex::new(r"(?i)\bGLOBAL\s+IN\b").unwrap();
+        re.replace_all(sql, "IN").to_string()
     }
 
     fn rewrite_asof_join(sql: &str) -> String {

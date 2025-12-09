@@ -438,6 +438,13 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseCreateTablePassthrough { stripped, .. } => {
                     return self.execute_sql(stripped);
                 }
+                CustomStatement::ClickHouseCreateTableAs {
+                    new_table,
+                    source_table,
+                    engine_clause,
+                } => {
+                    return self.execute_create_table_as(new_table, source_table, engine_clause);
+                }
                 CustomStatement::ClickHouseAlterTable { .. } => Self::empty_result(),
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
@@ -649,6 +656,9 @@ impl QueryExecutor {
                 UtilityOperation::ShowRoles => self.execute_show_roles(),
                 UtilityOperation::ShowGrants { user_name } => {
                     self.execute_show_grants(user_name.as_deref())
+                }
+                UtilityOperation::OptimizeTable { table_name } => {
+                    self.execute_optimize_table(&table_name)
                 }
             },
 
@@ -1407,6 +1417,179 @@ impl QueryExecutor {
             DataType::String,
         )]);
         Table::from_values(schema, vec![])
+    }
+
+    fn execute_optimize_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        use std::collections::HashMap;
+
+        use yachtsql_core::types::Value;
+        use yachtsql_storage::TableEngine;
+
+        let name = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&name)?;
+
+        let mut storage = self.storage.borrow_mut();
+        let dataset = storage
+            .get_dataset_mut(&dataset_id)
+            .ok_or_else(|| Error::DatasetNotFound(format!("Dataset '{}' not found", dataset_id)))?;
+        let table = dataset
+            .get_table_mut(&table_id)
+            .ok_or_else(|| Error::TableNotFound(format!("Table '{}' not found", table_id)))?;
+
+        let engine = table.engine().clone();
+        let schema = table.schema().clone();
+        let rows = table.get_all_rows();
+
+        let get_key_indices = |order_by: &[String]| -> Vec<usize> {
+            order_by
+                .iter()
+                .filter_map(|col| {
+                    schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.eq_ignore_ascii_case(col))
+                })
+                .collect()
+        };
+
+        let get_col_idx = |col_name: &str| -> Option<usize> {
+            schema
+                .fields()
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case(col_name))
+        };
+
+        let get_numeric_indices = |exclude: &[usize]| -> Vec<usize> {
+            schema
+                .fields()
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| {
+                    !exclude.contains(i)
+                        && matches!(
+                            f.data_type,
+                            DataType::Int64 | DataType::Float64 | DataType::Numeric(_)
+                        )
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
+
+        let optimized_rows = match &engine {
+            TableEngine::ReplacingMergeTree {
+                order_by,
+                version_column,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let version_idx = version_column.as_ref().and_then(|vc| get_col_idx(vc));
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    let should_replace = if let Some(ver_idx) = version_idx {
+                        groups.get(&key).is_none_or(|existing| {
+                            let existing_ver =
+                                existing.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            let new_ver = row.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            new_ver >= existing_ver
+                        })
+                    } else {
+                        true
+                    };
+                    if should_replace {
+                        groups.insert(key, row);
+                    }
+                }
+                groups.into_values().collect()
+            }
+            TableEngine::SummingMergeTree {
+                order_by,
+                sum_columns,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let sum_indices = if sum_columns.is_empty() {
+                    get_numeric_indices(&key_indices)
+                } else {
+                    sum_columns.iter().filter_map(|c| get_col_idx(c)).collect()
+                };
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups
+                        .entry(key)
+                        .and_modify(|existing| {
+                            for &idx in &sum_indices {
+                                let existing_val =
+                                    existing.get(idx).cloned().unwrap_or(Value::null());
+                                let new_val = row.get(idx).cloned().unwrap_or(Value::null());
+                                if let (Some(e), Some(n)) =
+                                    (existing_val.as_i64(), new_val.as_i64())
+                                {
+                                    let _ = existing.set(idx, Value::int64(e + n));
+                                } else if let (Some(e), Some(n)) =
+                                    (existing_val.as_f64(), new_val.as_f64())
+                                {
+                                    let _ = existing.set(idx, Value::float64(e + n));
+                                }
+                            }
+                        })
+                        .or_insert(row);
+                }
+                groups.into_values().collect()
+            }
+            TableEngine::CollapsingMergeTree {
+                order_by,
+                sign_column,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let sign_idx = get_col_idx(sign_column).unwrap_or(0);
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+                let mut result = Vec::new();
+                for (_key, group_rows) in groups {
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+                    let mut last_negative: Option<yachtsql_storage::Row> = None;
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        } else {
+                            last_negative = Some(row);
+                        }
+                    }
+                    if sum_sign > 0 {
+                        if let Some(r) = last_positive {
+                            result.push(r);
+                        }
+                    } else if sum_sign < 0 {
+                        if let Some(r) = last_negative {
+                            result.push(r);
+                        }
+                    }
+                }
+                result
+            }
+            _ => rows,
+        };
+
+        table.clear_rows()?;
+        table.insert_rows(optimized_rows)?;
+
+        drop(storage);
+        Self::empty_result()
     }
 
     fn execute_procedure(&mut self, name: &str, args: &[sqlparser::ast::Value]) -> Result<Table> {

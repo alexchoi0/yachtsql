@@ -1466,3 +1466,53 @@ impl QueryExecutor {
         Ok(())
     }
 }
+
+impl QueryExecutor {
+    pub fn execute_create_table_as(
+        &mut self,
+        new_table: &str,
+        source_table: &str,
+        engine_clause: &str,
+    ) -> Result<crate::Table> {
+        let (new_dataset_id, new_table_id) = self.parse_ddl_table_name(new_table)?;
+        let (source_dataset_id, source_table_id) = self.parse_ddl_table_name(source_table)?;
+
+        let source_schema = {
+            let storage = self.storage.borrow();
+            let dataset = storage.get_dataset(&source_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", source_dataset_id))
+            })?;
+            let table = dataset
+                .get_table(&source_table_id)
+                .ok_or_else(|| Error::table_not_found(&source_table_id))?;
+            table.schema().clone()
+        };
+
+        {
+            let mut storage = self.storage.borrow_mut();
+            let dataset = storage.get_dataset_mut(&new_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", new_dataset_id))
+            })?;
+
+            if dataset.get_table(&new_table_id).is_some() {
+                return Err(Error::InvalidQuery(format!(
+                    "Table '{}.{}' already exists",
+                    new_dataset_id, new_table_id
+                )));
+            }
+
+            dataset.create_table(new_table_id.clone(), source_schema)?;
+
+            let engine = parse_engine_from_sql(engine_clause, None);
+            if let Some(table) = dataset.get_table_mut(&new_table_id) {
+                table.set_engine(engine);
+            }
+        }
+
+        self.plan_cache.borrow_mut().invalidate_all();
+
+        Ok(crate::Table::empty(yachtsql_storage::Schema::from_fields(
+            vec![],
+        )))
+    }
+}

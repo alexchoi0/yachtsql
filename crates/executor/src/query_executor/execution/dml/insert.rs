@@ -51,6 +51,43 @@ impl DmlInsertExecutor for QueryExecutor {
         let table_name_str = resolve_insert_table_name(insert)?;
         let (dataset_id, table_id) = self.parse_ddl_table_name(&table_name_str)?;
 
+        let (dataset_id, table_id) = {
+            let storage = self.storage.borrow();
+            let dataset = storage.get_dataset(&dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", dataset_id))
+            })?;
+            if let Some(table) = dataset.get_table(&table_id) {
+                match table.engine() {
+                    yachtsql_storage::TableEngine::Distributed {
+                        database,
+                        table: target_table,
+                        ..
+                    } => {
+                        let target_db = if database.is_empty() {
+                            dataset_id.clone()
+                        } else {
+                            database.clone()
+                        };
+                        (target_db, target_table.clone())
+                    }
+                    yachtsql_storage::TableEngine::Buffer {
+                        database,
+                        table: target_table,
+                    } => {
+                        let target_db = if database.is_empty() {
+                            dataset_id.clone()
+                        } else {
+                            database.clone()
+                        };
+                        (target_db, target_table.clone())
+                    }
+                    _ => (dataset_id.clone(), table_id.clone()),
+                }
+            } else {
+                (dataset_id.clone(), table_id.clone())
+            }
+        };
+
         let is_view = {
             let storage = self.storage.borrow_mut();
             let dataset = storage.get_dataset(&dataset_id).ok_or_else(|| {

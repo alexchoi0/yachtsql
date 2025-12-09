@@ -6647,3 +6647,616 @@ impl AggregateFunction for QuantileBFloat16WeightedFunction {
         Box::new(QuantileBFloat16WeightedAccumulator::new(self.percentile))
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SumStateAccumulator {
+    sum: Value,
+}
+
+impl Default for SumStateAccumulator {
+    fn default() -> Self {
+        Self {
+            sum: Value::int64(0),
+        }
+    }
+}
+
+impl Accumulator for SumStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        self.sum = if let (Some(a), Some(b)) = (self.sum.as_i64(), value.as_i64()) {
+            Value::int64(a + b)
+        } else if let (Some(a), Some(b)) = (self.sum.as_i64(), value.as_f64()) {
+            Value::float64(a as f64 + b)
+        } else if let (Some(a), Some(b)) = (self.sum.as_f64(), value.as_i64()) {
+            Value::float64(a + b as f64)
+        } else if let (Some(a), Some(b)) = (self.sum.as_f64(), value.as_f64()) {
+            Value::float64(a + b)
+        } else if self.sum.as_i64() == Some(0) {
+            value.clone()
+        } else {
+            return Err(Error::TypeMismatch {
+                expected: "numeric".to_string(),
+                actual: value.data_type().to_string(),
+            });
+        };
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "SUMSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(self.sum.clone())
+    }
+
+    fn reset(&mut self) {
+        self.sum = Value::int64(0);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SumStateFunction;
+
+impl AggregateFunction for SumStateFunction {
+    fn name(&self) -> &str {
+        "SUMSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(SumStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SumMergeFunction;
+
+impl AggregateFunction for SumMergeFunction {
+    fn name(&self) -> &str {
+        "SUMMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(SumStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AvgStateAccumulator {
+    sum: Value,
+    count: i64,
+}
+
+impl Default for AvgStateAccumulator {
+    fn default() -> Self {
+        Self {
+            sum: Value::int64(0),
+            count: 0,
+        }
+    }
+}
+
+impl Accumulator for AvgStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        self.sum = if let (Some(a), Some(b)) = (self.sum.as_i64(), value.as_i64()) {
+            Value::int64(a + b)
+        } else if let (Some(a), Some(b)) = (self.sum.as_i64(), value.as_f64()) {
+            Value::float64(a as f64 + b)
+        } else if let (Some(a), Some(b)) = (self.sum.as_f64(), value.as_i64()) {
+            Value::float64(a + b as f64)
+        } else if let (Some(a), Some(b)) = (self.sum.as_f64(), value.as_f64()) {
+            Value::float64(a + b)
+        } else if self.sum.as_i64() == Some(0) {
+            value.clone()
+        } else {
+            return Err(Error::TypeMismatch {
+                expected: "numeric".to_string(),
+                actual: value.data_type().to_string(),
+            });
+        };
+        self.count += 1;
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "AVGSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.count == 0 {
+            return Ok(Value::null());
+        }
+        let sum_f64 = self
+            .sum
+            .as_f64()
+            .unwrap_or_else(|| self.sum.as_i64().map(|i| i as f64).unwrap_or(0.0));
+        Ok(Value::float64(sum_f64 / self.count as f64))
+    }
+
+    fn reset(&mut self) {
+        self.sum = Value::int64(0);
+        self.count = 0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AvgStateFunction;
+
+impl AggregateFunction for AvgStateFunction {
+    fn name(&self) -> &str {
+        "AVGSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(AvgStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AvgMergeFunction;
+
+impl AggregateFunction for AvgMergeFunction {
+    fn name(&self) -> &str {
+        "AVGMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Float64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(AvgStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CountStateAccumulator {
+    count: i64,
+}
+
+impl Accumulator for CountStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if !value.is_null() {
+            self.count += 1;
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "COUNTSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(Value::int64(self.count))
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CountStateFunction;
+
+impl AggregateFunction for CountStateFunction {
+    fn name(&self) -> &str {
+        "COUNTSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(CountStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CountMergeAccumulator {
+    sum: i64,
+}
+
+impl Accumulator for CountMergeAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        if let Some(i) = value.as_i64() {
+            self.sum += i;
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "COUNTMERGE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(Value::int64(self.sum))
+    }
+
+    fn reset(&mut self) {
+        self.sum = 0;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CountMergeFunction;
+
+impl AggregateFunction for CountMergeFunction {
+    fn name(&self) -> &str {
+        "COUNTMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(CountMergeAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MinStateAccumulator {
+    min: Option<Value>,
+}
+
+impl MinStateAccumulator {
+    fn compare_values(a: &Value, b: &Value) -> Result<i32> {
+        if let (Some(x), Some(y)) = (a.as_i64(), b.as_i64()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+        if let (Some(x), Some(y)) = (a.as_f64(), b.as_f64()) {
+            return if x < y {
+                Ok(-1)
+            } else if x > y {
+                Ok(1)
+            } else {
+                Ok(0)
+            };
+        }
+        if let (Some(x), Some(y)) = (a.as_str(), b.as_str()) {
+            return Ok(x.cmp(y) as i32);
+        }
+        Err(Error::InternalError(format!(
+            "Cannot compare values: {:?} vs {:?}",
+            a, b
+        )))
+    }
+}
+
+impl Accumulator for MinStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        self.min = match &self.min {
+            None => Some(value.clone()),
+            Some(current) => {
+                let cmp = Self::compare_values(value, current)?;
+                if cmp < 0 {
+                    Some(value.clone())
+                } else {
+                    self.min.clone()
+                }
+            }
+        };
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "MINSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(self.min.clone().unwrap_or(Value::null()))
+    }
+
+    fn reset(&mut self) {
+        self.min = None;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MinStateFunction;
+
+impl AggregateFunction for MinStateFunction {
+    fn name(&self) -> &str {
+        "MINSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        Ok(arg_types.first().cloned().unwrap_or(DataType::Unknown))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(MinStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MinMergeFunction;
+
+impl AggregateFunction for MinMergeFunction {
+    fn name(&self) -> &str {
+        "MINMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        Ok(arg_types.first().cloned().unwrap_or(DataType::Unknown))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(MinStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MaxStateAccumulator {
+    max: Option<Value>,
+}
+
+impl MaxStateAccumulator {
+    fn compare_values(a: &Value, b: &Value) -> Result<i32> {
+        if let (Some(x), Some(y)) = (a.as_i64(), b.as_i64()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+        if let (Some(x), Some(y)) = (a.as_f64(), b.as_f64()) {
+            return if x < y {
+                Ok(-1)
+            } else if x > y {
+                Ok(1)
+            } else {
+                Ok(0)
+            };
+        }
+        if let (Some(x), Some(y)) = (a.as_str(), b.as_str()) {
+            return Ok(x.cmp(y) as i32);
+        }
+        Err(Error::InternalError(format!(
+            "Cannot compare values: {:?} vs {:?}",
+            a, b
+        )))
+    }
+}
+
+impl Accumulator for MaxStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+
+        self.max = match &self.max {
+            None => Some(value.clone()),
+            Some(current) => {
+                let cmp = Self::compare_values(value, current)?;
+                if cmp > 0 {
+                    Some(value.clone())
+                } else {
+                    self.max.clone()
+                }
+            }
+        };
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "MAXSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(self.max.clone().unwrap_or(Value::null()))
+    }
+
+    fn reset(&mut self) {
+        self.max = None;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MaxStateFunction;
+
+impl AggregateFunction for MaxStateFunction {
+    fn name(&self) -> &str {
+        "MAXSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        Ok(arg_types.first().cloned().unwrap_or(DataType::Unknown))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(MaxStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MaxMergeFunction;
+
+impl AggregateFunction for MaxMergeFunction {
+    fn name(&self) -> &str {
+        "MAXMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        Ok(arg_types.first().cloned().unwrap_or(DataType::Unknown))
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(MaxStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UniqStateAccumulator {
+    values: std::collections::HashSet<String>,
+}
+
+impl Accumulator for UniqStateAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if value.is_null() {
+            return Ok(());
+        }
+        self.values.insert(format!("{:?}", value));
+        Ok(())
+    }
+
+    fn merge(&mut self, _other: &dyn Accumulator) -> Result<()> {
+        Err(Error::unsupported_feature(
+            "UNIQSTATE merge not implemented".to_string(),
+        ))
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        Ok(Value::int64(self.values.len() as i64))
+    }
+
+    fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UniqStateFunction;
+
+impl AggregateFunction for UniqStateFunction {
+    fn name(&self) -> &str {
+        "UNIQSTATE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(UniqStateAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UniqMergeFunction;
+
+impl AggregateFunction for UniqMergeFunction {
+    fn name(&self) -> &str {
+        "UNIQMERGE"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Unknown]
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Int64)
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(SumStateAccumulator::default())
+    }
+}
