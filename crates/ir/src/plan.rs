@@ -46,6 +46,7 @@ pub enum PlanNode {
         table_name: String,
         alias: Option<String>,
         projection: Option<Vec<String>>,
+        only: bool,
     },
 
     IndexScan {

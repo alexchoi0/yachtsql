@@ -555,6 +555,7 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
         };
 
         let projection = PlanNode::Projection {
@@ -673,6 +674,7 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
         };
 
         let filter = PlanNode::Filter {
@@ -699,6 +701,7 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
         };
 
         let proj1 = PlanNode::Projection {

@@ -416,6 +416,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
 
         let predicate = Expr::BinaryOp {
@@ -437,6 +438,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
 
         let filter = PlanNode::Filter {
@@ -464,6 +466,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
 
         let plan = LogicalPlan::new(scan);

@@ -374,6 +374,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
         let card = JoinReorder::estimate_cardinality(&scan);
         assert_eq!(card, 10000);
@@ -385,6 +386,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
         let filter = PlanNode::Filter {
             predicate: Expr::column("x"),
@@ -400,6 +402,7 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
         };
         let limit = PlanNode::Limit {
             limit: 42,
@@ -438,12 +441,14 @@ mod tests {
             alias: None,
             table_name: "left_table".to_string(),
             projection: None,
+            only: false,
         };
 
         let right_scan = PlanNode::Scan {
             alias: None,
             table_name: "right_table".to_string(),
             projection: None,
+            only: false,
         };
 
         let join = PlanNode::Join {
@@ -467,6 +472,7 @@ mod tests {
             alias: None,
             table_name: "small".to_string(),
             projection: None,
+            only: false,
         };
         let small_filter = PlanNode::Filter {
             predicate: Expr::column("x"),
@@ -477,12 +483,14 @@ mod tests {
             alias: None,
             table_name: "medium".to_string(),
             projection: None,
+            only: false,
         };
 
         let large_scan = PlanNode::Scan {
             alias: None,
             table_name: "large".to_string(),
             projection: None,
+            only: false,
         };
 
         let inner_join = PlanNode::Join {
@@ -513,16 +521,19 @@ mod tests {
             alias: None,
             table_name: "left".to_string(),
             projection: None,
+            only: false,
         };
         let right_scan = PlanNode::Scan {
             alias: None,
             table_name: "right".to_string(),
             projection: None,
+            only: false,
         };
         let third_scan = PlanNode::Scan {
             alias: None,
             table_name: "third".to_string(),
             projection: None,
+            only: false,
         };
 
         let left_join = PlanNode::Join {
