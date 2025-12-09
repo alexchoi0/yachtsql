@@ -4097,6 +4097,18 @@ impl QueryExecutor {
                         | "HISTOGRAM"
                         | "SUMDISTINCT"
                         | "AVGDISTINCT"
+                        | "SKEW_POP"
+                        | "SKEWPOP"
+                        | "SKEW_SAMP"
+                        | "SKEWSAMP"
+                        | "KURT_POP"
+                        | "KURTPOP"
+                        | "KURT_SAMP"
+                        | "KURTSAMP"
+                        | "AVG_WEIGHTED"
+                        | "AVGWEIGHTED"
+                        | "ANY_IF"
+                        | "ANYIF"
                 )
             }
             _ => false,

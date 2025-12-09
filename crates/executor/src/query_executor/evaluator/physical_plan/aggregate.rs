@@ -174,6 +174,7 @@ impl AggregateExec {
                                 FunctionName::Corr
                                     | FunctionName::CovarPop
                                     | FunctionName::CovarSamp
+                                    | FunctionName::AvgWeighted
                                     | FunctionName::ArgMin
                                     | FunctionName::ArgMax
                                     | FunctionName::TopK
@@ -2358,6 +2359,7 @@ impl SortAggregateExec {
                                 FunctionName::Corr
                                     | FunctionName::CovarPop
                                     | FunctionName::CovarSamp
+                                    | FunctionName::AvgWeighted
                                     | FunctionName::ArgMin
                                     | FunctionName::ArgMax
                                     | FunctionName::TopK
