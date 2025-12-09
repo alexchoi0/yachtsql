@@ -57,9 +57,10 @@ use crate::aggregate::postgresql::{
     RegrSxyFunction, RegrSyyFunction,
 };
 use crate::aggregate::statistical::{
-    AvgFunction, CorrFunction, CountFunction, CovarPopFunction, CovarSampFunction, MaxFunction,
-    MedianFunction, MinFunction, ModeFunction, RegrInterceptFunction, RegrR2Function,
-    RegrSlopeFunction, StddevFunction, StddevPopFunction, StddevSampFunction, SumFunction,
+    AvgFunction, AvgWeightedFunction, CorrFunction, CountFunction, CovarPopFunction,
+    CovarSampFunction, KurtPopFunction, KurtSampFunction, MaxFunction, MedianFunction, MinFunction,
+    ModeFunction, RegrInterceptFunction, RegrR2Function, RegrSlopeFunction, SkewPopFunction,
+    SkewSampFunction, StddevFunction, StddevPopFunction, StddevSampFunction, SumFunction,
     VarPopFunction, VarSampFunction, VarianceFunction,
 };
 use crate::aggregate::string_agg::{ListAggFunction, StringAggFunction};
@@ -96,6 +97,11 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
         Rc::new(RegrSlopeFunction),
         Rc::new(RegrInterceptFunction),
         Rc::new(RegrR2Function),
+        Rc::new(SkewPopFunction),
+        Rc::new(SkewSampFunction),
+        Rc::new(KurtPopFunction),
+        Rc::new(KurtSampFunction),
+        Rc::new(AvgWeightedFunction),
     ];
 
     for func in statistical_functions {
@@ -108,6 +114,11 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
     registry.register_aggregate("VARSAMP".to_string(), Rc::new(VarSampFunction));
     registry.register_aggregate("COVARPOP".to_string(), Rc::new(CovarPopFunction));
     registry.register_aggregate("COVARSAMP".to_string(), Rc::new(CovarSampFunction));
+    registry.register_aggregate("SKEWPOP".to_string(), Rc::new(SkewPopFunction));
+    registry.register_aggregate("SKEWSAMP".to_string(), Rc::new(SkewSampFunction));
+    registry.register_aggregate("KURTPOP".to_string(), Rc::new(KurtPopFunction));
+    registry.register_aggregate("KURTSAMP".to_string(), Rc::new(KurtSampFunction));
+    registry.register_aggregate("AVGWEIGHTED".to_string(), Rc::new(AvgWeightedFunction));
 
     registry.register_aggregate("LISTAGG".to_string(), Rc::new(ListAggFunction::new()));
     registry.register_aggregate(

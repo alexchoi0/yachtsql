@@ -35,6 +35,11 @@ pub enum FunctionName {
     Corr,
     CovarPop,
     CovarSamp,
+    SkewPop,
+    SkewSamp,
+    KurtPop,
+    KurtSamp,
+    AvgWeighted,
     CountIf,
 
     BoolAnd,
@@ -1024,6 +1029,11 @@ impl FunctionName {
             "CORR" => Self::Corr,
             "COVAR_POP" | "COVARPOP" => Self::CovarPop,
             "COVAR_SAMP" | "COVARSAMP" => Self::CovarSamp,
+            "SKEW_POP" | "SKEWPOP" => Self::SkewPop,
+            "SKEW_SAMP" | "SKEWSAMP" => Self::SkewSamp,
+            "KURT_POP" | "KURTPOP" => Self::KurtPop,
+            "KURT_SAMP" | "KURTSAMP" => Self::KurtSamp,
+            "AVG_WEIGHTED" | "AVGWEIGHTED" => Self::AvgWeighted,
             "COUNTIF" | "COUNT_IF" => Self::CountIf,
 
             "BOOL_AND" => Self::BoolAnd,
@@ -2100,6 +2110,11 @@ impl FunctionName {
             Self::Corr => "CORR",
             Self::CovarPop => "COVAR_POP",
             Self::CovarSamp => "COVAR_SAMP",
+            Self::SkewPop => "SKEW_POP",
+            Self::SkewSamp => "SKEW_SAMP",
+            Self::KurtPop => "KURT_POP",
+            Self::KurtSamp => "KURT_SAMP",
+            Self::AvgWeighted => "AVG_WEIGHTED",
             Self::CountIf => "COUNTIF",
 
             Self::BoolAnd => "BOOL_AND",
@@ -3085,6 +3100,11 @@ impl FunctionName {
                 | Self::Corr
                 | Self::CovarPop
                 | Self::CovarSamp
+                | Self::SkewPop
+                | Self::SkewSamp
+                | Self::KurtPop
+                | Self::KurtSamp
+                | Self::AvgWeighted
                 | Self::CountIf
                 | Self::BoolAnd
                 | Self::BoolOr
