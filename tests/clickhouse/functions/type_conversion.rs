@@ -1,7 +1,7 @@
 #![allow(clippy::approx_constant)]
 
 use crate::assert_table_eq;
-use crate::common::{create_executor, d, n, ts, ts_ms};
+use crate::common::{create_executor, d, dt, n, ts, ts_ms};
 
 #[test]
 fn test_to_int8() {
@@ -102,7 +102,7 @@ fn test_to_ts() {
     let result = executor
         .execute_sql("SELECT toDateTime('2024-01-15 10:30:00')")
         .unwrap();
-    assert_table_eq!(result, [[(ts(2024, 1, 15, 10, 30, 0))]]);
+    assert_table_eq!(result, [[(dt(2024, 1, 15, 10, 30, 0))]]);
 }
 
 #[test]

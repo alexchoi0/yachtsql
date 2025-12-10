@@ -821,6 +821,12 @@ impl ProjectionWithExprExec {
                 | FunctionName::NetHost
                 | FunctionName::NetPublicSuffix
                 | FunctionName::NetRegDomain
+                | FunctionName::Encrypt
+                | FunctionName::Decrypt
+                | FunctionName::AesEncryptMysql
+                | FunctionName::AesDecryptMysql
+                | FunctionName::Base64UrlEncode
+                | FunctionName::Base64UrlDecode
         ) {
             return Self::evaluate_crypto_hash_network_function(
                 func_name, args, batch, row_idx, dialect,

@@ -491,22 +491,53 @@ fn register_rounding(registry: &mut FunctionRegistry) {
         Rc::new(ScalarFunctionImpl {
             name: "FLOOR".to_string(),
             arg_types: vec![DataType::Float64],
-            return_type: DataType::Int64,
-            variadic: false,
+            return_type: DataType::Float64,
+            variadic: true,
             evaluator: |args| {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(Error::invalid_query(
+                        "FLOOR requires 1 or 2 arguments".to_string(),
+                    ));
+                }
                 if args[0].is_null() {
                     return Ok(Value::null());
                 }
+
+                let decimals = if args.len() == 2 {
+                    if args[1].is_null() {
+                        return Ok(Value::null());
+                    }
+                    if let Some(d) = args[1].as_i64() {
+                        d
+                    } else {
+                        return Err(Error::TypeMismatch {
+                            expected: "INT64".to_string(),
+                            actual: args[1].data_type().to_string(),
+                        });
+                    }
+                } else {
+                    0
+                };
+
                 if let Some(i) = args[0].as_i64() {
-                    return Ok(Value::int64(i));
+                    if decimals >= 0 {
+                        return Ok(Value::int64(i));
+                    }
+                    let multiplier = 10_i64.pow((-decimals) as u32);
+                    return Ok(Value::int64((i / multiplier) * multiplier));
                 }
                 if let Some(f) = args[0].as_f64() {
-                    return Ok(Value::int64(f.floor() as i64));
+                    if decimals == 0 {
+                        return Ok(Value::int64(f.floor() as i64));
+                    }
+                    let multiplier = 10_f64.powi(decimals as i32);
+                    let floored = (f * multiplier).floor() / multiplier;
+                    return Ok(Value::float64(floored));
                 }
-                return Err(Error::TypeMismatch {
+                Err(Error::TypeMismatch {
                     expected: "NUMERIC".to_string(),
                     actual: args[0].data_type().to_string(),
-                });
+                })
             },
         }),
     );

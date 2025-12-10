@@ -24,7 +24,6 @@ fn test_round_negative_precision() {
     assert_table_eq!(result, [[12300.0]]); // Round to nearest 100
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_bankers() {
     let mut executor = create_executor();
@@ -34,7 +33,6 @@ fn test_round_bankers() {
     assert_table_eq!(result, [[2.0, 4.0]]); // Banker's rounding: 2.5->2, 3.5->4
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_bankers_precision() {
     let mut executor = create_executor();
@@ -58,12 +56,11 @@ fn test_floor_negative() {
     assert_table_eq!(result, [[-4.0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_floor_precision() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT floor(3.12131, 2)").unwrap();
-    assert_table_eq!(result, [[3.14]]);
+    assert_table_eq!(result, [[3.12]]);
 }
 
 #[test]
@@ -108,17 +105,15 @@ fn test_truncate_alias() {
     assert_table_eq!(result, [[3.12]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_down() {
     let mut executor = create_executor();
     let result = executor
         .execute_sql("SELECT roundDown(5.5, [0, 2, 4, 6, 8])")
         .unwrap();
-    assert_table_eq!(result, [[4]]); // 5.5 rounds down to 4 in array
+    assert_table_eq!(result, [[4.0]]); // 5.5 rounds down to 4 in array
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_to_exp2() {
     let mut executor = create_executor();
@@ -126,7 +121,6 @@ fn test_round_to_exp2() {
     assert_table_eq!(result, [[16]]); // 17 rounds down to 2^4 = 16
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_duration() {
     let mut executor = create_executor();
@@ -134,7 +128,6 @@ fn test_round_duration() {
     assert_table_eq!(result, [[60]]); // 100 rounds to nearest duration boundary (60)
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_age() {
     let mut executor = create_executor();
@@ -178,7 +171,6 @@ fn test_rounding_column() {
     );
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_round_various_types() {
     let mut executor = create_executor();
@@ -190,5 +182,5 @@ fn test_round_various_types() {
                 round(toFloat64(3.12131), 2) AS float64_round",
         )
         .unwrap();
-    assert_table_eq!(result, [[3.14, 3.14, 3.14]]);
+    assert_table_eq!(result, [[3.12, 3.12, 3.12]]);
 }

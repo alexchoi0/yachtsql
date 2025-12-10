@@ -166,6 +166,7 @@ impl CoercionRules {
             (DataType::String, DataType::Json) => true,
 
             (DataType::String, DataType::Time) => true,
+            (DataType::String, DataType::DateTime) => true,
             (DataType::String, DataType::Timestamp) => true,
             (DataType::String, DataType::TimestampTz) => true,
             (DataType::String, DataType::Date) => true,
@@ -176,6 +177,8 @@ impl CoercionRules {
 
             (DataType::Timestamp, DataType::TimestampTz) => true,
             (DataType::TimestampTz, DataType::Timestamp) => true,
+            (DataType::Timestamp, DataType::DateTime) => true,
+            (DataType::DateTime, DataType::Timestamp) => true,
 
             (DataType::String, DataType::Uuid) => true,
 
@@ -524,6 +527,32 @@ impl CoercionRules {
                 }
             }
 
+            (DataType::String, DataType::DateTime) => {
+                if let Some(s) = value.as_str() {
+                    use chrono::{DateTime, NaiveDateTime};
+
+                    let dt = DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .or_else(|_| {
+                            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                                .or_else(|_| {
+                                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                                })
+                                .map(|ndt| chrono::Utc.from_utc_datetime(&ndt))
+                        })
+                        .map_err(|e| {
+                            Error::invalid_query(format!("Invalid DATETIME string '{}': {}", s, e))
+                        })?;
+                    Ok(Value::datetime(dt))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value extraction failed",
+                    ))
+                }
+            }
+
             (DataType::String, DataType::Date) => {
                 if let Some(s) = value.as_str() {
                     use chrono::NaiveDate;
@@ -660,6 +689,30 @@ impl CoercionRules {
             (DataType::Timestamp, DataType::TimestampTz) => Ok(value),
 
             (DataType::TimestampTz, DataType::Timestamp) => Ok(value),
+
+            (DataType::Timestamp, DataType::DateTime) => {
+                if let Some(ts) = value.as_timestamp() {
+                    Ok(Value::datetime(ts))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value extraction failed",
+                    ))
+                }
+            }
+
+            (DataType::DateTime, DataType::Timestamp) => {
+                if let Some(dt) = value.as_datetime() {
+                    Ok(Value::timestamp(dt))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value extraction failed",
+                    ))
+                }
+            }
 
             (DataType::Array(_), DataType::Vector(_)) => Ok(value),
 

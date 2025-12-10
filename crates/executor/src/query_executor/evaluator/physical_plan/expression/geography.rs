@@ -4668,8 +4668,9 @@ impl ProjectionWithExprExec {
                 let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let interval = Self::evaluate_expr(&args[1], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 let interval_secs = if let Some(iv) = interval.as_interval() {
                     (iv.months as i64) * 30 * 24 * 3600
                         + (iv.days as i64) * 24 * 3600
@@ -4684,7 +4685,7 @@ impl ProjectionWithExprExec {
                 let window_start_secs = window_num * interval_secs;
                 let result = chrono::DateTime::from_timestamp(window_start_secs, 0)
                     .ok_or_else(|| Error::invalid_query("tumble: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
             }
 
             "TUMBLEEND" => {
@@ -4694,8 +4695,9 @@ impl ProjectionWithExprExec {
                 let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let interval = Self::evaluate_expr(&args[1], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 let interval_secs = if let Some(iv) = interval.as_interval() {
                     (iv.months as i64) * 30 * 24 * 3600
                         + (iv.days as i64) * 24 * 3600
@@ -4710,7 +4712,7 @@ impl ProjectionWithExprExec {
                 let window_end_secs = (window_num + 1) * interval_secs;
                 let result = chrono::DateTime::from_timestamp(window_end_secs, 0)
                     .ok_or_else(|| Error::invalid_query("tumbleEnd: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
             }
 
             "HOP" | "HOPSTART" => {
@@ -4719,36 +4721,11 @@ impl ProjectionWithExprExec {
                 }
                 let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let hop_interval = Self::evaluate_expr(&args[1], batch, row_idx)?;
-                let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
-                let hop_secs = if let Some(iv) = hop_interval.as_interval() {
-                    (iv.months as i64) * 30 * 24 * 3600
-                        + (iv.days as i64) * 24 * 3600
-                        + iv.micros / 1_000_000
-                } else if let Some(i) = hop_interval.as_i64() {
-                    i
-                } else {
-                    return Err(Error::type_mismatch("INTERVAL", "other"));
-                };
-                let ts_secs = ts_val.timestamp();
-                let hop_num = ts_secs / hop_secs;
-                let hop_start_secs = hop_num * hop_secs;
-                let result = chrono::DateTime::from_timestamp(hop_start_secs, 0)
-                    .ok_or_else(|| Error::invalid_query("hop: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
-            }
-
-            "HOPEND" => {
-                if args.len() != 3 {
-                    return Err(Error::invalid_query("hopEnd requires 3 arguments"));
-                }
-                let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
-                let hop_interval = Self::evaluate_expr(&args[1], batch, row_idx)?;
                 let window_interval = Self::evaluate_expr(&args[2], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 let hop_secs = if let Some(iv) = hop_interval.as_interval() {
                     (iv.months as i64) * 30 * 24 * 3600
                         + (iv.days as i64) * 24 * 3600
@@ -4768,11 +4745,51 @@ impl ProjectionWithExprExec {
                     return Err(Error::type_mismatch("INTERVAL", "other"));
                 };
                 let ts_secs = ts_val.timestamp();
-                let hop_num = ts_secs / hop_secs;
-                let hop_end_secs = hop_num * hop_secs + window_secs;
+                let earliest_possible = ts_secs - window_secs + hop_secs;
+                let hop_num = (earliest_possible + hop_secs - 1) / hop_secs;
+                let hop_start_secs = hop_num * hop_secs;
+                let result = chrono::DateTime::from_timestamp(hop_start_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("hop: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "HOPEND" => {
+                if args.len() != 3 {
+                    return Err(Error::invalid_query("hopEnd requires 3 arguments"));
+                }
+                let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let hop_interval = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                let window_interval = Self::evaluate_expr(&args[2], batch, row_idx)?;
+                let ts_val = ts
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+                let hop_secs = if let Some(iv) = hop_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = hop_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+                let window_secs = if let Some(iv) = window_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = window_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+                let ts_secs = ts_val.timestamp();
+                let earliest_possible = ts_secs - window_secs + hop_secs;
+                let hop_num = (earliest_possible + hop_secs - 1) / hop_secs;
+                let hop_start_secs = hop_num * hop_secs;
+                let hop_end_secs = hop_start_secs + window_secs;
                 let result = chrono::DateTime::from_timestamp(hop_end_secs, 0)
                     .ok_or_else(|| Error::invalid_query("hopEnd: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
             }
 
             "TIMESLOT" => {
@@ -4781,15 +4798,58 @@ impl ProjectionWithExprExec {
                 }
                 let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 let ts_secs = ts_val.timestamp();
                 let slot_secs = 1800;
                 let slot_num = ts_secs / slot_secs;
                 let slot_start_secs = slot_num * slot_secs;
                 let result = chrono::DateTime::from_timestamp(slot_start_secs, 0)
                     .ok_or_else(|| Error::invalid_query("timeSlot: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
+            }
+
+            "TIMESLOTS" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::invalid_query("timeSlots requires 2 or 3 arguments"));
+                }
+                let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let duration = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                let ts_val = ts
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+                let duration_secs = duration
+                    .as_i64()
+                    .ok_or_else(|| Error::type_mismatch("INT64", "other"))?;
+                let slot_secs = if args.len() == 3 {
+                    let slot_size = Self::evaluate_expr(&args[2], batch, row_idx)?;
+                    slot_size
+                        .as_i64()
+                        .ok_or_else(|| Error::type_mismatch("INT64", "other"))?
+                } else {
+                    1800
+                };
+                if slot_secs <= 0 {
+                    return Err(Error::invalid_query(
+                        "timeSlots: slot size must be positive",
+                    ));
+                }
+                let start_secs = ts_val.timestamp();
+                let slot_num = start_secs / slot_secs;
+                let slot_start_secs = slot_num * slot_secs;
+                let end_secs = start_secs + duration_secs;
+
+                let mut slots = Vec::new();
+                let mut current = slot_start_secs;
+                while current < end_secs {
+                    let slot_dt = chrono::DateTime::from_timestamp(current, 0)
+                        .ok_or_else(|| Error::invalid_query("timeSlots: invalid slot timestamp"))?;
+                    slots.push(Value::datetime(slot_dt));
+                    current += slot_secs;
+                }
+                Ok(Value::array(slots))
             }
 
             "WINDOWID" => {
@@ -4798,8 +4858,9 @@ impl ProjectionWithExprExec {
                 }
                 let ts = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 Ok(Value::int64(ts_val.timestamp()))
             }
 
@@ -4810,8 +4871,9 @@ impl ProjectionWithExprExec {
                 let interval = Self::evaluate_expr(&args[0], batch, row_idx)?;
                 let ts = Self::evaluate_expr(&args[1], batch, row_idx)?;
                 let ts_val = ts
-                    .as_timestamp()
-                    .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?;
+                    .as_datetime()
+                    .or_else(|| ts.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
                 let interval_secs = if let Some(iv) = interval.as_interval() {
                     (iv.months as i64) * 30 * 24 * 3600
                         + (iv.days as i64) * 24 * 3600
@@ -4824,8 +4886,9 @@ impl ProjectionWithExprExec {
                 let origin_secs = if args.len() == 3 {
                     let origin = Self::evaluate_expr(&args[2], batch, row_idx)?;
                     origin
-                        .as_timestamp()
-                        .ok_or_else(|| Error::type_mismatch("TIMESTAMP", "other"))?
+                        .as_datetime()
+                        .or_else(|| origin.as_timestamp())
+                        .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?
                         .timestamp()
                 } else {
                     0
@@ -4836,7 +4899,7 @@ impl ProjectionWithExprExec {
                 let bin_start_secs = origin_secs + bin_num * interval_secs;
                 let result = chrono::DateTime::from_timestamp(bin_start_secs, 0)
                     .ok_or_else(|| Error::invalid_query("date_bin: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
             }
 
             "ROUNDBANKERS" => {
@@ -4872,6 +4935,34 @@ impl ProjectionWithExprExec {
                     scaled.round()
                 };
                 Ok(Value::float64(rounded / multiplier))
+            }
+
+            "ROUNDDOWN" => {
+                if args.len() != 2 {
+                    return Err(Error::invalid_query("roundDown requires 2 arguments"));
+                }
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let v = value
+                    .as_f64()
+                    .or_else(|| value.as_i64().map(|i| i as f64))
+                    .ok_or_else(|| Error::type_mismatch("FLOAT64", "other"))?;
+                let thresholds_val = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                let thresholds = thresholds_val.as_array().ok_or_else(|| {
+                    Error::invalid_query("roundDown: second argument must be an array")
+                })?;
+                let mut sorted_thresholds: Vec<f64> = thresholds
+                    .iter()
+                    .filter_map(|t| t.as_f64().or_else(|| t.as_i64().map(|i| i as f64)))
+                    .collect();
+                sorted_thresholds
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let result = sorted_thresholds
+                    .iter()
+                    .rev()
+                    .find(|&&t| t <= v)
+                    .copied()
+                    .unwrap_or(sorted_thresholds.first().copied().unwrap_or(0.0));
+                Ok(Value::float64(result))
             }
 
             "ROUNDTOEXP2" => {

@@ -640,11 +640,21 @@ impl LogicalPlanBuilder {
                 })
             }
 
-            ast::Expr::Floor { expr, .. } => {
+            ast::Expr::Floor { expr, field } => {
                 let arg_expr = self.sql_expr_to_expr(expr)?;
+                let args = match field {
+                    ast::CeilFloorKind::Scale(ast::Value::Number(n, _)) => {
+                        let scale_val = n.parse::<i64>().unwrap_or(0);
+                        vec![
+                            arg_expr,
+                            Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(scale_val)),
+                        ]
+                    }
+                    _ => vec![arg_expr],
+                };
                 Ok(Expr::Function {
                     name: yachtsql_ir::FunctionName::Floor,
-                    args: vec![arg_expr],
+                    args,
                 })
             }
 

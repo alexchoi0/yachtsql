@@ -62,6 +62,12 @@ impl ProjectionWithExprExec {
             "HALFMD5" => Self::eval_halfmd5(args, batch, row_idx),
             "FARMHASH64" => Self::eval_farmhash64(args, batch, row_idx),
             "METROHASH64" => Self::eval_metrohash64(args, batch, row_idx),
+            "ENCRYPT" => Self::eval_encrypt(args, batch, row_idx),
+            "DECRYPT" => Self::eval_decrypt(args, batch, row_idx),
+            "AES_ENCRYPT_MYSQL" => Self::eval_aes_encrypt_mysql(args, batch, row_idx),
+            "AES_DECRYPT_MYSQL" => Self::eval_aes_decrypt_mysql(args, batch, row_idx),
+            "BASE64URLENCODE" => Self::eval_base64_url_encode(args, batch, row_idx),
+            "BASE64URLDECODE" => Self::eval_base64_url_decode(args, batch, row_idx),
             name if name.starts_with("NET.") => Self::eval_net_function(name, args, batch, row_idx),
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown crypto/hash/network function: {}",
@@ -174,5 +180,45 @@ impl ProjectionWithExprExec {
             }
         };
         Ok(Value::bytes(result))
+    }
+
+    fn eval_base64_url_encode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::invalid_query("base64URLEncode requires 1 argument"));
+        }
+        let data_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if data_val.is_null() {
+            return Ok(Value::null());
+        }
+        let data = if let Some(s) = data_val.as_str() {
+            s.as_bytes().to_vec()
+        } else if let Some(b) = data_val.as_bytes() {
+            b.to_vec()
+        } else {
+            return Err(Error::invalid_query(
+                "base64URLEncode: argument must be a string or bytes",
+            ));
+        };
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE, &data);
+        Ok(Value::string(encoded))
+    }
+
+    fn eval_base64_url_decode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::invalid_query("base64URLDecode requires 1 argument"));
+        }
+        let encoded_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if encoded_val.is_null() {
+            return Ok(Value::null());
+        }
+        let encoded = encoded_val
+            .as_str()
+            .ok_or_else(|| Error::invalid_query("base64URLDecode: argument must be a string"))?;
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, encoded)
+            .map_err(|e| Error::invalid_query(format!("base64URLDecode: {}", e)))?;
+        match String::from_utf8(decoded.clone()) {
+            Ok(s) => Ok(Value::string(s)),
+            Err(_) => Ok(Value::bytes(decoded)),
+        }
     }
 }

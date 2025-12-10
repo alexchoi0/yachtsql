@@ -11,23 +11,59 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        Self::validate_arg_count("FLOOR", args, 1)?;
+        if args.is_empty() || args.len() > 2 {
+            return Err(crate::error::Error::invalid_query(
+                "FLOOR requires 1 or 2 arguments".to_string(),
+            ));
+        }
+
         let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
 
         if val.is_null() {
             return Ok(Value::null());
         }
 
+        let decimals = if args.len() == 2 {
+            let d = Self::evaluate_expr(&args[1], batch, row_idx)?;
+            if d.is_null() {
+                return Ok(Value::null());
+            }
+            d.as_i64()
+                .ok_or_else(|| crate::error::Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: d.data_type().to_string(),
+                })?
+        } else {
+            0
+        };
+
         if let Some(i) = val.as_i64() {
-            return Ok(Value::int64(i));
+            if decimals >= 0 {
+                return Ok(Value::int64(i));
+            }
+            let multiplier = 10_i64.pow((-decimals) as u32);
+            return Ok(Value::int64((i / multiplier) * multiplier));
         }
 
         if let Some(f) = val.as_f64() {
-            return Ok(Value::float64(f.floor()));
+            if decimals == 0 {
+                return Ok(Value::float64(f.floor()));
+            }
+            let multiplier = 10_f64.powi(decimals as i32);
+            let floored = (f * multiplier).floor() / multiplier;
+            return Ok(Value::float64(floored));
         }
 
         if let Some(d) = val.as_numeric() {
-            return Ok(Value::numeric(d.floor()));
+            if decimals == 0 {
+                return Ok(Value::numeric(d.floor()));
+            }
+            let f: f64 = d.to_string().parse().unwrap_or(0.0);
+            let multiplier = 10_f64.powi(decimals as i32);
+            let floored = (f * multiplier).floor() / multiplier;
+            return Ok(Value::numeric(
+                rust_decimal::Decimal::from_f64_retain(floored).unwrap_or_default(),
+            ));
         }
 
         Err(crate::error::Error::TypeMismatch {

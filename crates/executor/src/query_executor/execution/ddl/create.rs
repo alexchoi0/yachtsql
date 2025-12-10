@@ -797,9 +797,8 @@ impl DdlExecutor for QueryExecutor {
             SqlDataType::Bit(_) | SqlDataType::BitVarying(_) => Ok(DataType::Bytes),
             SqlDataType::Date => Ok(DataType::Date),
             SqlDataType::Date32 => Ok(DataType::Date32),
-            SqlDataType::Timestamp(_, _)
-            | SqlDataType::Datetime(_)
-            | SqlDataType::Datetime64(_, _) => Ok(DataType::Timestamp),
+            SqlDataType::Timestamp(_, _) => Ok(DataType::Timestamp),
+            SqlDataType::Datetime(_) | SqlDataType::Datetime64(_, _) => Ok(DataType::DateTime),
             SqlDataType::Decimal(info) | SqlDataType::Numeric(info) => {
                 use sqlparser::ast::ExactNumberInfo;
                 let precision_scale = match info {
