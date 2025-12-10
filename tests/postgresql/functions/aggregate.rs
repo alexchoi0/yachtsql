@@ -534,7 +534,6 @@ fn test_statistical_single_value() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_percentile_cont() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -546,7 +545,6 @@ fn test_percentile_cont() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_percentile_cont_multiple() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -558,7 +556,6 @@ fn test_percentile_cont_multiple() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_percentile_disc() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -570,7 +567,6 @@ fn test_percentile_disc() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_percentile_disc_boundaries() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -582,7 +578,6 @@ fn test_percentile_disc_boundaries() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_percentile_with_group_by() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -594,7 +589,6 @@ fn test_percentile_with_group_by() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_mode() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -606,7 +600,6 @@ fn test_mode() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_mode_with_group_by() {
     let mut executor = create_executor();
     setup_stats_table(&mut executor);
@@ -984,7 +977,6 @@ fn test_nth_value_aggregate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -1748,7 +1740,6 @@ fn test_covariance_window_function() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_regr_window_function() {
     let mut executor = create_executor();
     setup_correlation_data(&mut executor);
@@ -1905,7 +1896,6 @@ fn test_covariance_self() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_regr_prediction() {
     let mut executor = create_executor();
     setup_correlation_data(&mut executor);
