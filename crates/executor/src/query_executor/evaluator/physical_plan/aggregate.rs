@@ -516,7 +516,25 @@ impl AggregateExec {
                 | FunctionName::VarPop
                 | FunctionName::VarSamp => Some(DataType::Float64),
 
+                FunctionName::ApproxCountDistinct
+                | FunctionName::ApproxDistinct
+                | FunctionName::Ndv => Some(DataType::Int64),
+
                 FunctionName::ApproxQuantiles => Some(DataType::Array(Box::new(DataType::Float64))),
+
+                FunctionName::ApproxTopCount | FunctionName::ApproxTopSum => {
+                    use yachtsql_core::types::StructField;
+                    Some(DataType::Array(Box::new(DataType::Struct(vec![
+                        StructField {
+                            name: "value".to_string(),
+                            data_type: DataType::String,
+                        },
+                        StructField {
+                            name: "count".to_string(),
+                            data_type: DataType::Int64,
+                        },
+                    ]))))
+                }
 
                 FunctionName::ArrayAgg => {
                     if let Some(arg) = args.first() {
@@ -1582,7 +1600,10 @@ impl AggregateExec {
                     | FunctionName::UniqHll12
                     | FunctionName::UniqCombined
                     | FunctionName::UniqCombined64
-                    | FunctionName::UniqThetaSketch => {
+                    | FunctionName::UniqThetaSketch
+                    | FunctionName::ApproxCountDistinct
+                    | FunctionName::ApproxDistinct
+                    | FunctionName::Ndv => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if !val.is_null() {
@@ -1591,6 +1612,90 @@ impl AggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::ApproxTopCount => {
+                        let number = if args.len() >= 2 {
+                            match &args[1] {
+                                Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(n)) => {
+                                    *n as usize
+                                }
+                                _ => 10,
+                            }
+                        } else {
+                            10
+                        };
+
+                        let mut freq_map: std::collections::HashMap<String, (usize, Value)> =
+                            std::collections::HashMap::new();
+                        for val in &values {
+                            if !val.is_null() {
+                                let key = format!("{:?}", val);
+                                let entry = freq_map.entry(key).or_insert((0, (*val).clone()));
+                                entry.0 += 1;
+                            }
+                        }
+                        let mut freq_vec: Vec<_> = freq_map.into_iter().collect();
+                        freq_vec.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+                        let top_values: Vec<Value> = freq_vec
+                            .iter()
+                            .take(number)
+                            .map(|(_, (count, val))| {
+                                let mut map = indexmap::IndexMap::new();
+                                map.insert("value".to_string(), val.clone());
+                                map.insert("count".to_string(), Value::int64(*count as i64));
+                                Value::struct_val(map)
+                            })
+                            .collect();
+                        Value::array(top_values)
+                    }
+                    FunctionName::ApproxTopSum => {
+                        let number = if args.len() >= 3 {
+                            match &args[2] {
+                                Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(n)) => {
+                                    *n as usize
+                                }
+                                _ => 10,
+                            }
+                        } else {
+                            10
+                        };
+
+                        let mut sum_map: std::collections::HashMap<String, (f64, Value)> =
+                            std::collections::HashMap::new();
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 {
+                                    let key_val = &arr[0];
+                                    let weight = arr[1]
+                                        .as_f64()
+                                        .or_else(|| arr[1].as_i64().map(|i| i as f64))
+                                        .unwrap_or(0.0);
+                                    if !key_val.is_null() {
+                                        let key = format!("{:?}", key_val);
+                                        let entry =
+                                            sum_map.entry(key).or_insert((0.0, key_val.clone()));
+                                        entry.0 += weight;
+                                    }
+                                }
+                            }
+                        }
+                        let mut sum_vec: Vec<_> = sum_map.into_iter().collect();
+                        sum_vec.sort_by(|a, b| {
+                            b.1.0
+                                .partial_cmp(&a.1.0)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        let top_values: Vec<Value> = sum_vec
+                            .iter()
+                            .take(number)
+                            .map(|(_, (sum, val))| {
+                                let mut map = indexmap::IndexMap::new();
+                                map.insert("value".to_string(), val.clone());
+                                map.insert("sum".to_string(), Value::int64(*sum as i64));
+                                Value::struct_val(map)
+                            })
+                            .collect();
+                        Value::array(top_values)
                     }
                     FunctionName::TopK => {
                         let mut freq_map: std::collections::HashMap<String, usize> =
@@ -3125,7 +3230,10 @@ impl SortAggregateExec {
                     | FunctionName::UniqHll12
                     | FunctionName::UniqCombined
                     | FunctionName::UniqCombined64
-                    | FunctionName::UniqThetaSketch => {
+                    | FunctionName::UniqThetaSketch
+                    | FunctionName::ApproxCountDistinct
+                    | FunctionName::ApproxDistinct
+                    | FunctionName::Ndv => {
                         let mut unique_values = std::collections::HashSet::new();
                         for val in &values {
                             if !val.is_null() {
@@ -3134,6 +3242,90 @@ impl SortAggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::ApproxTopCount => {
+                        let number = if args.len() >= 2 {
+                            match &args[1] {
+                                Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(n)) => {
+                                    *n as usize
+                                }
+                                _ => 10,
+                            }
+                        } else {
+                            10
+                        };
+
+                        let mut freq_map: std::collections::HashMap<String, (usize, Value)> =
+                            std::collections::HashMap::new();
+                        for val in &values {
+                            if !val.is_null() {
+                                let key = format!("{:?}", val);
+                                let entry = freq_map.entry(key).or_insert((0, (*val).clone()));
+                                entry.0 += 1;
+                            }
+                        }
+                        let mut freq_vec: Vec<_> = freq_map.into_iter().collect();
+                        freq_vec.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+                        let top_values: Vec<Value> = freq_vec
+                            .iter()
+                            .take(number)
+                            .map(|(_, (count, val))| {
+                                let mut map = indexmap::IndexMap::new();
+                                map.insert("value".to_string(), val.clone());
+                                map.insert("count".to_string(), Value::int64(*count as i64));
+                                Value::struct_val(map)
+                            })
+                            .collect();
+                        Value::array(top_values)
+                    }
+                    FunctionName::ApproxTopSum => {
+                        let number = if args.len() >= 3 {
+                            match &args[2] {
+                                Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(n)) => {
+                                    *n as usize
+                                }
+                                _ => 10,
+                            }
+                        } else {
+                            10
+                        };
+
+                        let mut sum_map: std::collections::HashMap<String, (f64, Value)> =
+                            std::collections::HashMap::new();
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 {
+                                    let key_val = &arr[0];
+                                    let weight = arr[1]
+                                        .as_f64()
+                                        .or_else(|| arr[1].as_i64().map(|i| i as f64))
+                                        .unwrap_or(0.0);
+                                    if !key_val.is_null() {
+                                        let key = format!("{:?}", key_val);
+                                        let entry =
+                                            sum_map.entry(key).or_insert((0.0, key_val.clone()));
+                                        entry.0 += weight;
+                                    }
+                                }
+                            }
+                        }
+                        let mut sum_vec: Vec<_> = sum_map.into_iter().collect();
+                        sum_vec.sort_by(|a, b| {
+                            b.1.0
+                                .partial_cmp(&a.1.0)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        let top_values: Vec<Value> = sum_vec
+                            .iter()
+                            .take(number)
+                            .map(|(_, (sum, val))| {
+                                let mut map = indexmap::IndexMap::new();
+                                map.insert("value".to_string(), val.clone());
+                                map.insert("sum".to_string(), Value::int64(*sum as i64));
+                                Value::struct_val(map)
+                            })
+                            .collect();
+                        Value::array(top_values)
                     }
                     FunctionName::TopK => {
                         let mut freq_map: std::collections::HashMap<String, usize> =

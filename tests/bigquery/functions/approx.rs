@@ -58,7 +58,7 @@ fn test_approx_quantiles_with_group() {
     setup_data(&mut executor);
 
     let result = executor
-        .execute_sql("SELECT COUNT(*) FROM (SELECT category, APPROX_QUANTILES(value, 2) FROM data GROUP BY category ORDER BY category)")
+        .execute_sql("SELECT COUNT(*) FROM (SELECT category, APPROX_QUANTILES(value, 2) FROM data GROUP BY category ORDER BY category) AS t")
         .unwrap();
     assert_table_eq!(result, [[3]]);
 }
@@ -162,7 +162,7 @@ fn test_hll_count_init() {
         .unwrap();
 
     let result = executor
-        .execute_sql("SELECT COUNT(*) FROM (SELECT HLL_COUNT.INIT(value) FROM data)")
+        .execute_sql("SELECT COUNT(*) FROM (SELECT HLL_COUNT.INIT(value) FROM data) AS t")
         .unwrap();
     assert_table_eq!(result, [[3]]);
 }
@@ -193,7 +193,7 @@ fn test_hll_count_merge_partial() {
         .unwrap();
 
     let result = executor
-        .execute_sql("SELECT COUNT(*) FROM (SELECT category, HLL_COUNT.MERGE_PARTIAL(HLL_COUNT.INIT(value)) FROM data GROUP BY category ORDER BY category)")
+        .execute_sql("SELECT COUNT(*) FROM (SELECT category, HLL_COUNT.MERGE_PARTIAL(HLL_COUNT.INIT(value)) FROM data GROUP BY category ORDER BY category) AS t")
         .unwrap();
     assert_table_eq!(result, [[2]]);
 }
