@@ -641,6 +641,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let cached = CachedPlan::new(plan, "SELECT * FROM users".to_string());
@@ -671,6 +673,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let cached = CachedPlan::new(plan, "SELECT * FROM users".to_string());
@@ -696,6 +700,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let cached = CachedPlan::new(plan, "SELECT * FROM users".to_string());
@@ -717,6 +723,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let cached = CachedPlan::new(plan, "SELECT * FROM users".to_string());
@@ -755,6 +763,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         cache.insert(
             users_key,
@@ -766,6 +776,8 @@ mod tests {
             table_name: "orders".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         cache.insert(
             orders_key,
@@ -794,11 +806,15 @@ mod tests {
                 table_name: "users".to_string(),
                 alias: None,
                 projection: None,
+                only: false,
+                final_modifier: false,
             }),
             right: Box::new(PlanNode::Scan {
                 table_name: "orders".to_string(),
                 alias: None,
                 projection: None,
+                only: false,
+                final_modifier: false,
             }),
             on: yachtsql_ir::expr::Expr::Literal(yachtsql_ir::expr::LiteralValue::Boolean(true)),
             join_type: yachtsql_ir::plan::JoinType::Inner,
@@ -813,6 +829,8 @@ mod tests {
             table_name: "products".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         cache.insert(
             products_key,
@@ -834,6 +852,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let tables = extract_referenced_tables(&scan_plan);
         assert_eq!(tables.len(), 1);
@@ -844,11 +864,15 @@ mod tests {
                 table_name: "users".to_string(),
                 alias: None,
                 projection: None,
+                only: false,
+                final_modifier: false,
             }),
             right: Box::new(PlanNode::Scan {
                 table_name: "orders".to_string(),
                 alias: None,
                 projection: None,
+                only: false,
+                final_modifier: false,
             }),
             on: yachtsql_ir::expr::Expr::Literal(yachtsql_ir::expr::LiteralValue::Boolean(true)),
             join_type: yachtsql_ir::plan::JoinType::Inner,
@@ -868,6 +892,8 @@ mod tests {
                     table_name: "products".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 }),
             }),
         };
@@ -885,6 +911,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         cache.insert(
             users_key,
@@ -908,6 +936,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -921,6 +951,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -945,6 +977,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -957,6 +991,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -970,11 +1006,15 @@ mod tests {
                         table_name: "users".to_string(),
                         alias: None,
                         projection: None,
+                        only: false,
+                        final_modifier: false,
                     }),
                     right: Box::new(PlanNode::Scan {
                         table_name: "orders".to_string(),
                         alias: None,
                         projection: None,
+                        only: false,
+                        final_modifier: false,
                     }),
                     on: yachtsql_ir::expr::Expr::Literal(yachtsql_ir::expr::LiteralValue::Boolean(
                         true,
@@ -1010,6 +1050,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -1021,6 +1063,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -1032,6 +1076,8 @@ mod tests {
                     table_name: "products".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM products".to_string(),
             ),
@@ -1061,6 +1107,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -1097,6 +1145,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -1109,6 +1159,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -1131,6 +1183,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -1143,6 +1197,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -1159,6 +1215,8 @@ mod tests {
                     table_name: "products".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM products".to_string(),
             ),
@@ -1188,6 +1246,8 @@ mod tests {
                     table_name: "users".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM users".to_string(),
             ),
@@ -1202,6 +1262,8 @@ mod tests {
                     table_name: "orders".to_string(),
                     alias: None,
                     projection: None,
+                    only: false,
+                    final_modifier: false,
                 },
                 "SELECT * FROM orders".to_string(),
             ),
@@ -1223,6 +1285,8 @@ mod tests {
             table_name: "users".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         local.insert(

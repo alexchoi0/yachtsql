@@ -80,8 +80,14 @@ impl Value {
                             + chrono::Duration::nanoseconds(nanos);
                         serde_json::Value::String(time.to_string())
                     }
-                    ValueTag::DateTime | ValueTag::Timestamp => {
-                        let micros = small.as_int64().expect("tag matched DateTime/Timestamp");
+                    ValueTag::DateTime => {
+                        let micros = small.as_datetime().expect("tag matched DateTime");
+                        let dt = chrono::DateTime::from_timestamp_micros(micros)
+                            .expect("valid timestamp micros from internal storage");
+                        serde_json::Value::String(dt.to_rfc3339())
+                    }
+                    ValueTag::Timestamp => {
+                        let micros = small.as_timestamp().expect("tag matched Timestamp");
                         let dt = chrono::DateTime::from_timestamp_micros(micros)
                             .expect("valid timestamp micros from internal storage");
                         serde_json::Value::String(dt.to_rfc3339())
@@ -131,6 +137,34 @@ impl Value {
                         serde_json::Value::String(crate::types::format_uuid_string(u))
                     }
                     crate::types::TAG_DEFAULT => serde_json::Value::String("DEFAULT".to_string()),
+                    crate::types::TAG_IPV4 => {
+                        let ip = &*(heap.ptr as *const crate::types::IPv4Addr);
+                        serde_json::Value::String(format!("ipv4:{}", ip.0))
+                    }
+                    crate::types::TAG_IPV6 => {
+                        let ip = &*(heap.ptr as *const crate::types::IPv6Addr);
+                        serde_json::Value::String(format!("ipv6:{}", ip.0))
+                    }
+                    crate::types::TAG_DATE32 => {
+                        let d = &*(heap.ptr as *const crate::types::Date32Value);
+                        serde_json::Value::Number(d.0.into())
+                    }
+                    crate::types::TAG_GEO_POINT => {
+                        let p = &*(heap.ptr as *const crate::types::GeoPointValue);
+                        serde_json::Value::String(format!("point:{},{}", p.x, p.y))
+                    }
+                    crate::types::TAG_GEO_RING => {
+                        let r = &*(heap.ptr as *const crate::types::GeoRingValue);
+                        serde_json::Value::String(format!("ring:{:?}", r))
+                    }
+                    crate::types::TAG_GEO_POLYGON => {
+                        let p = &*(heap.ptr as *const crate::types::GeoPolygonValue);
+                        serde_json::Value::String(format!("polygon:{:?}", p))
+                    }
+                    crate::types::TAG_GEO_MULTIPOLYGON => {
+                        let mp = &*(heap.ptr as *const crate::types::GeoMultiPolygonValue);
+                        serde_json::Value::String(format!("multipolygon:{:?}", mp))
+                    }
                     _ => serde_json::Value::Null,
                 }
             }

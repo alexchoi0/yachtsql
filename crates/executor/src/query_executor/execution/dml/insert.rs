@@ -8,7 +8,7 @@ use yachtsql_storage::{Row, Schema, TableSchemaOps};
 use super::super::super::QueryExecutor;
 use super::super::DdlExecutor;
 use super::super::query::QueryExecutorTrait;
-use crate::RecordBatch;
+use crate::Table;
 use crate::query_executor::returning::DmlRowContext;
 
 pub trait DmlInsertExecutor {
@@ -16,7 +16,7 @@ pub trait DmlInsertExecutor {
         &mut self,
         stmt: &sqlparser::ast::Statement,
         _original_sql: &str,
-    ) -> Result<RecordBatch>;
+    ) -> Result<Table>;
 
     fn resolve_insert_columns(
         &self,
@@ -39,7 +39,7 @@ impl DmlInsertExecutor for QueryExecutor {
         &mut self,
         stmt: &sqlparser::ast::Statement,
         _original_sql: &str,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         use sqlparser::ast::{SetExpr, Statement};
 
         let Statement::Insert(insert) = stmt else {
@@ -50,6 +50,43 @@ impl DmlInsertExecutor for QueryExecutor {
 
         let table_name_str = resolve_insert_table_name(insert)?;
         let (dataset_id, table_id) = self.parse_ddl_table_name(&table_name_str)?;
+
+        let (dataset_id, table_id) = {
+            let storage = self.storage.borrow();
+            let dataset = storage.get_dataset(&dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", dataset_id))
+            })?;
+            if let Some(table) = dataset.get_table(&table_id) {
+                match table.engine() {
+                    yachtsql_storage::TableEngine::Distributed {
+                        database,
+                        table: target_table,
+                        ..
+                    } => {
+                        let target_db = if database.is_empty() {
+                            dataset_id.clone()
+                        } else {
+                            database.clone()
+                        };
+                        (target_db, target_table.clone())
+                    }
+                    yachtsql_storage::TableEngine::Buffer {
+                        database,
+                        table: target_table,
+                    } => {
+                        let target_db = if database.is_empty() {
+                            dataset_id.clone()
+                        } else {
+                            database.clone()
+                        };
+                        (target_db, target_table.clone())
+                    }
+                    _ => (dataset_id.clone(), table_id.clone()),
+                }
+            } else {
+                (dataset_id.clone(), table_id.clone())
+            }
+        };
 
         let is_view = {
             let storage = self.storage.borrow_mut();
@@ -295,8 +332,7 @@ impl DmlInsertExecutor for QueryExecutor {
                 let mut value = self.evaluate_insert_expression(expr)?;
 
                 if let Some(field) = schema.field(column_name) {
-                    let skip_coercion = field.is_identity() && value.is_default();
-                    if !skip_coercion {
+                    if !value.is_default() {
                         value = self.coerce_value_to_data_type(value, &field.data_type)?;
                     }
                 }
@@ -895,7 +931,29 @@ impl QueryExecutor {
                 let storage = self.storage.borrow_mut();
                 let enforcer = crate::query_executor::enforcement::ForeignKeyEnforcer::new();
                 let table_full_name = format!("{}.{}", dataset_id, table_id);
-                enforcer.validate_insert(&table_full_name, &row, &storage)?;
+
+                let deferred_state = {
+                    let tm = self.transaction_manager.borrow();
+                    tm.get_active_transaction()
+                        .map(|txn| txn.deferred_fk_state().clone())
+                };
+
+                let deferred_checks = enforcer.validate_insert_with_deferral(
+                    &table_full_name,
+                    &row,
+                    &storage,
+                    deferred_state.as_ref(),
+                )?;
+
+                if !deferred_checks.is_empty() {
+                    drop(storage);
+                    let mut tm = self.transaction_manager.borrow_mut();
+                    if let Some(txn) = tm.get_active_transaction_mut() {
+                        for check in deferred_checks {
+                            txn.deferred_fk_state_mut().defer_check(check);
+                        }
+                    }
+                }
             }
 
             {

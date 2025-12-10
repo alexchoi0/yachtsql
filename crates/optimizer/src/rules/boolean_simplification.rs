@@ -213,6 +213,34 @@ impl BooleanSimplification {
                     None
                 }
             }
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let simplified_eq = self.simplify_expr(equality_condition);
+                let simplified_match = self.simplify_expr(match_condition);
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if simplified_eq != *equality_condition
+                    || simplified_match != *match_condition
+                    || left_opt.is_some()
+                    || right_opt.is_some()
+                {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: simplified_eq,
+                        match_condition: simplified_match,
+                        is_left_join: *is_left_join,
+                    })
+                } else {
+                    None
+                }
+            }
             PlanNode::LateralJoin {
                 left,
                 right,
@@ -272,6 +300,7 @@ impl BooleanSimplification {
                         asc: order_expr.asc,
                         nulls_first: order_expr.nulls_first,
                         collation: order_expr.collation.clone(),
+                        with_fill: order_expr.with_fill.clone(),
                     })
                     .collect();
                 let optimized_input = self.optimize_node(input);
@@ -358,6 +387,7 @@ impl BooleanSimplification {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -370,6 +400,7 @@ impl BooleanSimplification {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -430,6 +461,7 @@ impl BooleanSimplification {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. }
             | PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -722,6 +754,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {

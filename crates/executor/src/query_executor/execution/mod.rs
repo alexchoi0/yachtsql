@@ -13,25 +13,26 @@ use std::str::FromStr;
 use chrono::Datelike;
 pub use ddl::{
     AlterTableExecutor, DdlDropExecutor, DdlExecutor, DomainExecutor, ExtensionExecutor,
-    MaterializedViewExecutor, SchemaExecutor, SequenceExecutor, TriggerExecutor, TypeExecutor,
+    FunctionExecutor, MaterializedViewExecutor, SchemaExecutor, SequenceExecutor, TriggerExecutor,
+    TypeExecutor,
 };
 use debug_print::debug_eprintln;
 pub use dispatcher::{
-    CopyOperation, DdlOperation, Dispatcher, DmlOperation, MergeOperation, StatementJob,
-    TxOperation, UtilityOperation,
+    CopyOperation, DdlOperation, Dispatcher, DmlOperation, MergeOperation, ScriptingOperation,
+    StatementJob, TxOperation, UtilityOperation,
 };
 pub use dml::{
     DmlDeleteExecutor, DmlInsertExecutor, DmlMergeExecutor, DmlTruncateExecutor, DmlUpdateExecutor,
 };
 pub use query::QueryExecutorTrait;
 use rust_decimal::prelude::ToPrimitive;
-pub use session::{DiagnosticsSnapshot, SessionDiagnostics};
+pub use session::{DiagnosticsSnapshot, SessionDiagnostics, SessionVariable, UdfDefinition};
 pub use utility::{
-    apply_interval_to_date, apply_numeric_precision_scale, calculate_date_diff,
-    decode_values_match, evaluate_condition_as_bool, evaluate_numeric_op,
+    add_interval_to_date, apply_interval_to_date, apply_numeric_precision_scale,
+    calculate_date_diff, decode_values_match, evaluate_condition_as_bool, evaluate_numeric_op,
     evaluate_vector_cosine_distance, evaluate_vector_inner_product, evaluate_vector_l2_distance,
     infer_scalar_subquery_type_static, perform_cast, safe_add, safe_divide, safe_multiply,
-    safe_negate, safe_subtract,
+    safe_negate, safe_subtract, sub_interval_from_date,
 };
 use yachtsql_capability::FeatureId;
 use yachtsql_capability::error::CapabilityError;
@@ -45,11 +46,11 @@ use yachtsql_optimizer::rules::{
     IndexSelectionRule, SubqueryFlattening, UnionOptimization, WindowOptimization,
 };
 use yachtsql_parser::DialectType;
-use yachtsql_storage::{Schema, SharedTransactionState};
+use yachtsql_storage::Schema;
 
 use self::session::SessionState;
 use self::transaction::SessionTransactionController;
-use crate::RecordBatch;
+use crate::Table;
 use crate::catalog_adapter::SnapshotCatalog;
 
 fn create_default_optimizer() -> yachtsql_optimizer::Optimizer {
@@ -156,48 +157,6 @@ impl QueryExecutor {
         self.optimizer = create_default_optimizer();
     }
 
-    pub fn with_shared_session(existing: &mut QueryExecutor) -> Self {
-        let shared_state = existing.ensure_shared_transaction_state();
-
-        let default_level = {
-            let tm = existing.transaction_manager.borrow_mut();
-            tm.default_isolation_level()
-        };
-
-        let mut transaction_manager =
-            yachtsql_storage::TransactionManager::with_shared_state(shared_state);
-        transaction_manager.set_default_isolation_level(default_level);
-
-        let temp_layout = {
-            let temp = existing.temporary_storage.borrow_mut();
-            temp.storage_layout()
-        };
-
-        let session = SessionState::with_registry(
-            existing.session.dialect(),
-            Rc::clone(existing.session.feature_registry()),
-        );
-
-        let mut executor = Self {
-            storage: Rc::clone(&existing.storage),
-            transaction_manager: Rc::new(RefCell::new(transaction_manager)),
-            temporary_storage: Rc::new(RefCell::new(yachtsql_storage::TempStorage::with_layout(
-                temp_layout,
-            ))),
-            session,
-            session_tx: SessionTransactionController::with_autocommit(
-                existing.session_tx.autocommit(),
-            ),
-            resource_limits: crate::resource_limits::ResourceLimitsConfig::default(),
-            optimizer: create_default_optimizer(),
-            plan_cache: Rc::clone(&existing.plan_cache),
-            memory_pool: existing.memory_pool.clone(),
-            query_registry: existing.query_registry.clone(),
-        };
-        executor.reset_session_diagnostics();
-        executor
-    }
-
     pub fn with_storage_and_transaction(
         storage: Rc<RefCell<yachtsql_storage::Storage>>,
         transaction_manager: Rc<RefCell<yachtsql_storage::TransactionManager>>,
@@ -273,28 +232,6 @@ impl QueryExecutor {
         }
     }
 
-    fn ensure_shared_transaction_state(&mut self) -> SharedTransactionState {
-        if let Some(shared) = self.transaction_manager.borrow_mut().shared_state() {
-            return shared;
-        }
-
-        let default_level = {
-            let tm = self.transaction_manager.borrow_mut();
-            debug_assert!(
-                !tm.is_active(),
-                "Cannot enable shared state while a transaction is active"
-            );
-            tm.default_isolation_level()
-        };
-
-        let shared_state = SharedTransactionState::new();
-        let mut manager =
-            yachtsql_storage::TransactionManager::with_shared_state(shared_state.clone());
-        manager.set_default_isolation_level(default_level);
-        self.transaction_manager = Rc::new(RefCell::new(manager));
-        shared_state
-    }
-
     pub fn clear_exception_diagnostic(&mut self) {
         self.session.diagnostics_mut().clear_exception();
     }
@@ -335,8 +272,8 @@ impl QueryExecutor {
         false
     }
 
-    pub(super) fn empty_result() -> Result<RecordBatch> {
-        Ok(RecordBatch::empty(Schema::from_fields(vec![])))
+    pub(super) fn empty_result() -> Result<Table> {
+        Ok(Table::empty(Schema::from_fields(vec![])))
     }
 
     pub fn qualify_table_name(dataset_id: &str, table_id: &str) -> String {
@@ -389,7 +326,7 @@ impl QueryExecutor {
         Ok(())
     }
 
-    pub fn execute_sql(&mut self, sql: &str) -> Result<RecordBatch> {
+    pub fn execute_sql(&mut self, sql: &str) -> Result<Table> {
         use yachtsql_parser::validator::CustomStatement;
         use yachtsql_parser::{Parser, Statement};
 
@@ -423,7 +360,12 @@ impl QueryExecutor {
         }
 
         let statement = &statements[0];
-        crate::query_executor::validate_statement(statement, self.session.feature_registry())?;
+        let udf_names = self.session.udf_names();
+        crate::query_executor::validate_statement_with_udfs(
+            statement,
+            self.session.feature_registry(),
+            Some(&udf_names),
+        )?;
 
         if let Statement::Custom(custom_stmt) = statement {
             return match custom_stmt {
@@ -443,10 +385,71 @@ impl QueryExecutor {
                     self.execute_create_composite_type(custom_stmt)
                 }
                 CustomStatement::DropType { .. } => self.execute_drop_composite_type(custom_stmt),
-                _ => Err(Error::unsupported_feature(format!(
-                    "Custom statement not yet supported: {:?}",
-                    custom_stmt
-                ))),
+                CustomStatement::SetConstraints { .. } => self.execute_set_constraints(custom_stmt),
+                CustomStatement::ExistsTable { name } => self.execute_exists_table(name),
+                CustomStatement::ExistsDatabase { name } => self.execute_exists_database(name),
+                CustomStatement::Abort => {
+                    self.execute_rollback_transaction()?;
+                    Self::empty_result()
+                }
+                CustomStatement::BeginTransaction {
+                    isolation_level,
+                    read_only,
+                    deferrable,
+                } => {
+                    self.execute_begin_transaction_with_options(
+                        isolation_level.clone(),
+                        *read_only,
+                        *deferrable,
+                    )?;
+                    Self::empty_result()
+                }
+                CustomStatement::ClickHouseCreateIndex { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseAlterColumnCodec { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseAlterTableTtl { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseQuota { statement } => {
+                    return self.execute_clickhouse_quota(statement);
+                }
+                CustomStatement::ClickHouseRowPolicy { statement } => {
+                    return self.execute_clickhouse_row_policy(statement);
+                }
+                CustomStatement::ClickHouseSettingsProfile { statement } => {
+                    return self.execute_clickhouse_settings_profile(statement);
+                }
+                CustomStatement::ClickHouseDictionary { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseShow { statement } => {
+                    return self.execute_clickhouse_show(statement);
+                }
+                CustomStatement::ClickHouseFunction { statement } => {
+                    return self.execute_clickhouse_function(statement);
+                }
+                CustomStatement::ClickHouseMaterializedView { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseProjection { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseAlterUser { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseGrant { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseSystem { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateDictionary { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseDatabase { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseRenameDatabase { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseUse { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateTableWithProjection { stripped, .. } => {
+                    return self.execute_sql(stripped);
+                }
+                CustomStatement::ClickHouseCreateTablePassthrough { stripped, .. } => {
+                    return self.execute_sql(stripped);
+                }
+                CustomStatement::ClickHouseCreateTableAs {
+                    new_table,
+                    source_table,
+                    engine_clause,
+                } => {
+                    return self.execute_create_table_as(new_table, source_table, engine_clause);
+                }
+                CustomStatement::ClickHouseAlterTable { .. } => Self::empty_result(),
+                CustomStatement::AlterTableRestartIdentity { .. }
+                | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
+                    format!("Custom statement not yet supported: {:?}", custom_stmt),
+                )),
             };
         }
 
@@ -526,11 +529,43 @@ impl QueryExecutor {
                         self.execute_drop_schema(&stmt)?;
                         Self::empty_result()
                     }
-                    DdlOperation::CreateFunction => Self::empty_result(),
-                    _ => Err(Error::unsupported_feature(format!(
-                        "DDL operation {:?} not yet implemented",
-                        operation
-                    ))),
+                    DdlOperation::CreateFunction => {
+                        debug_eprintln!("[mod] Executing CREATE FUNCTION");
+                        self.execute_create_function(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::DropFunction => {
+                        self.execute_drop_function(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::CreateDatabase {
+                        name,
+                        if_not_exists,
+                    } => {
+                        self.execute_create_database(&name, if_not_exists)?;
+                        Self::empty_result()
+                    }
+
+                    DdlOperation::DropDatabase => {
+                        self.execute_drop_database(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::CreateUser => Self::empty_result(),
+                    DdlOperation::DropUser => Self::empty_result(),
+                    DdlOperation::AlterUser => Self::empty_result(),
+                    DdlOperation::CreateRole => Self::empty_result(),
+                    DdlOperation::DropRole => Self::empty_result(),
+                    DdlOperation::AlterRole => Self::empty_result(),
+                    DdlOperation::Grant => Self::empty_result(),
+                    DdlOperation::Revoke => Self::empty_result(),
+                    DdlOperation::SetRole => Self::empty_result(),
+                    DdlOperation::SetDefaultRole => Self::empty_result(),
+
+                    DdlOperation::CreateSequence
+                    | DdlOperation::AlterSequence
+                    | DdlOperation::DropSequence => {
+                        panic!("Sequence operations should be handled via CustomStatement path")
+                    }
                 };
 
                 if result.is_ok() {
@@ -540,15 +575,45 @@ impl QueryExecutor {
                 result
             }
 
-            StatementJob::DML { operation, stmt } => match operation {
-                DmlOperation::Insert => self.execute_insert(&stmt, sql),
-                DmlOperation::Update => self.execute_update(&stmt, sql),
-                DmlOperation::Delete => self.execute_delete(&stmt, sql),
-                DmlOperation::Truncate => {
-                    let _rows_affected = self.execute_truncate(&stmt)?;
-                    Self::empty_result()
+            StatementJob::DML { operation, stmt } => {
+                if self.is_transaction_read_only() {
+                    let op_name = match operation {
+                        DmlOperation::Insert => "INSERT",
+                        DmlOperation::Update => "UPDATE",
+                        DmlOperation::Delete => "DELETE",
+                        DmlOperation::Truncate => "TRUNCATE",
+                    };
+                    return Err(Error::InvalidOperation(format!(
+                        "cannot execute {} in a read-only transaction",
+                        op_name
+                    )));
                 }
-            },
+                match operation {
+                    DmlOperation::Insert => self.execute_insert(&stmt, sql),
+                    DmlOperation::Update => self.execute_update(&stmt, sql),
+                    DmlOperation::Delete => self.execute_delete(&stmt, sql),
+                    DmlOperation::Truncate => {
+                        let _rows_affected = self.execute_truncate(&stmt)?;
+                        Self::empty_result()
+                    }
+                }
+            }
+
+            StatementJob::CteDml { operation, stmt } => {
+                if self.is_transaction_read_only() {
+                    let op_name = match operation {
+                        DmlOperation::Insert => "INSERT",
+                        DmlOperation::Update => "UPDATE",
+                        DmlOperation::Delete => "DELETE",
+                        DmlOperation::Truncate => "TRUNCATE",
+                    };
+                    return Err(Error::InvalidOperation(format!(
+                        "cannot execute {} in a read-only transaction",
+                        op_name
+                    )));
+                }
+                self.execute_cte_dml(&stmt, operation, sql)
+            }
 
             StatementJob::Query { stmt } => self.execute_select(&stmt, sql),
 
@@ -569,11 +634,39 @@ impl QueryExecutor {
                     self.execute_set_search_path(&schemas)
                 }
                 UtilityOperation::Show { variable } => self.execute_show(variable.as_deref()),
+                UtilityOperation::DescribeTable { table_name } => {
+                    self.execute_describe_table(&table_name)
+                }
+                UtilityOperation::ShowCreateTable { table_name } => {
+                    self.execute_show_create_table(&table_name)
+                }
+                UtilityOperation::ShowTables { filter } => {
+                    self.execute_show_tables(filter.as_deref())
+                }
+                UtilityOperation::ShowColumns { table_name } => {
+                    self.execute_show_columns(&table_name)
+                }
+                UtilityOperation::ExistsTable { table_name } => {
+                    self.execute_exists_table(&table_name)
+                }
+                UtilityOperation::ExistsDatabase { db_name } => {
+                    self.execute_exists_database(&db_name)
+                }
+                UtilityOperation::ShowUsers => self.execute_show_users(),
+                UtilityOperation::ShowRoles => self.execute_show_roles(),
+                UtilityOperation::ShowGrants { user_name } => {
+                    self.execute_show_grants(user_name.as_deref())
+                }
+                UtilityOperation::OptimizeTable { table_name } => {
+                    self.execute_optimize_table(&table_name)
+                }
             },
 
             StatementJob::Procedure { name, args } => self.execute_procedure(&name, &args),
 
             StatementJob::Copy { operation } => self.execute_copy(&operation.stmt),
+
+            StatementJob::Scripting { operation } => self.execute_scripting(operation),
         }
     }
 
@@ -584,14 +677,46 @@ impl QueryExecutor {
                 self.execute_begin_transaction()
             }
 
-            TxOperation::Commit => {
+            TxOperation::Commit { chain } => {
                 self.require_feature(F782_COMMIT_STATEMENT, "COMMIT statement")?;
-                self.execute_commit_transaction()
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
+                self.execute_commit_transaction()?;
+                if chain {
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
+                }
+                Ok(())
             }
 
-            TxOperation::Rollback => {
+            TxOperation::Rollback { chain } => {
                 self.require_feature(F783_ROLLBACK_STATEMENT, "ROLLBACK statement")?;
-                self.execute_rollback_transaction()
+                let characteristics = if chain {
+                    self.get_current_transaction_characteristics()
+                } else {
+                    None
+                };
+                self.execute_rollback_transaction()?;
+                if chain {
+                    if let Some(chars) = characteristics {
+                        self.begin_transaction_with_characteristics(
+                            chars,
+                            yachtsql_storage::TransactionScope::Explicit,
+                        )?;
+                    } else {
+                        self.execute_begin_transaction()?;
+                    }
+                }
+                Ok(())
             }
 
             TxOperation::Savepoint { name } => {
@@ -617,14 +742,12 @@ impl QueryExecutor {
             TxOperation::SetTransactionIsolation { .. } => Err(Error::unsupported_feature(
                 "SET TRANSACTION ISOLATION LEVEL not yet implemented".to_string(),
             )),
+
+            TxOperation::SetTransaction { modes } => self.execute_set_transaction(modes),
         }
     }
 
-    fn execute_set_capabilities(
-        &mut self,
-        enable: bool,
-        features: &[String],
-    ) -> Result<RecordBatch> {
+    fn execute_set_capabilities(&mut self, enable: bool, features: &[String]) -> Result<Table> {
         if features.is_empty() {
             return Err(Error::invalid_query(
                 "SET yachtsql.capability requires at least one feature identifier".to_string(),
@@ -682,13 +805,13 @@ impl QueryExecutor {
         Error::unsupported_feature(format!("Capability update failed: {}", err))
     }
 
-    fn execute_set_search_path(&mut self, schemas: &[String]) -> Result<RecordBatch> {
+    fn execute_set_search_path(&mut self, schemas: &[String]) -> Result<Table> {
         self.session.set_search_path(schemas.to_vec());
         self.record_row_count(0);
         Self::empty_result()
     }
 
-    fn execute_show(&mut self, variable: Option<&str>) -> Result<RecordBatch> {
+    fn execute_show(&mut self, variable: Option<&str>) -> Result<Table> {
         let var_name = variable.unwrap_or("all");
 
         match var_name.to_lowercase().as_str() {
@@ -700,7 +823,7 @@ impl QueryExecutor {
                     DataType::String,
                 )]);
                 let rows = vec![vec![Value::string(path_str)]];
-                RecordBatch::from_values(schema, rows)
+                Table::from_values(schema, rows)
             }
             _ => Err(Error::unsupported_feature(format!(
                 "SHOW {} is not supported",
@@ -709,11 +832,767 @@ impl QueryExecutor {
         }
     }
 
-    fn execute_procedure(
+    fn execute_describe_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        let table_str = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&table_str)?;
+
+        let storage = self.storage.borrow();
+        let dataset = storage
+            .get_dataset(&dataset_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+        let table = dataset
+            .get_table(&table_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("type".to_string(), DataType::String),
+            yachtsql_storage::Field::required("default_type".to_string(), DataType::String),
+            yachtsql_storage::Field::required("default_expression".to_string(), DataType::String),
+            yachtsql_storage::Field::required("comment".to_string(), DataType::String),
+            yachtsql_storage::Field::required("codec_expression".to_string(), DataType::String),
+            yachtsql_storage::Field::required("ttl_expression".to_string(), DataType::String),
+        ]);
+
+        let mut rows = Vec::new();
+        for field in table.schema().fields() {
+            rows.push(vec![
+                Value::string(field.name.clone()),
+                Value::string(field.data_type.to_string()),
+                Value::string("".to_string()),
+                Value::string(
+                    field
+                        .default_value
+                        .as_ref()
+                        .map(|v| format_default_value(v))
+                        .unwrap_or_default(),
+                ),
+                Value::string(field.description.clone().unwrap_or_default()),
+                Value::string("".to_string()),
+                Value::string("".to_string()),
+            ]);
+        }
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_create_table(
         &mut self,
-        name: &str,
-        args: &[sqlparser::ast::Value],
-    ) -> Result<RecordBatch> {
+        table_name: &sqlparser::ast::ObjectName,
+    ) -> Result<Table> {
+        let table_str = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&table_str)?;
+
+        let storage = self.storage.borrow();
+        let dataset = storage
+            .get_dataset(&dataset_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+        let table = dataset
+            .get_table(&table_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+
+        let mut columns = Vec::new();
+        for field in table.schema().fields() {
+            columns.push(format!("    {} {}", field.name, field.data_type));
+        }
+
+        let create_stmt = format!(
+            "CREATE TABLE {} (\n{}\n) ENGINE = MergeTree",
+            table_id,
+            columns.join(",\n")
+        );
+
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "statement".to_string(),
+            DataType::String,
+        )]);
+        let rows = vec![vec![Value::string(create_stmt)]];
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_tables(&mut self, filter: Option<&str>) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+
+        let mut rows = Vec::new();
+        let storage = self.storage.borrow();
+
+        for dataset_id in storage.list_datasets() {
+            if let Some(dataset) = storage.get_dataset(&dataset_id) {
+                for table_id in dataset.tables().keys() {
+                    let matches = match filter {
+                        Some(pattern) => {
+                            let regex_pattern = pattern.replace('%', ".*").replace('_', ".");
+                            regex::Regex::new(&format!("^{}$", regex_pattern))
+                                .map(|re| re.is_match(table_id))
+                                .unwrap_or(false)
+                        }
+                        None => true,
+                    };
+                    if matches {
+                        rows.push(vec![Value::string(table_id.clone())]);
+                    }
+                }
+            }
+        }
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_columns(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        let table_str = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&table_str)?;
+
+        let storage = self.storage.borrow();
+        let dataset = storage
+            .get_dataset(&dataset_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+        let table = dataset
+            .get_table(&table_id)
+            .ok_or_else(|| Error::invalid_query(format!("Table '{}' does not exist", table_str)))?;
+
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("field".to_string(), DataType::String),
+            yachtsql_storage::Field::required("type".to_string(), DataType::String),
+            yachtsql_storage::Field::required("null".to_string(), DataType::String),
+            yachtsql_storage::Field::required("key".to_string(), DataType::String),
+            yachtsql_storage::Field::required("default".to_string(), DataType::String),
+            yachtsql_storage::Field::required("extra".to_string(), DataType::String),
+        ]);
+
+        let mut rows = Vec::new();
+        for field in table.schema().fields() {
+            let is_nullable = matches!(field.mode, yachtsql_storage::FieldMode::Nullable);
+            rows.push(vec![
+                Value::string(field.name.clone()),
+                Value::string(field.data_type.to_string()),
+                Value::string(if is_nullable { "YES" } else { "NO" }.to_string()),
+                Value::string("".to_string()),
+                Value::string(
+                    field
+                        .default_value
+                        .as_ref()
+                        .map(|v| format_default_value(v))
+                        .unwrap_or_default(),
+                ),
+                Value::string("".to_string()),
+            ]);
+        }
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_clickhouse_show(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+
+        if statement_upper.starts_with("SHOW DATABASES") {
+            return self.execute_show_databases();
+        }
+        if statement_upper.starts_with("SHOW QUOTAS") {
+            return self.execute_show_quotas();
+        }
+        if statement_upper.starts_with("SHOW ROW POLICIES") {
+            return self.execute_show_row_policies();
+        }
+        if statement_upper.starts_with("SHOW SETTINGS PROFILES") {
+            return self.execute_show_settings_profiles();
+        }
+        if statement_upper.starts_with("SHOW DICTIONARIES") {
+            return self.execute_show_dictionaries();
+        }
+        if statement_upper.starts_with("SHOW CREATE TABLE") {
+            let prefix_len = "SHOW CREATE TABLE".len();
+            let table_name = statement[prefix_len..].trim();
+            let obj_name =
+                sqlparser::ast::ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                    sqlparser::ast::Ident::new(table_name),
+                )]);
+            return self.execute_show_create_table(&obj_name);
+        }
+        if statement_upper.starts_with("SHOW TABLES") {
+            let prefix_len = "SHOW TABLES".len();
+            let rest = statement[prefix_len..].trim();
+            let rest_upper = rest.to_uppercase();
+            let filter = if let Some(pos) = rest_upper.find("LIKE") {
+                let pattern = rest[pos + 4..].trim().trim_matches('\'');
+                Some(pattern.to_string())
+            } else {
+                None
+            };
+            return self.execute_show_tables(filter.as_deref());
+        }
+        if statement_upper.starts_with("SHOW COLUMNS FROM") {
+            let prefix_len = "SHOW COLUMNS FROM".len();
+            let table_name = statement[prefix_len..].trim();
+            let obj_name =
+                sqlparser::ast::ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                    sqlparser::ast::Ident::new(table_name),
+                )]);
+            return self.execute_show_columns(&obj_name);
+        }
+        if statement_upper.starts_with("SHOW COLUMNS IN") {
+            let prefix_len = "SHOW COLUMNS IN".len();
+            let table_name = statement[prefix_len..].trim();
+            let obj_name =
+                sqlparser::ast::ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                    sqlparser::ast::Ident::new(table_name),
+                )]);
+            return self.execute_show_columns(&obj_name);
+        }
+        Self::empty_result()
+    }
+
+    fn execute_clickhouse_function(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+
+        if statement_upper.starts_with("CREATE") {
+            return self.execute_clickhouse_create_function(statement);
+        }
+        if statement_upper.starts_with("DROP") {
+            return self.execute_clickhouse_drop_function(statement);
+        }
+
+        Err(Error::unsupported_feature(format!(
+            "Unsupported ClickHouse function statement: {}",
+            statement
+        )))
+    }
+
+    fn execute_clickhouse_create_function(&mut self, statement: &str) -> Result<Table> {
+        use regex::Regex;
+
+        let re = Regex::new(
+            r"(?i)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+AS\s*\(([^)]*)\)\s*->\s*(.*)",
+        )
+        .unwrap();
+
+        let captures = re.captures(statement).ok_or_else(|| {
+            Error::invalid_query(format!("Invalid CREATE FUNCTION syntax: {}", statement))
+        })?;
+
+        let func_name = captures.get(1).unwrap().as_str().to_string();
+        let params_str = captures.get(2).unwrap().as_str();
+        let body_str = captures.get(3).unwrap().as_str().trim();
+
+        let parameters: Vec<String> = if params_str.trim().is_empty() {
+            vec![]
+        } else {
+            params_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect()
+        };
+
+        let dialect = sqlparser::dialect::ClickHouseDialect {};
+        let body_expr = sqlparser::parser::Parser::new(&dialect)
+            .try_with_sql(body_str)
+            .map_err(|e| Error::parse_error(format!("Failed to parse function body: {}", e)))?
+            .parse_expr()
+            .map_err(|e| Error::parse_error(format!("Failed to parse function body: {}", e)))?;
+
+        let is_or_replace = statement.to_uppercase().contains("OR REPLACE");
+        let is_if_not_exists = statement.to_uppercase().contains("IF NOT EXISTS");
+
+        if is_or_replace {
+            self.session.drop_udf(&func_name);
+        } else if !is_if_not_exists && self.session.has_udf(&func_name) {
+            return Err(Error::invalid_query(format!(
+                "Function '{}' already exists",
+                func_name
+            )));
+        }
+
+        if !self.session.has_udf(&func_name) {
+            let udf_def = UdfDefinition {
+                parameters,
+                body: body_expr,
+            };
+            self.session.register_udf(func_name, udf_def);
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_clickhouse_drop_function(&mut self, statement: &str) -> Result<Table> {
+        use regex::Regex;
+
+        let re = Regex::new(r"(?i)DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(\w+)").unwrap();
+
+        let captures = re.captures(statement).ok_or_else(|| {
+            Error::invalid_query(format!("Invalid DROP FUNCTION syntax: {}", statement))
+        })?;
+
+        let func_name = captures.get(1).unwrap().as_str();
+        let is_if_exists = statement.to_uppercase().contains("IF EXISTS");
+
+        if !self.session.drop_udf(func_name) && !is_if_exists {
+            return Err(Error::invalid_query(format!(
+                "Function '{}' does not exist",
+                func_name
+            )));
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_show_databases(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+
+        let mut rows = Vec::new();
+        let storage = self.storage.borrow();
+
+        for db_id in storage.list_datasets() {
+            rows.push(vec![Value::string(db_id.to_string())]);
+        }
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_quotas(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("id".to_string(), DataType::String),
+        ]);
+
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = storage
+            .quotas()
+            .map(|q| vec![Value::string(q.name.clone()), Value::string(q.name.clone())])
+            .collect();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_row_policies(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("database".to_string(), DataType::String),
+            yachtsql_storage::Field::required("table".to_string(), DataType::String),
+        ]);
+
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = storage
+            .row_policies()
+            .map(|p| {
+                vec![
+                    Value::string(p.name.clone()),
+                    Value::string(p.database.clone()),
+                    Value::string(p.table.clone()),
+                ]
+            })
+            .collect();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_show_settings_profiles(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![
+            yachtsql_storage::Field::required("name".to_string(), DataType::String),
+            yachtsql_storage::Field::required("id".to_string(), DataType::String),
+        ]);
+
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = storage
+            .settings_profiles()
+            .map(|p| vec![Value::string(p.name.clone()), Value::string(p.name.clone())])
+            .collect();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_clickhouse_quota(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+        if statement_upper.starts_with("CREATE QUOTA") {
+            let name = Self::extract_object_name(statement, "CREATE QUOTA");
+            if !name.is_empty() {
+                self.storage.borrow_mut().add_quota(name);
+            }
+        } else if statement_upper.starts_with("DROP QUOTA") {
+            let name = Self::extract_object_name(statement, "DROP QUOTA");
+            if !name.is_empty() {
+                self.storage.borrow_mut().remove_quota(&name);
+            }
+        }
+        Self::empty_result()
+    }
+
+    fn execute_clickhouse_row_policy(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+        if statement_upper.starts_with("CREATE ROW POLICY") {
+            let trimmed = statement["CREATE ROW POLICY".len()..].trim();
+            let (name, remainder) = Self::extract_first_word(trimmed);
+            let table_part = remainder.to_uppercase().find("ON ").map(|pos| {
+                let after_on = remainder[pos + 3..].trim();
+                Self::extract_first_word(after_on).0
+            });
+            let table_name = table_part.unwrap_or_default();
+            if !name.is_empty() {
+                self.storage
+                    .borrow_mut()
+                    .add_row_policy(name, "default".to_string(), table_name);
+            }
+        } else if statement_upper.starts_with("DROP ROW POLICY") {
+            let name = Self::extract_object_name(statement, "DROP ROW POLICY");
+            if !name.is_empty() {
+                self.storage.borrow_mut().remove_row_policy(&name);
+            }
+        }
+        Self::empty_result()
+    }
+
+    fn execute_clickhouse_settings_profile(&mut self, statement: &str) -> Result<Table> {
+        let statement_upper = statement.to_uppercase();
+        if statement_upper.starts_with("CREATE SETTINGS PROFILE") {
+            let name = Self::extract_object_name(statement, "CREATE SETTINGS PROFILE");
+            if !name.is_empty() {
+                self.storage.borrow_mut().add_settings_profile(name);
+            }
+        } else if statement_upper.starts_with("DROP SETTINGS PROFILE") {
+            let name = Self::extract_object_name(statement, "DROP SETTINGS PROFILE");
+            if !name.is_empty() {
+                self.storage.borrow_mut().remove_settings_profile(&name);
+            }
+        } else if statement_upper.starts_with("ALTER SETTINGS PROFILE") {
+        }
+        Self::empty_result()
+    }
+
+    fn extract_object_name(statement: &str, prefix: &str) -> String {
+        let rest = statement[prefix.len()..].trim();
+        let (name, _) = Self::extract_first_word(rest);
+        name.trim_end_matches([',', ';']).to_string()
+    }
+
+    fn extract_first_word(s: &str) -> (String, &str) {
+        let s = s.trim();
+        let mut in_quotes = false;
+        let mut quote_char = ' ';
+
+        for (i, c) in s.char_indices() {
+            if !in_quotes && (c == '\'' || c == '"' || c == '`') {
+                in_quotes = true;
+                quote_char = c;
+            } else if in_quotes && c == quote_char {
+                in_quotes = false;
+            } else if !in_quotes && c.is_whitespace() {
+                let word = s[..i].trim_matches(|c| c == '\'' || c == '"' || c == '`');
+                return (word.to_string(), &s[i..]);
+            }
+        }
+
+        let word = s.trim_matches(|c| c == '\'' || c == '"' || c == '`');
+        (word.to_string(), "")
+    }
+
+    fn execute_show_dictionaries(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+
+        let rows = Vec::new();
+
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_exists_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        let table_str = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&table_str)?;
+
+        let storage = self.storage.borrow();
+        let exists = storage
+            .get_dataset(&dataset_id)
+            .and_then(|d| d.get_table(&table_id))
+            .is_some();
+
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "result".to_string(),
+            DataType::Int64,
+        )]);
+        let rows = vec![vec![Value::int64(if exists { 1 } else { 0 })]];
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_exists_database(&mut self, db_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        let db_str = db_name.to_string();
+
+        let storage = self.storage.borrow();
+        let exists = storage.get_dataset(&db_str).is_some();
+
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "result".to_string(),
+            DataType::Int64,
+        )]);
+        let rows = vec![vec![Value::int64(if exists { 1 } else { 0 })]];
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_create_database(
+        &mut self,
+        name: &sqlparser::ast::ObjectName,
+        if_not_exists: bool,
+    ) -> Result<()> {
+        let db_id = name.to_string();
+
+        let mut storage = self.storage.borrow_mut();
+
+        if storage.get_dataset(&db_id).is_some() {
+            if if_not_exists {
+                return Ok(());
+            } else {
+                return Err(Error::invalid_query(format!(
+                    "database \"{}\" already exists",
+                    db_id
+                )));
+            }
+        }
+
+        storage
+            .create_dataset(db_id.clone())
+            .map_err(|e| Error::invalid_query(format!("Failed to create database: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn execute_drop_database(&mut self, stmt: &sqlparser::ast::Statement) -> Result<()> {
+        use sqlparser::ast::Statement;
+
+        let Statement::Drop {
+            names, if_exists, ..
+        } = stmt
+        else {
+            return Err(Error::InternalError(
+                "Not a DROP DATABASE statement".to_string(),
+            ));
+        };
+
+        for db_name_obj in names {
+            let db_id = db_name_obj.to_string();
+
+            let mut storage = self.storage.borrow_mut();
+
+            match storage.get_dataset(&db_id) {
+                Some(_) => {
+                    storage.delete_dataset(&db_id)?;
+                }
+                None => {
+                    if !*if_exists {
+                        return Err(Error::DatasetNotFound(format!(
+                            "Database '{}' not found",
+                            db_id
+                        )));
+                    }
+                }
+            }
+        }
+
+        self.plan_cache.borrow_mut().invalidate_all();
+
+        Ok(())
+    }
+    fn execute_show_users(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+        Table::from_values(schema, vec![])
+    }
+
+    fn execute_show_roles(&mut self) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "name".to_string(),
+            DataType::String,
+        )]);
+        Table::from_values(schema, vec![])
+    }
+
+    fn execute_show_grants(&mut self, _user_name: Option<&str>) -> Result<Table> {
+        let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
+            "grants".to_string(),
+            DataType::String,
+        )]);
+        Table::from_values(schema, vec![])
+    }
+
+    fn execute_optimize_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {
+        use std::collections::HashMap;
+
+        use yachtsql_core::types::Value;
+        use yachtsql_storage::TableEngine;
+
+        let name = table_name.to_string();
+        let (dataset_id, table_id) = self.parse_ddl_table_name(&name)?;
+
+        let mut storage = self.storage.borrow_mut();
+        let dataset = storage
+            .get_dataset_mut(&dataset_id)
+            .ok_or_else(|| Error::DatasetNotFound(format!("Dataset '{}' not found", dataset_id)))?;
+        let table = dataset
+            .get_table_mut(&table_id)
+            .ok_or_else(|| Error::TableNotFound(format!("Table '{}' not found", table_id)))?;
+
+        let engine = table.engine().clone();
+        let schema = table.schema().clone();
+        let rows = table.get_all_rows();
+
+        let get_key_indices = |order_by: &[String]| -> Vec<usize> {
+            order_by
+                .iter()
+                .filter_map(|col| {
+                    schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.eq_ignore_ascii_case(col))
+                })
+                .collect()
+        };
+
+        let get_col_idx = |col_name: &str| -> Option<usize> {
+            schema
+                .fields()
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case(col_name))
+        };
+
+        let get_numeric_indices = |exclude: &[usize]| -> Vec<usize> {
+            schema
+                .fields()
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| {
+                    !exclude.contains(i)
+                        && matches!(
+                            f.data_type,
+                            DataType::Int64 | DataType::Float64 | DataType::Numeric(_)
+                        )
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
+
+        let optimized_rows = match &engine {
+            TableEngine::ReplacingMergeTree {
+                order_by,
+                version_column,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let version_idx = version_column.as_ref().and_then(|vc| get_col_idx(vc));
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    let should_replace = if let Some(ver_idx) = version_idx {
+                        groups.get(&key).is_none_or(|existing| {
+                            let existing_ver =
+                                existing.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            let new_ver = row.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            new_ver >= existing_ver
+                        })
+                    } else {
+                        true
+                    };
+                    if should_replace {
+                        groups.insert(key, row);
+                    }
+                }
+                groups.into_values().collect()
+            }
+            TableEngine::SummingMergeTree {
+                order_by,
+                sum_columns,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let sum_indices = if sum_columns.is_empty() {
+                    get_numeric_indices(&key_indices)
+                } else {
+                    sum_columns.iter().filter_map(|c| get_col_idx(c)).collect()
+                };
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups
+                        .entry(key)
+                        .and_modify(|existing| {
+                            for &idx in &sum_indices {
+                                let existing_val =
+                                    existing.get(idx).cloned().unwrap_or(Value::null());
+                                let new_val = row.get(idx).cloned().unwrap_or(Value::null());
+                                if let (Some(e), Some(n)) =
+                                    (existing_val.as_i64(), new_val.as_i64())
+                                {
+                                    let _ = existing.set(idx, Value::int64(e + n));
+                                } else if let (Some(e), Some(n)) =
+                                    (existing_val.as_f64(), new_val.as_f64())
+                                {
+                                    let _ = existing.set(idx, Value::float64(e + n));
+                                }
+                            }
+                        })
+                        .or_insert(row);
+                }
+                groups.into_values().collect()
+            }
+            TableEngine::CollapsingMergeTree {
+                order_by,
+                sign_column,
+            } => {
+                let key_indices = get_key_indices(order_by);
+                let sign_idx = get_col_idx(sign_column).unwrap_or(0);
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+                let mut result = Vec::new();
+                for (_key, group_rows) in groups {
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+                    let mut last_negative: Option<yachtsql_storage::Row> = None;
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        } else {
+                            last_negative = Some(row);
+                        }
+                    }
+                    if sum_sign > 0 {
+                        if let Some(r) = last_positive {
+                            result.push(r);
+                        }
+                    } else if sum_sign < 0 {
+                        if let Some(r) = last_negative {
+                            result.push(r);
+                        }
+                    }
+                }
+                result
+            }
+            _ => rows,
+        };
+
+        table.clear_rows()?;
+        table.insert_rows(optimized_rows)?;
+
+        drop(storage);
+        Self::empty_result()
+    }
+
+    fn execute_procedure(&mut self, name: &str, args: &[sqlparser::ast::Value]) -> Result<Table> {
         match name.to_lowercase().as_str() {
             "enable_feature" => {
                 if args.is_empty() {
@@ -777,14 +1656,16 @@ impl QueryExecutor {
         stmt: &sqlparser::ast::Statement,
         analyze: bool,
         verbose: bool,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         use sqlparser::ast::Statement as SqlStatement;
 
         match stmt {
             SqlStatement::Query(query) => {
+                let session_udfs = self.session.udfs_for_parser();
                 let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
                     .with_storage(Rc::clone(&self.storage))
-                    .with_dialect(self.dialect());
+                    .with_dialect(self.dialect())
+                    .with_udfs(session_udfs);
                 let logical_plan = plan_builder.query_to_plan(query)?;
 
                 let optimized = self.optimizer.optimize(logical_plan)?;
@@ -824,7 +1705,7 @@ impl QueryExecutor {
                     }
 
                     let schema = plan_output.schema().clone();
-                    RecordBatch::from_values(schema, combined_rows)
+                    Table::from_values(schema, combined_rows)
                 } else {
                     Ok(plan_output)
                 }
@@ -839,7 +1720,7 @@ impl QueryExecutor {
                     "Insert Statement:\n  {}",
                     stmt
                 ))]];
-                RecordBatch::from_values(schema, rows)
+                Table::from_values(schema, rows)
             }
 
             SqlStatement::Update { .. } => {
@@ -851,7 +1732,7 @@ impl QueryExecutor {
                     "Update Statement:\n  {}",
                     stmt
                 ))]];
-                RecordBatch::from_values(schema, rows)
+                Table::from_values(schema, rows)
             }
 
             SqlStatement::Delete { .. } => {
@@ -863,7 +1744,7 @@ impl QueryExecutor {
                     "Delete Statement:\n  {}",
                     stmt
                 ))]];
-                RecordBatch::from_values(schema, rows)
+                Table::from_values(schema, rows)
             }
 
             _ => {
@@ -872,7 +1753,7 @@ impl QueryExecutor {
                     DataType::String,
                 )]);
                 let rows = vec![vec![Value::string(format!("Statement:\n  {}", stmt))]];
-                RecordBatch::from_values(schema, rows)
+                Table::from_values(schema, rows)
             }
         }
     }
@@ -1030,7 +1911,7 @@ impl QueryExecutor {
         Ok(row_count)
     }
 
-    fn execute_copy(&mut self, stmt: &sqlparser::ast::Statement) -> Result<RecordBatch> {
+    fn execute_copy(&mut self, stmt: &sqlparser::ast::Statement) -> Result<Table> {
         use sqlparser::ast::{CopyOption, Statement as SqlStatement};
 
         let (source, to, target, options) = match stmt {
@@ -1091,7 +1972,7 @@ impl QueryExecutor {
         delimiter: char,
         has_header: bool,
         null_string: String,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         use sqlparser::ast::{CopySource, CopyTarget};
         use yachtsql_storage::Row;
 
@@ -1215,7 +2096,7 @@ impl QueryExecutor {
         delimiter: char,
         has_header: bool,
         null_string: String,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         use sqlparser::ast::{CopySource, CopyTarget};
 
         let file_path = match target {
@@ -1387,7 +2268,19 @@ impl QueryExecutor {
                 use chrono::TimeZone;
 
                 if let Ok(naive_ts) =
+                    chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%d %H:%M:%S%.f")
+                {
+                    let ts = chrono::Utc.from_utc_datetime(&naive_ts);
+                    return Ok(Value::timestamp(ts));
+                }
+                if let Ok(naive_ts) =
                     chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%d %H:%M:%S")
+                {
+                    let ts = chrono::Utc.from_utc_datetime(&naive_ts);
+                    return Ok(Value::timestamp(ts));
+                }
+                if let Ok(naive_ts) =
+                    chrono::NaiveDateTime::parse_from_str(val, "%Y-%m-%dT%H:%M:%S%.f")
                 {
                     let ts = chrono::Utc.from_utc_datetime(&naive_ts);
                     return Ok(Value::timestamp(ts));
@@ -1424,11 +2317,200 @@ impl QueryExecutor {
 
         value.to_string()
     }
+
+    fn execute_scripting(&mut self, operation: ScriptingOperation) -> Result<Table> {
+        match operation {
+            ScriptingOperation::Declare {
+                names,
+                data_type,
+                default_expr,
+            } => {
+                let data_type = self.convert_sql_data_type(data_type)?;
+                let default_value = if let Some(expr) = default_expr {
+                    Some(self.evaluate_constant_expr(&expr)?)
+                } else {
+                    None
+                };
+
+                for name in names {
+                    self.session
+                        .declare_variable(name, data_type.clone(), default_value.clone());
+                }
+
+                Self::empty_result()
+            }
+            ScriptingOperation::SetVariable { name, value } => {
+                let evaluated = self.evaluate_constant_expr(&value)?;
+                self.session.set_variable(&name, evaluated)?;
+                Self::empty_result()
+            }
+        }
+    }
+
+    fn convert_sql_data_type(
+        &self,
+        sql_type: Option<sqlparser::ast::DataType>,
+    ) -> Result<DataType> {
+        use sqlparser::ast::DataType as SqlType;
+
+        match sql_type {
+            None => Ok(DataType::String),
+            Some(t) => match t {
+                SqlType::Int64 | SqlType::BigInt(_) => Ok(DataType::Int64),
+                SqlType::Int32 | SqlType::Int(_) | SqlType::Integer(_) => Ok(DataType::Int64),
+                SqlType::Float64 | SqlType::Double(_) => Ok(DataType::Float64),
+                SqlType::Float32 => Ok(DataType::Float32),
+                SqlType::Float(_) | SqlType::Real => Ok(DataType::Float64),
+                SqlType::Bool | SqlType::Boolean => Ok(DataType::Bool),
+                SqlType::String(_) | SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) => {
+                    Ok(DataType::String)
+                }
+                SqlType::Date => Ok(DataType::Date),
+                SqlType::Timestamp(_, _) => Ok(DataType::Timestamp),
+                SqlType::Numeric(_) | SqlType::Decimal(_) => Ok(DataType::Numeric(None)),
+                SqlType::Bytes(_) => Ok(DataType::Bytes),
+                _ => Err(Error::unsupported_feature(format!(
+                    "Unsupported data type for variable declaration: {:?}",
+                    t
+                ))),
+            },
+        }
+    }
+
+    fn evaluate_constant_expr(&self, expr: &sqlparser::ast::Expr) -> Result<Value> {
+        use sqlparser::ast::{Expr as SqlExpr, UnaryOperator, Value as SqlValue, ValueWithSpan};
+
+        match expr {
+            SqlExpr::Value(ValueWithSpan { value, .. }) => match value {
+                SqlValue::Number(n, _) => {
+                    if n.contains('.') {
+                        n.parse::<f64>()
+                            .map(Value::float64)
+                            .map_err(|_| Error::invalid_query(format!("Invalid number: {}", n)))
+                    } else {
+                        n.parse::<i64>()
+                            .map(Value::int64)
+                            .map_err(|_| Error::invalid_query(format!("Invalid integer: {}", n)))
+                    }
+                }
+                SqlValue::SingleQuotedString(s) | SqlValue::DoubleQuotedString(s) => {
+                    Ok(Value::string(s.clone()))
+                }
+                SqlValue::Boolean(b) => Ok(Value::bool_val(*b)),
+                SqlValue::Null => Ok(Value::null()),
+                _ => Err(Error::unsupported_feature(format!(
+                    "Unsupported literal value type: {:?}",
+                    value
+                ))),
+            },
+            SqlExpr::UnaryOp { op, expr } => {
+                let inner = self.evaluate_constant_expr(expr)?;
+                match op {
+                    UnaryOperator::Minus => {
+                        if let Some(i) = inner.as_i64() {
+                            Ok(Value::int64(-i))
+                        } else if let Some(f) = inner.as_f64() {
+                            Ok(Value::float64(-f))
+                        } else {
+                            Err(Error::invalid_query(
+                                "Cannot negate non-numeric value".to_string(),
+                            ))
+                        }
+                    }
+                    UnaryOperator::Plus => Ok(inner),
+                    UnaryOperator::Not => {
+                        if let Some(b) = inner.as_bool() {
+                            Ok(Value::bool_val(!b))
+                        } else {
+                            Err(Error::invalid_query(
+                                "Cannot apply NOT to non-boolean value".to_string(),
+                            ))
+                        }
+                    }
+                    _ => Err(Error::unsupported_feature(format!(
+                        "Unsupported unary operator: {:?}",
+                        op
+                    ))),
+                }
+            }
+            SqlExpr::Nested(inner) => self.evaluate_constant_expr(inner),
+            _ => Err(Error::unsupported_feature(format!(
+                "Unsupported expression type for constant evaluation: {:?}",
+                expr
+            ))),
+        }
+    }
 }
 
 impl Default for QueryExecutor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub(crate) struct StorageSequenceExecutor {
+    storage: Rc<RefCell<yachtsql_storage::Storage>>,
+}
+
+impl StorageSequenceExecutor {
+    pub fn new(storage: Rc<RefCell<yachtsql_storage::Storage>>) -> Self {
+        Self { storage }
+    }
+
+    fn parse_table_name(name: &str) -> (String, String) {
+        if let Some((schema, table)) = name.split_once('.') {
+            (schema.to_string(), table.to_string())
+        } else {
+            ("default".to_string(), name.to_string())
+        }
+    }
+}
+
+impl crate::query_executor::evaluator::physical_plan::SequenceValueExecutor
+    for StorageSequenceExecutor
+{
+    fn nextval(&mut self, sequence_name: &str) -> Result<i64> {
+        let (dataset_id, seq_id) = Self::parse_table_name(sequence_name);
+
+        let mut storage = self.storage.borrow_mut();
+        let dataset = storage.get_dataset_mut(&dataset_id).ok_or_else(|| {
+            Error::invalid_query(format!("Sequence '{}' does not exist", sequence_name))
+        })?;
+
+        dataset.sequences_mut().nextval(&seq_id)
+    }
+
+    fn currval(&self, sequence_name: &str) -> Result<i64> {
+        let (dataset_id, seq_id) = Self::parse_table_name(sequence_name);
+
+        let storage = self.storage.borrow();
+        let dataset = storage.get_dataset(&dataset_id).ok_or_else(|| {
+            Error::invalid_query(format!("Sequence '{}' does not exist", sequence_name))
+        })?;
+
+        dataset.sequences().currval(&seq_id)
+    }
+
+    fn setval(&mut self, sequence_name: &str, value: i64, is_called: bool) -> Result<i64> {
+        let (dataset_id, seq_id) = Self::parse_table_name(sequence_name);
+
+        let mut storage = self.storage.borrow_mut();
+        let dataset = storage.get_dataset_mut(&dataset_id).ok_or_else(|| {
+            Error::invalid_query(format!("Sequence '{}' does not exist", sequence_name))
+        })?;
+
+        dataset.sequences_mut().setval(&seq_id, value, is_called)
+    }
+
+    fn lastval(&self) -> Result<i64> {
+        let storage = self.storage.borrow();
+        let dataset = storage.get_dataset("default").ok_or_else(|| {
+            Error::InvalidOperation(
+                "LASTVAL: no sequences have been accessed in this session".to_string(),
+            )
+        })?;
+
+        dataset.sequences().lastval()
     }
 }
 
@@ -1445,5 +2527,14 @@ fn derive_output_name_from_expr(expr: &sqlparser::ast::Expr) -> String {
         sqlparser::ast::Expr::Nested(inner) => derive_output_name_from_expr(inner),
         sqlparser::ast::Expr::Cast { .. } => "?column?".to_string(),
         _ => "?column?".to_string(),
+    }
+}
+
+fn format_default_value(default: &yachtsql_storage::DefaultValue) -> String {
+    match default {
+        yachtsql_storage::DefaultValue::Literal(v) => v.to_string(),
+        yachtsql_storage::DefaultValue::CurrentTimestamp => "CURRENT_TIMESTAMP".to_string(),
+        yachtsql_storage::DefaultValue::CurrentDate => "CURRENT_DATE".to_string(),
+        yachtsql_storage::DefaultValue::GenRandomUuid => "gen_random_uuid()".to_string(),
     }
 }

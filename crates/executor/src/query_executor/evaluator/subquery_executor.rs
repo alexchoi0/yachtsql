@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::{DataType, Value};
-use yachtsql_optimizer::expr::{BinaryOp, Expr, LiteralValue};
+use yachtsql_optimizer::expr::{BinaryOp, Expr, LiteralValue, UnaryOp};
 use yachtsql_optimizer::plan::PlanNode;
 
 use super::physical_plan::{
@@ -39,16 +39,17 @@ impl SubqueryExecutorImpl {
         }
     }
 
-    fn execute_plan(&self, plan: &PlanNode) -> Result<crate::RecordBatch> {
+    fn execute_plan(&self, plan: &PlanNode) -> Result<crate::Table> {
         use yachtsql_storage::Column;
 
-        use crate::RecordBatch;
+        use crate::Table;
 
         match plan {
             PlanNode::Scan {
                 table_name,
                 alias: _,
                 projection: _,
+                ..
             } => {
                 let storage = self._storage.borrow();
 
@@ -79,7 +80,7 @@ impl SubqueryExecutorImpl {
                     columns.push(column);
                 }
 
-                Ok(RecordBatch::new(schema, columns)?)
+                Ok(Table::new(schema, columns)?)
             }
 
             PlanNode::Projection { expressions, input } => {
@@ -93,7 +94,13 @@ impl SubqueryExecutorImpl {
                 let num_rows = input_batch.num_rows();
 
                 for (expr_idx, (expr, alias)) in expressions.iter().enumerate() {
-                    let field_name = alias.clone().unwrap_or_else(|| format!("col_{}", expr_idx));
+                    let field_name = alias.clone().unwrap_or_else(|| {
+                        if let yachtsql_optimizer::expr::Expr::Column { name, .. } = expr {
+                            name.clone()
+                        } else {
+                            format!("col_{}", expr_idx)
+                        }
+                    });
                     let mut values = Vec::new();
 
                     for row_idx in 0..num_rows {
@@ -117,7 +124,7 @@ impl SubqueryExecutorImpl {
                 }
 
                 let result_schema = yachtsql_storage::Schema::from_fields(result_fields);
-                Ok(RecordBatch::new(result_schema, result_columns)?)
+                Ok(Table::new(result_schema, result_columns)?)
             }
 
             PlanNode::Filter { predicate, input } => {
@@ -136,7 +143,14 @@ impl SubqueryExecutorImpl {
                 }
 
                 if passing_rows.is_empty() {
-                    return Ok(RecordBatch::empty(batch.schema().clone()));
+                    return Ok(Table::empty(batch.schema().clone()));
+                }
+
+                if batch.schema().fields().is_empty() {
+                    return Ok(Table::empty_with_rows(
+                        batch.schema().clone(),
+                        passing_rows.len(),
+                    ));
                 }
 
                 let mut new_columns = Vec::new();
@@ -152,7 +166,7 @@ impl SubqueryExecutorImpl {
                     new_columns.push(new_col);
                 }
 
-                Ok(RecordBatch::new(batch.schema().clone(), new_columns)?)
+                Ok(Table::new(batch.schema().clone(), new_columns)?)
             }
 
             PlanNode::Aggregate {
@@ -161,29 +175,113 @@ impl SubqueryExecutorImpl {
                 input,
                 grouping_metadata: _,
             } => {
+                use super::physical_plan::ProjectionWithExprExec;
+
                 let batch = self.execute_plan(input)?;
 
-                if !group_by.is_empty() {
-                    return Err(Error::UnsupportedFeature(
-                        "GROUP BY in subquery not yet implemented".to_string(),
-                    ));
+                if group_by.is_empty() {
+                    let mut result_columns = Vec::new();
+                    let mut result_fields = Vec::new();
+
+                    for agg_expr in aggregates.iter() {
+                        let (agg_value, agg_type) = self.evaluate_aggregate(agg_expr, &batch)?;
+
+                        let field_name = Self::aggregate_field_name(agg_expr);
+                        let mut col = Column::new(&agg_type, 1);
+                        col.push(agg_value)?;
+                        result_columns.push(col);
+                        result_fields.push(yachtsql_storage::Field::nullable(field_name, agg_type));
+                    }
+
+                    let result_schema = yachtsql_storage::Schema::from_fields(result_fields);
+                    return Table::new(result_schema, result_columns);
                 }
 
-                let mut result_columns = Vec::new();
+                let mut groups: std::collections::HashMap<Vec<String>, Vec<usize>> =
+                    std::collections::HashMap::new();
+
+                for row_idx in 0..batch.num_rows() {
+                    let mut key = Vec::with_capacity(group_by.len());
+                    for group_expr in group_by {
+                        let val =
+                            ProjectionWithExprExec::evaluate_expr(group_expr, &batch, row_idx)?;
+                        key.push(format!("{:?}", val));
+                    }
+                    groups.entry(key).or_default().push(row_idx);
+                }
+
+                let num_groups = groups.len();
                 let mut result_fields = Vec::new();
+                let mut result_columns = Vec::new();
+
+                for (gb_idx, group_expr) in group_by.iter().enumerate() {
+                    let field_name = match group_expr {
+                        Expr::Column { name, .. } => name.clone(),
+                        _ => format!("group_{}", gb_idx),
+                    };
+
+                    let first_row = groups
+                        .values()
+                        .next()
+                        .and_then(|rows| rows.first())
+                        .copied();
+                    let data_type = if let Some(row_idx) = first_row {
+                        ProjectionWithExprExec::evaluate_expr(group_expr, &batch, row_idx)?
+                            .data_type()
+                    } else {
+                        DataType::String
+                    };
+
+                    result_fields.push(yachtsql_storage::Field::nullable(
+                        field_name,
+                        data_type.clone(),
+                    ));
+                    result_columns.push(Column::new(&data_type, num_groups));
+                }
 
                 for (agg_idx, agg_expr) in aggregates.iter().enumerate() {
-                    let (agg_value, agg_type) = self.evaluate_aggregate(agg_expr, &batch)?;
+                    let field_name = match agg_expr {
+                        Expr::Aggregate { name, .. } => format!("{:?}", name).to_lowercase(),
+                        _ => format!("agg_{}", agg_idx),
+                    };
 
-                    let field_name = format!("agg_{}", agg_idx);
-                    let mut col = Column::new(&agg_type, 1);
-                    col.push(agg_value)?;
-                    result_columns.push(col);
-                    result_fields.push(yachtsql_storage::Field::nullable(field_name, agg_type));
+                    let first_group_rows = groups.values().next();
+                    let (_, data_type) = if let Some(rows) = first_group_rows {
+                        let group_batch = self.create_group_batch(&batch, rows)?;
+                        self.evaluate_aggregate(agg_expr, &group_batch)?
+                    } else {
+                        (Value::null(), DataType::Int64)
+                    };
+
+                    result_fields.push(yachtsql_storage::Field::nullable(
+                        field_name,
+                        data_type.clone(),
+                    ));
+                    result_columns.push(Column::new(&data_type, num_groups));
+                }
+
+                for (group_idx, (_key, row_indices)) in groups.iter().enumerate() {
+                    let representative_row = row_indices[0];
+
+                    for (gb_idx, group_expr) in group_by.iter().enumerate() {
+                        let val = ProjectionWithExprExec::evaluate_expr(
+                            group_expr,
+                            &batch,
+                            representative_row,
+                        )?;
+                        result_columns[gb_idx].push(val)?;
+                    }
+
+                    let group_batch = self.create_group_batch(&batch, row_indices)?;
+
+                    for (agg_idx, agg_expr) in aggregates.iter().enumerate() {
+                        let (agg_val, _) = self.evaluate_aggregate(agg_expr, &group_batch)?;
+                        result_columns[group_by.len() + agg_idx].push(agg_val)?;
+                    }
                 }
 
                 let result_schema = yachtsql_storage::Schema::from_fields(result_fields);
-                Ok(RecordBatch::new(result_schema, result_columns)?)
+                Ok(Table::new(result_schema, result_columns)?)
             }
 
             PlanNode::Limit {
@@ -191,20 +289,24 @@ impl SubqueryExecutorImpl {
                 offset,
                 input,
             } => {
-                let batch = self.execute_plan(input)?;
+                let batch = self.execute_plan(input)?.to_column_format()?;
 
                 let start = *offset;
                 let end = start + limit;
 
                 if start >= batch.num_rows() {
-                    return Ok(RecordBatch::empty(batch.schema().clone()));
+                    return Ok(Table::empty(batch.schema().clone()));
                 }
 
                 let actual_end = end.min(batch.num_rows());
                 let result_rows = actual_end - start;
 
+                let columns = batch.columns().ok_or_else(|| {
+                    Error::InternalError("Expected column-format table".to_string())
+                })?;
+
                 let mut new_columns = Vec::new();
-                for col in batch.expect_columns() {
+                for col in columns {
                     let mut new_col = Column::new(&col.data_type(), result_rows);
                     for i in start..actual_end {
                         new_col.push(col.get(i)?)?;
@@ -212,12 +314,241 @@ impl SubqueryExecutorImpl {
                     new_columns.push(new_col);
                 }
 
-                Ok(RecordBatch::new(batch.schema().clone(), new_columns)?)
+                Ok(Table::new(batch.schema().clone(), new_columns)?)
             }
 
             PlanNode::EmptyRelation => {
                 let schema = yachtsql_storage::Schema::from_fields(vec![]);
-                Ok(RecordBatch::empty_with_rows(schema, 1))
+                Ok(Table::empty_with_rows(schema, 1))
+            }
+
+            PlanNode::SubqueryScan { subquery, alias: _ } => self.execute_plan(subquery),
+
+            PlanNode::Sort { order_by, input } => {
+                use super::physical_plan::ProjectionWithExprExec;
+
+                let batch = self.execute_plan(input)?.to_column_format()?;
+
+                if batch.is_empty() {
+                    return Ok(batch);
+                }
+
+                let mut row_indices: Vec<usize> = (0..batch.num_rows()).collect();
+
+                row_indices.sort_by(|&a, &b| {
+                    for order_expr in order_by {
+                        let a_val =
+                            ProjectionWithExprExec::evaluate_expr(&order_expr.expr, &batch, a)
+                                .unwrap_or_else(|_| Value::null());
+                        let b_val =
+                            ProjectionWithExprExec::evaluate_expr(&order_expr.expr, &batch, b)
+                                .unwrap_or_else(|_| Value::null());
+
+                        let cmp = self.compare_values(&a_val, &b_val);
+
+                        let asc = order_expr.asc.unwrap_or(true);
+                        let ordering = if asc { cmp } else { cmp.reverse() };
+
+                        if ordering != std::cmp::Ordering::Equal {
+                            return ordering;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                });
+
+                let columns = batch.columns().ok_or_else(|| {
+                    Error::InternalError("Expected column-format table".to_string())
+                })?;
+
+                let mut new_columns = Vec::new();
+                for col in columns {
+                    let mut new_col = Column::new(&col.data_type(), row_indices.len());
+                    for &row_idx in &row_indices {
+                        new_col.push(col.get(row_idx)?)?;
+                    }
+                    new_columns.push(new_col);
+                }
+
+                Ok(Table::new(batch.schema().clone(), new_columns)?)
+            }
+
+            PlanNode::Distinct { input } => {
+                let batch = self.execute_plan(input)?.to_column_format()?;
+
+                if batch.is_empty() {
+                    return Ok(batch);
+                }
+
+                let columns = batch.columns().ok_or_else(|| {
+                    Error::InternalError("Expected column-format table".to_string())
+                })?;
+
+                let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+                let mut unique_rows: Vec<usize> = Vec::new();
+
+                for row_idx in 0..batch.num_rows() {
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    use std::hash::Hash;
+
+                    for col in columns {
+                        let val = col.get(row_idx)?;
+                        format!("{:?}", val).hash(&mut hasher);
+                    }
+
+                    use std::hash::Hasher;
+                    let hash_bytes = hasher.finish().to_le_bytes().to_vec();
+
+                    if seen.insert(hash_bytes) {
+                        unique_rows.push(row_idx);
+                    }
+                }
+
+                let mut new_columns = Vec::new();
+                for col in columns {
+                    let mut new_col = Column::new(&col.data_type(), unique_rows.len());
+                    for &row_idx in &unique_rows {
+                        new_col.push(col.get(row_idx)?)?;
+                    }
+                    new_columns.push(new_col);
+                }
+
+                Ok(Table::new(batch.schema().clone(), new_columns)?)
+            }
+
+            PlanNode::Cte {
+                name,
+                cte_plan,
+                input,
+                column_aliases,
+                ..
+            } => {
+                let cte_result = self.execute_plan(cte_plan)?;
+                let cte_table = cte_result.to_column_format()?;
+
+                let mut schema = cte_table.schema().clone();
+                if let Some(aliases) = column_aliases {
+                    let renamed_fields: Vec<yachtsql_storage::Field> = schema
+                        .fields()
+                        .iter()
+                        .zip(aliases.iter())
+                        .map(|(field, alias)| {
+                            let mut new_field = field.clone();
+                            new_field.name = alias.clone();
+                            new_field
+                        })
+                        .collect();
+                    schema = yachtsql_storage::Schema::from_fields(renamed_fields);
+                }
+
+                let temp_table_name = format!("__cte_{}", name);
+
+                {
+                    let mut storage = self._storage.borrow_mut();
+                    if storage.get_dataset("default").is_none() {
+                        storage.create_dataset("default".to_string())?;
+                    }
+                    let dataset = storage
+                        .get_dataset_mut("default")
+                        .ok_or_else(|| Error::DatasetNotFound("default".to_string()))?;
+
+                    dataset.create_table(temp_table_name.clone(), schema)?;
+                    let table = dataset
+                        .get_table_mut(&temp_table_name)
+                        .ok_or_else(|| Error::table_not_found(temp_table_name.clone()))?;
+
+                    for row_idx in 0..cte_table.num_rows() {
+                        let row = cte_table.row(row_idx)?;
+                        table.insert_row(row)?;
+                    }
+                }
+
+                let result = self.execute_plan(input);
+
+                {
+                    let mut storage = self._storage.borrow_mut();
+                    if let Some(dataset) = storage.get_dataset_mut("default") {
+                        let _ = dataset.delete_table(&temp_table_name);
+                    }
+                }
+
+                result
+            }
+
+            PlanNode::Union { left, right, all } => {
+                let left_batch = self.execute_plan(left)?.to_column_format()?;
+                let right_batch = self.execute_plan(right)?.to_column_format()?;
+
+                if left_batch.schema().fields().len() != right_batch.schema().fields().len() {
+                    return Err(Error::InvalidQuery(
+                        "UNION operands must have the same number of columns".to_string(),
+                    ));
+                }
+
+                let num_cols = left_batch.schema().fields().len();
+                let total_rows = left_batch.num_rows() + right_batch.num_rows();
+
+                let mut new_columns = Vec::new();
+                for col_idx in 0..num_cols {
+                    let left_col = left_batch.column(col_idx).ok_or_else(|| {
+                        Error::InternalError(format!("Column {} not found in left batch", col_idx))
+                    })?;
+                    let right_col = right_batch.column(col_idx).ok_or_else(|| {
+                        Error::InternalError(format!("Column {} not found in right batch", col_idx))
+                    })?;
+
+                    let mut new_col = Column::new(&left_col.data_type(), total_rows);
+
+                    for i in 0..left_batch.num_rows() {
+                        new_col.push(left_col.get(i)?)?;
+                    }
+                    for i in 0..right_batch.num_rows() {
+                        new_col.push(right_col.get(i)?)?;
+                    }
+
+                    new_columns.push(new_col);
+                }
+
+                let combined = Table::new(left_batch.schema().clone(), new_columns)?;
+
+                if *all {
+                    Ok(combined)
+                } else {
+                    let combined_cols = combined.columns().ok_or_else(|| {
+                        Error::InternalError("Expected column-format table".to_string())
+                    })?;
+
+                    let mut seen: std::collections::HashSet<Vec<u8>> =
+                        std::collections::HashSet::new();
+                    let mut unique_rows: Vec<usize> = Vec::new();
+
+                    for row_idx in 0..combined.num_rows() {
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        use std::hash::Hash;
+
+                        for col in combined_cols {
+                            let val = col.get(row_idx)?;
+                            format!("{:?}", val).hash(&mut hasher);
+                        }
+
+                        use std::hash::Hasher;
+                        let hash_bytes = hasher.finish().to_le_bytes().to_vec();
+
+                        if seen.insert(hash_bytes) {
+                            unique_rows.push(row_idx);
+                        }
+                    }
+
+                    let mut unique_columns = Vec::new();
+                    for col in combined_cols {
+                        let mut new_col = Column::new(&col.data_type(), unique_rows.len());
+                        for &row_idx in &unique_rows {
+                            new_col.push(col.get(row_idx)?)?;
+                        }
+                        unique_columns.push(new_col);
+                    }
+
+                    Ok(Table::new(combined.schema().clone(), unique_columns)?)
+                }
             }
 
             _ => Err(Error::UnsupportedFeature(format!(
@@ -227,10 +558,90 @@ impl SubqueryExecutorImpl {
         }
     }
 
+    fn aggregate_field_name(agg_expr: &Expr) -> String {
+        match agg_expr {
+            Expr::Aggregate { name, args, .. } => {
+                let args_str = args
+                    .iter()
+                    .map(|arg| match arg {
+                        Expr::Column { name, .. } => name.clone(),
+                        Expr::Literal(lit) => format!("{:?}", lit),
+                        _ => "expr".to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", name.as_str(), args_str)
+            }
+            _ => "agg".to_string(),
+        }
+    }
+
+    fn compare_values(&self, a: &Value, b: &Value) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        if a.is_null() && b.is_null() {
+            return Ordering::Equal;
+        }
+        if a.is_null() {
+            return Ordering::Greater;
+        }
+        if b.is_null() {
+            return Ordering::Less;
+        }
+
+        if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+            return ai.cmp(&bi);
+        }
+        if let (Some(af), Some(bf)) = (a.as_f64(), b.as_f64()) {
+            return af.partial_cmp(&bf).unwrap_or(Ordering::Equal);
+        }
+        if let (Some(a_str), Some(b_str)) = (a.as_str(), b.as_str()) {
+            return a_str.cmp(b_str);
+        }
+        if let (Some(ad), Some(bd)) = (a.as_numeric(), b.as_numeric()) {
+            return ad.cmp(&bd);
+        }
+
+        Ordering::Equal
+    }
+
+    fn create_group_batch(
+        &self,
+        batch: &crate::Table,
+        row_indices: &[usize],
+    ) -> Result<crate::Table> {
+        use yachtsql_storage::Column;
+
+        use crate::Table;
+
+        let columns = batch
+            .columns()
+            .ok_or_else(|| Error::InternalError("Expected column-format table".to_string()));
+
+        let columns = match columns {
+            Ok(cols) => cols,
+            Err(_) => {
+                let converted = batch.to_column_format()?;
+                return self.create_group_batch(&converted, row_indices);
+            }
+        };
+
+        let mut new_columns = Vec::new();
+        for col in columns {
+            let mut new_col = Column::new(&col.data_type(), row_indices.len());
+            for &row_idx in row_indices {
+                new_col.push(col.get(row_idx)?)?;
+            }
+            new_columns.push(new_col);
+        }
+
+        Table::new(batch.schema().clone(), new_columns)
+    }
+
     fn evaluate_predicate(
         &self,
         predicate: &Expr,
-        batch: &crate::RecordBatch,
+        batch: &crate::Table,
         row_idx: usize,
     ) -> Result<Value> {
         match predicate {
@@ -253,6 +664,68 @@ impl SubqueryExecutorImpl {
                 Err(Error::InvalidQuery(format!("Column '{}' not found", name)))
             }
             Expr::Literal(lit) => Ok(self.literal_to_value(lit)),
+
+            Expr::UnaryOp { op, expr } => {
+                let val = self.evaluate_predicate(expr, batch, row_idx)?;
+                match op {
+                    UnaryOp::Not => {
+                        if val.is_null() {
+                            Ok(Value::null())
+                        } else {
+                            match val.as_bool() {
+                                Some(b) => Ok(Value::bool_val(!b)),
+                                None => Ok(Value::null()),
+                            }
+                        }
+                    }
+                    UnaryOp::IsNull => Ok(Value::bool_val(val.is_null())),
+                    UnaryOp::IsNotNull => Ok(Value::bool_val(!val.is_null())),
+                    UnaryOp::Negate => {
+                        if val.is_null() {
+                            Ok(Value::null())
+                        } else if let Some(i) = val.as_i64() {
+                            Ok(Value::int64(-i))
+                        } else if let Some(f) = val.as_f64() {
+                            Ok(Value::float64(-f))
+                        } else if let Some(d) = val.as_numeric() {
+                            Ok(Value::numeric(-d))
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
+                    UnaryOp::Plus => Ok(val),
+                    UnaryOp::BitwiseNot => {
+                        if val.is_null() {
+                            Ok(Value::null())
+                        } else if let Some(i) = val.as_i64() {
+                            Ok(Value::int64(!i))
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
+                }
+            }
+
+            Expr::InSubquery {
+                expr,
+                plan,
+                negated,
+            } => {
+                let value = self.evaluate_predicate(expr, batch, row_idx)?;
+                let subquery_values = self.execute_in_subquery(plan)?;
+
+                if subquery_values.is_empty() {
+                    return Ok(Value::bool_val(*negated));
+                }
+
+                for subquery_val in &subquery_values {
+                    if !subquery_val.is_null() && !value.is_null() && value == *subquery_val {
+                        return Ok(Value::bool_val(!*negated));
+                    }
+                }
+                Ok(Value::bool_val(*negated))
+            }
+
             _ => Err(Error::UnsupportedFeature(format!(
                 "Predicate expression {:?} not supported in subquery",
                 predicate
@@ -368,7 +841,7 @@ impl SubqueryExecutorImpl {
     fn evaluate_aggregate(
         &self,
         agg_expr: &Expr,
-        batch: &crate::RecordBatch,
+        batch: &crate::Table,
     ) -> Result<(Value, DataType)> {
         match agg_expr {
             Expr::Aggregate {
@@ -465,10 +938,18 @@ impl SubqueryExecutorImpl {
         }
     }
 
-    fn get_column_values(&self, expr: &Expr, batch: &crate::RecordBatch) -> Result<Vec<Value>> {
+    fn get_column_values(&self, expr: &Expr, batch: &crate::Table) -> Result<Vec<Value>> {
         use super::physical_plan::ProjectionWithExprExec;
 
         match expr {
+            Expr::Wildcard => {
+                let mut values = Vec::with_capacity(batch.num_rows());
+                for _ in 0..batch.num_rows() {
+                    values.push(Value::int64(1));
+                }
+                Ok(values)
+            }
+
             Expr::Column { name, table: _ } => {
                 for (col_idx, field) in batch.schema().fields().iter().enumerate() {
                     if field.name.eq_ignore_ascii_case(name) {
@@ -859,5 +1340,32 @@ impl SubqueryExecutor for SubqueryExecutorImpl {
         }
 
         Ok(values)
+    }
+
+    fn execute_tuple_in_subquery(&self, plan: &PlanNode) -> Result<Vec<Vec<Value>>> {
+        let batch = self.execute_plan(plan)?.to_column_format()?;
+
+        if batch.schema().fields().is_empty() {
+            return Err(Error::InvalidQuery(
+                "Tuple IN subquery must return at least one column".to_string(),
+            ));
+        }
+
+        let columns = batch
+            .columns()
+            .ok_or_else(|| Error::InternalError("Expected column-format table".to_string()))?;
+
+        let num_cols = columns.len();
+        let mut tuples = Vec::with_capacity(batch.num_rows());
+
+        for row_idx in 0..batch.num_rows() {
+            let mut tuple = Vec::with_capacity(num_cols);
+            for col in columns {
+                tuple.push(col.get(row_idx)?);
+            }
+            tuples.push(tuple);
+        }
+
+        Ok(tuples)
     }
 }

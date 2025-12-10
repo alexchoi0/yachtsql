@@ -148,6 +148,17 @@ impl ProjectionWithExprExec {
             CastDataType::Hstore => DataType::Hstore,
             CastDataType::MacAddr => DataType::MacAddr,
             CastDataType::MacAddr8 => DataType::MacAddr8,
+            CastDataType::Inet => DataType::Inet,
+            CastDataType::Cidr => DataType::Cidr,
+            CastDataType::Int4Range => DataType::Range(yachtsql_core::types::RangeType::Int4Range),
+            CastDataType::Int8Range => DataType::Range(yachtsql_core::types::RangeType::Int8Range),
+            CastDataType::NumRange => DataType::Range(yachtsql_core::types::RangeType::NumRange),
+            CastDataType::TsRange => DataType::Range(yachtsql_core::types::RangeType::TsRange),
+            CastDataType::TsTzRange => DataType::Range(yachtsql_core::types::RangeType::TsTzRange),
+            CastDataType::DateRange => DataType::Range(yachtsql_core::types::RangeType::DateRange),
+            CastDataType::Point => DataType::Point,
+            CastDataType::PgBox => DataType::PgBox,
+            CastDataType::Circle => DataType::Circle,
             CastDataType::Custom(name, struct_fields) => {
                 if struct_fields.is_empty() {
                     DataType::Custom(name.clone())
@@ -174,9 +185,16 @@ impl ProjectionWithExprExec {
             | BinaryOp::GreaterThan
             | BinaryOp::GreaterThanOrEqual
             | BinaryOp::And
-            | BinaryOp::Or => Some(DataType::Bool),
+            | BinaryOp::Or
+            | BinaryOp::RangeAdjacent
+            | BinaryOp::RangeStrictlyLeft
+            | BinaryOp::RangeStrictlyRight => Some(DataType::Bool),
 
             BinaryOp::Add => match (&left_type, &right_type) {
+                (Some(DataType::Point), Some(DataType::Point)) => Some(DataType::Point),
+                (Some(DataType::Range(rt)), Some(DataType::Range(_))) => {
+                    Some(DataType::Range(rt.clone()))
+                }
                 (Some(DataType::Timestamp), Some(DataType::Interval))
                 | (Some(DataType::Interval), Some(DataType::Timestamp))
                 | (Some(DataType::TimestampTz), Some(DataType::Interval))
@@ -187,7 +205,14 @@ impl ProjectionWithExprExec {
                 (Some(DataType::Date), Some(DataType::Interval))
                 | (Some(DataType::Interval), Some(DataType::Date)) => Some(DataType::Date),
 
+                (Some(DataType::Date32), Some(DataType::Int64))
+                | (Some(DataType::Int64), Some(DataType::Date32)) => Some(DataType::Date32),
+
                 (Some(DataType::Interval), Some(DataType::Interval)) => Some(DataType::Interval),
+
+                (Some(DataType::Inet), Some(DataType::Int64))
+                | (Some(DataType::Int64), Some(DataType::Inet))
+                | (Some(DataType::Inet), Some(DataType::Inet)) => Some(DataType::Inet),
 
                 (Some(DataType::Numeric(_)), _) | (_, Some(DataType::Numeric(_))) => {
                     Some(DataType::Numeric(None))
@@ -199,6 +224,13 @@ impl ProjectionWithExprExec {
                 _ => None,
             },
             BinaryOp::Subtract => match (&left_type, &right_type) {
+                (Some(DataType::Point), Some(DataType::Point)) => Some(DataType::Point),
+                (Some(DataType::Json), Some(DataType::String))
+                | (Some(DataType::Json), Some(DataType::Int64)) => Some(DataType::Json),
+
+                (Some(DataType::Range(rt)), Some(DataType::Range(_))) => {
+                    Some(DataType::Range(rt.clone()))
+                }
                 (Some(DataType::Timestamp), Some(DataType::Interval))
                 | (Some(DataType::TimestampTz), Some(DataType::Interval)) => {
                     Some(DataType::Timestamp)
@@ -213,7 +245,12 @@ impl ProjectionWithExprExec {
 
                 (Some(DataType::Date), Some(DataType::Interval)) => Some(DataType::Date),
 
+                (Some(DataType::Date32), Some(DataType::Int64)) => Some(DataType::Date32),
+
                 (Some(DataType::Interval), Some(DataType::Interval)) => Some(DataType::Interval),
+
+                (Some(DataType::Inet), Some(DataType::Int64)) => Some(DataType::Inet),
+                (Some(DataType::Inet), Some(DataType::Inet)) => Some(DataType::Int64),
 
                 (Some(DataType::Numeric(_)), _) | (_, Some(DataType::Numeric(_))) => {
                     Some(DataType::Numeric(None))
@@ -225,6 +262,10 @@ impl ProjectionWithExprExec {
                 _ => None,
             },
             BinaryOp::Multiply => match (&left_type, &right_type) {
+                (Some(DataType::Point), Some(DataType::Point)) => Some(DataType::Point),
+                (Some(DataType::Range(rt)), Some(DataType::Range(_))) => {
+                    Some(DataType::Range(rt.clone()))
+                }
                 (Some(DataType::Interval), Some(DataType::Int64))
                 | (Some(DataType::Interval), Some(DataType::Float64))
                 | (Some(DataType::Int64), Some(DataType::Interval))
@@ -239,6 +280,7 @@ impl ProjectionWithExprExec {
                 _ => None,
             },
             BinaryOp::Divide => match (&left_type, &right_type) {
+                (Some(DataType::Point), Some(DataType::Point)) => Some(DataType::Point),
                 (Some(DataType::Interval), Some(DataType::Int64))
                 | (Some(DataType::Interval), Some(DataType::Float64)) => Some(DataType::Interval),
                 (Some(DataType::Numeric(_)), _) | (_, Some(DataType::Numeric(_))) => {
@@ -281,10 +323,35 @@ impl ProjectionWithExprExec {
             | BinaryOp::RegexNotMatchI => Some(DataType::Bool),
 
             BinaryOp::Concat => match (&left_type, &right_type) {
+                (Some(DataType::Json), Some(DataType::Json)) => Some(DataType::Json),
                 (Some(DataType::Hstore), Some(DataType::Hstore)) => Some(DataType::Hstore),
                 (Some(DataType::String), _) | (_, Some(DataType::String)) => Some(DataType::String),
                 (Some(DataType::Bytes), Some(DataType::Bytes)) => Some(DataType::Bytes),
                 _ => left_type.or(right_type),
+            },
+
+            BinaryOp::HashMinus => match (&left_type, &right_type) {
+                (Some(DataType::Json), _) => Some(DataType::Json),
+                _ => None,
+            },
+
+            BinaryOp::BitwiseAnd | BinaryOp::BitwiseOr | BinaryOp::BitwiseXor => {
+                match (&left_type, &right_type) {
+                    (Some(DataType::Inet), Some(DataType::Inet)) => Some(DataType::Inet),
+                    _ => Some(DataType::Int64),
+                }
+            }
+
+            BinaryOp::InetContains
+            | BinaryOp::InetContainedBy
+            | BinaryOp::InetContainsOrEqual
+            | BinaryOp::InetContainedByOrEqual
+            | BinaryOp::InetOverlap => Some(DataType::Bool),
+
+            BinaryOp::ShiftLeft | BinaryOp::ShiftRight => match (&left_type, &right_type) {
+                (Some(DataType::Range(_)), Some(DataType::Range(_))) => Some(DataType::Bool),
+                (Some(DataType::Inet), Some(DataType::Inet)) => Some(DataType::Bool),
+                _ => Some(DataType::Int64),
             },
 
             _ => None,
@@ -301,6 +368,10 @@ impl ProjectionWithExprExec {
         match op {
             UnaryOp::IsNull | UnaryOp::IsNotNull | UnaryOp::Not => Some(DataType::Bool),
             UnaryOp::Negate | UnaryOp::Plus => operand_type,
+            UnaryOp::BitwiseNot => match operand_type {
+                Some(DataType::Inet) => Some(DataType::Inet),
+                _ => Some(DataType::Int64),
+            },
         }
     }
 
@@ -319,6 +390,8 @@ impl ProjectionWithExprExec {
             LiteralValue::String(_) => Some(DataType::String),
             LiteralValue::Bytes(_) => Some(DataType::Bytes),
             LiteralValue::Date(_) => Some(DataType::Date),
+            LiteralValue::Time(_) => Some(DataType::Time),
+            LiteralValue::DateTime(_) => Some(DataType::DateTime),
             LiteralValue::Timestamp(_) => Some(DataType::Timestamp),
             LiteralValue::Json(_) => Some(DataType::Json),
             LiteralValue::Array(elements) => {
@@ -379,6 +452,625 @@ impl ProjectionWithExprExec {
         match name {
             FunctionName::Custom(s) if s == "YACHTSQL.IS_FEATURE_ENABLED" => Some(DataType::Bool),
 
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "GREATCIRCLEDISTANCE"
+                        | "GEODISTANCE"
+                        | "H3EDGELENGTHM"
+                        | "H3EDGEANGLE"
+                        | "H3HEXAREAKM2"
+                        | "H3CELLAREAM2"
+                        | "H3CELLAREARADS2"
+                ) =>
+            {
+                Some(DataType::Float64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "POINTINELLIPSES"
+                        | "POINTINPOLYGON"
+                        | "H3ISVALID"
+                        | "H3ISPENTAGON"
+                        | "H3ISRESCLASSIII"
+                ) =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s) if s == "GEOHASHENCODE" => Some(DataType::String),
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "H3GETRESOLUTION"
+                        | "GEOTOH3"
+                        | "H3GETBASECELL"
+                        | "H3TOPARENT"
+                        | "H3DISTANCE"
+                        | "LONGLATTOS2CELLID"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "GEOHASHDECODE" | "H3TOGEO" | "S2CELLIDTOLONGLAT"
+                ) =>
+            {
+                Some(DataType::Struct(vec![
+                    yachtsql_core::types::StructField {
+                        name: "lat".to_string(),
+                        data_type: DataType::Float64,
+                    },
+                    yachtsql_core::types::StructField {
+                        name: "lon".to_string(),
+                        data_type: DataType::Float64,
+                    },
+                ]))
+            }
+
+            FunctionName::Custom(s) if s == "GEOHASHESINBOX" => {
+                Some(DataType::Array(Box::new(DataType::String)))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "H3KRING" | "H3TOCHILDREN" | "H3LINE" | "H3GETFACES"
+                ) =>
+            {
+                Some(DataType::Array(Box::new(DataType::Int64)))
+            }
+
+            FunctionName::Custom(s) if s == "H3TOGEOBOUNDARY" => {
+                Some(DataType::Array(Box::new(DataType::Struct(vec![
+                    yachtsql_core::types::StructField {
+                        name: "lat".to_string(),
+                        data_type: DataType::Float64,
+                    },
+                    yachtsql_core::types::StructField {
+                        name: "lon".to_string(),
+                        data_type: DataType::Float64,
+                    },
+                ]))))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "PROTOCOL"
+                        | "DOMAIN"
+                        | "DOMAINWITHOUTWWW"
+                        | "TOPLEVELDOMAIN"
+                        | "FIRSTSIGNIFICANTSUBDOMAIN"
+                        | "PATH"
+                        | "PATHFULL"
+                        | "QUERYSTRING"
+                        | "FRAGMENT"
+                        | "QUERYSTRINGANDFRAGMENT"
+                        | "EXTRACTURLPARAMETER"
+                        | "DECODEURLCOMPONENT"
+                        | "ENCODEURLCOMPONENT"
+                        | "ENCODEURLFORMCOMPONENT"
+                        | "DECODEURLFORMCOMPONENT"
+                        | "NETLOC"
+                        | "CUTTOFIRSTSIGNIFICANTSUBDOMAIN"
+                        | "CUTWWW"
+                        | "CUTQUERYSTRING"
+                        | "CUTFRAGMENT"
+                        | "CUTQUERYSTRINGANDFRAGMENT"
+                        | "CUTURLPARAMETER"
+                ) =>
+            {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s) if s == "PORT" => Some(DataType::Int64),
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "MASKLEN" | "FAMILY") => {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "NETMASK" | "HOSTMASK" | "BROADCAST") =>
+            {
+                Some(DataType::Inet)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "NETWORK" | "INET_MERGE") => {
+                Some(DataType::Cidr)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "HOST" | "ABBREV" | "TEXT") => {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s) if s == "INET_SAME_FAMILY" => Some(DataType::Bool),
+
+            FunctionName::Custom(s) if s == "SET_MASKLEN" => {
+                Self::infer_first_arg_type(args, schema).or(Some(DataType::Inet))
+            }
+
+            FunctionName::Custom(s) if s == "TRUNC" => Some(DataType::MacAddr),
+
+            FunctionName::Custom(s) if s == "MACADDR8_SET7BIT" => Some(DataType::MacAddr8),
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "TOYEAR" | "TOMONTH" | "TODAYOFMONTH") =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "POLYGONAREACARTESIAN" | "POLYGONPERIMETERCARTESIAN" | "L2DISTANCE"
+                ) =>
+            {
+                Some(DataType::Float64)
+            }
+
+            FunctionName::Custom(s) if s == "POLYGONCONVEXHULLCARTESIAN" => {
+                Some(DataType::GeoPolygon)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "POLYGONSINTERSECTIONCARTESIAN" | "POLYGONSUNIONCARTESIAN"
+                ) =>
+            {
+                Some(DataType::GeoMultiPolygon)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "EXTRACTURLPARAMETERS"
+                        | "EXTRACTURLPARAMETERNAMES"
+                        | "URLHIERARCHY"
+                        | "URLPATHHIERARCHY"
+                ) =>
+            {
+                Some(DataType::Array(Box::new(DataType::String)))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "HOSTNAME"
+                        | "FQDN"
+                        | "VERSION"
+                        | "TIMEZONE"
+                        | "CURRENTDATABASE"
+                        | "CURRENTUSER"
+                        | "BAR"
+                        | "FORMATREADABLESIZE"
+                        | "FORMATREADABLEQUANTITY"
+                        | "FORMATREADABLETIMEDELTA"
+                        | "GETSETTING"
+                ) =>
+            {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "UPTIME" | "SLEEP" | "THROWIF" | "IGNORE") =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "ISCONSTANT" | "ISFINITE" | "ISINFINITE" | "ISNAN" | "HASCOLUMNINTABLE"
+                ) =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s) if s == "MODELEVALUATE" => Some(DataType::Float64),
+
+            FunctionName::Custom(s) if s == "ROUNDBANKERS" => Some(DataType::Float64),
+
+            FunctionName::Custom(s) if s == "ROUNDDOWN" => Some(DataType::Float64),
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "ROUNDTOEXP2" | "ROUNDDURATION" | "ROUNDAGE") =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "MATERIALIZE" | "IDENTITY") => {
+                if !args.is_empty() {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Custom(s) if s == "TRANSFORM" => {
+                if args.len() >= 3 {
+                    Self::infer_expr_type_with_schema(&args[2], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "HEX"
+                        | "UNHEX"
+                        | "BASE64ENCODE"
+                        | "BASE64DECODE"
+                        | "TRYBASE64DECODE"
+                        | "BASE64URLENCODE"
+                        | "BASE64URLDECODE"
+                        | "TRYBASE64URLDECODE"
+                        | "BASE58ENCODE"
+                        | "BASE58DECODE"
+                        | "BIN"
+                        | "CHAR"
+                ) =>
+            {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "UNBIN"
+                        | "BITSHIFTLEFT"
+                        | "BITSHIFTRIGHT"
+                        | "BITAND"
+                        | "BITOR"
+                        | "BITXOR"
+                        | "BITNOT"
+                        | "BITCOUNT"
+                        | "BITTEST"
+                        | "BITTESTALL"
+                        | "BITTESTANY"
+                        | "BITROTATELEFT"
+                        | "BITROTATERIGHT"
+                        | "BITHAMMINGDISTANCE"
+                        | "BITSLICE"
+                        | "BYTESWAP"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if s == "BITPOSITIONSTOARRAY" => {
+                Some(DataType::Array(Box::new(DataType::Int64)))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "ISNULL" | "ISNOTNULL" | "ISZEROORNULL") =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TOYEAR"
+                        | "TOMONTH"
+                        | "TODAYOFMONTH"
+                        | "TOHOUR"
+                        | "TOMINUTE"
+                        | "TOSECOND"
+                        | "TODAYOFWEEK"
+                        | "TODAYOFYEAR"
+                        | "TOQUARTER"
+                        | "TOWEEK"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if s == "BITPOSITIONSTOARRAY" => {
+                Some(DataType::Array(Box::new(DataType::Int64)))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "ISNULL" | "ISNOTNULL" | "ISZEROORNULL") =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "NOW64"
+                        | "ADDSECONDS"
+                        | "SUBTRACTSECONDS"
+                        | "ADDMINUTES"
+                        | "SUBTRACTMINUTES"
+                        | "ADDHOURS"
+                        | "SUBTRACTHOURS"
+                        | "ADDDAYS"
+                        | "SUBTRACTDAYS"
+                        | "ADDWEEKS"
+                        | "SUBTRACTWEEKS"
+                        | "ADDMONTHS"
+                        | "SUBTRACTMONTHS"
+                        | "ADDYEARS"
+                        | "SUBTRACTYEARS"
+                ) =>
+            {
+                Some(DataType::Timestamp)
+            }
+
+            FunctionName::Custom(s) if s == "TODATE" => Some(DataType::Date),
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "IPV4NUMTOSTRING"
+                        | "IPV4NUMTOSTRINGCLASSC"
+                        | "IPV4CIDRTORANGE"
+                        | "IPV6CIDRTORANGE"
+                        | "MACNUMTOSTRING"
+                ) =>
+            {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "TOIPV4" | "TOIPV4ORNULL") => {
+                Some(DataType::IPv4)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "TOIPV6" | "TOIPV6ORNULL" | "IPV4TOIPV6") =>
+            {
+                Some(DataType::IPv6)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "IPV4STRINGTONUM" | "MACSTRINGTONUM" | "MACSTRINGTOOUI"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "ISIPV4STRING" | "ISIPV6STRING" | "ISIPADDRESSINRANGE"
+                ) =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "IPV6NUMTOSTRING") => {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "IPV6STRINGTONUM") => {
+                Some(DataType::Bytes)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TOINT8"
+                        | "TOINT16"
+                        | "TOINT32"
+                        | "TOINT64"
+                        | "TOUINT8"
+                        | "TOUINT16"
+                        | "TOUINT32"
+                        | "TOUINT64"
+                        | "TOINT64ORNULL"
+                        | "TOINT64ORZERO"
+                        | "REINTERPRETASINT64"
+                        | "RAND"
+                        | "RAND32"
+                        | "RAND64"
+                        | "RANDCONSTANT"
+                        | "RANDBERNOULLI"
+                        | "RANDBINOMIAL"
+                        | "RANDNEGATIVEBINOMIAL"
+                        | "RANDPOISSON"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "ENCRYPT" | "AES_ENCRYPT_MYSQL") => {
+                Some(DataType::Bytes)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "DECRYPT" | "AES_DECRYPT_MYSQL") => {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TOFLOAT32"
+                        | "TOFLOAT64"
+                        | "TOFLOAT64ORNULL"
+                        | "TOFLOAT64ORZERO"
+                        | "RANDUNIFORM"
+                        | "RANDNORMAL"
+                        | "RANDLOGNORMAL"
+                        | "RANDEXPONENTIAL"
+                        | "RANDCHISQUARED"
+                        | "RANDSTUDENTT"
+                        | "RANDFISHERF"
+                ) =>
+            {
+                Some(DataType::Float64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TOSTRING"
+                        | "TOFIXEDSTRING"
+                        | "REINTERPRETASSTRING"
+                        | "TOTYPENAME"
+                        | "GENERATEUUIDV4"
+                        | "RANDOMPRINTABLEASCII"
+                        | "RANDOMSTRINGUTF8"
+                        | "FAKEDATA"
+                ) =>
+            {
+                Some(DataType::String)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "TODATE" | "TODATEORNULL") => {
+                Some(DataType::Date)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TODATETIME"
+                        | "TODATETIME64"
+                        | "TODATETIMEORNULL"
+                        | "PARSEDATETIME"
+                        | "PARSEDATETIMEBESTEFFORT"
+                        | "PARSEDATETIMEBESTEFFORTORNULL"
+                ) =>
+            {
+                Some(DataType::DateTime)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TUMBLE"
+                        | "TUMBLESTART"
+                        | "TUMBLEEND"
+                        | "HOP"
+                        | "HOPSTART"
+                        | "HOPEND"
+                        | "TIMESLOT"
+                        | "DATE_BIN"
+                ) =>
+            {
+                Some(DataType::DateTime)
+            }
+
+            FunctionName::Custom(s) if s == "TIMESLOTS" => {
+                Some(DataType::Array(Box::new(DataType::DateTime)))
+            }
+
+            FunctionName::Custom(s) if s == "WINDOWID" => Some(DataType::Int64),
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "TODECIMAL32" | "TODECIMAL64" | "TODECIMAL128") =>
+            {
+                Some(DataType::Numeric(None))
+            }
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "ACCURATECAST" | "ACCURATECASTORNULL") =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "POSITION"
+                        | "POSITIONCASEINSENSITIVE"
+                        | "POSITIONUTF8"
+                        | "POSITIONCASEINSENSITIVEUTF8"
+                        | "LOCATE"
+                        | "COUNTSUBSTRINGS"
+                        | "COUNTSUBSTRINGSCASEINSENSITIVE"
+                        | "MULTISEARCHFIRSTINDEX"
+                        | "MULTIMATCHANYINDEX"
+                        | "MULTISEARCHFIRSTPOSITION"
+                        | "COUNTMATCHES"
+                ) =>
+            {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "MATCH"
+                        | "MULTISEARCHANY"
+                        | "MULTIMATCHANY"
+                        | "HASTOKEN"
+                        | "HASTOKENCASEINSENSITIVE"
+                ) =>
+            {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "MULTISEARCHALLPOSITIONS" | "MULTIMATCHALLINDICES"
+                ) =>
+            {
+                Some(DataType::Array(Box::new(DataType::Int64)))
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "EXTRACTGROUPS") => {
+                Some(DataType::Array(Box::new(DataType::String)))
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "NGRAMDISTANCE" | "NGRAMSEARCH") => {
+                Some(DataType::Float64)
+            }
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "RANDOMSTRING" | "RANDOMFIXEDSTRING") =>
+            {
+                Some(DataType::Bytes)
+            }
+            FunctionName::Custom(s) if matches!(s.as_str(), "LOWCARDINALITYINDICES") => {
+                Some(DataType::Int64)
+            }
+            FunctionName::Custom(s) if matches!(s.as_str(), "LOWCARDINALITYKEYS") => {
+                Some(DataType::Array(Box::new(DataType::String)))
+            }
+            FunctionName::Custom(s) if matches!(s.as_str(), "TOLOWCARDINALITY") => {
+                if args.is_empty() {
+                    None
+                } else {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                }
+            }
+            FunctionName::Custom(s) if matches!(s.as_str(), "TOUUID") => Some(DataType::Uuid),
+
+            FunctionName::BitmapBuild
+            | FunctionName::BitmapToArray
+            | FunctionName::BitmapAnd
+            | FunctionName::BitmapOr
+            | FunctionName::BitmapXor
+            | FunctionName::BitmapAndnot
+            | FunctionName::BitmapSubsetInRange
+            | FunctionName::BitmapSubsetLimit
+            | FunctionName::BitmapTransform
+            | FunctionName::SubBitmap
+            | FunctionName::GroupBitmapState => Some(DataType::Array(Box::new(DataType::Int64))),
+
+            FunctionName::BitmapCardinality
+            | FunctionName::BitmapContains
+            | FunctionName::BitmapHasAny
+            | FunctionName::BitmapHasAll
+            | FunctionName::BitmapAndCardinality
+            | FunctionName::BitmapOrCardinality
+            | FunctionName::BitmapXorCardinality
+            | FunctionName::BitmapAndnotCardinality
+            | FunctionName::BitmapMin
+            | FunctionName::BitmapMax => Some(DataType::Int64),
+
             FunctionName::Abs
             | FunctionName::Absolute
             | FunctionName::Ceil
@@ -436,14 +1128,29 @@ impl ProjectionWithExprExec {
             | FunctionName::Random
             | FunctionName::Rand => Some(DataType::Float64),
 
-            FunctionName::Custom(s)
-                if s == "DEGREES"
-                    || s == "RADIANS"
-                    || s == "GAMMA"
-                    || s == "LGAMMA"
-                    || s == "TO_NUMBER" =>
-            {
-                if s == "TO_NUMBER" && args.len() == 2 {
+            FunctionName::Degrees
+            | FunctionName::Radians
+            | FunctionName::Gamma
+            | FunctionName::Lgamma
+            | FunctionName::Sinh
+            | FunctionName::Cosh
+            | FunctionName::Tanh
+            | FunctionName::Asinh
+            | FunctionName::Acosh
+            | FunctionName::Atanh
+            | FunctionName::Cot
+            | FunctionName::Sind
+            | FunctionName::Cosd
+            | FunctionName::Tand
+            | FunctionName::Asind
+            | FunctionName::Acosd
+            | FunctionName::Atand
+            | FunctionName::Atan2d
+            | FunctionName::Cotd
+            | FunctionName::Cbrt => Some(DataType::Float64),
+
+            FunctionName::ToNumber => {
+                if args.len() == 2 {
                     if let yachtsql_optimizer::Expr::Literal(
                         yachtsql_optimizer::expr::LiteralValue::String(fmt),
                     ) = &args[1]
@@ -456,12 +1163,23 @@ impl ProjectionWithExprExec {
                 Some(DataType::Float64)
             }
 
-            FunctionName::Custom(s)
-                if s == "SAFE_ADD"
-                    || s == "SAFE_SUBTRACT"
-                    || s == "SAFE_MULTIPLY"
-                    || s == "SAFE_DIVIDE" =>
-            {
+            FunctionName::Div => Some(DataType::Int64),
+
+            FunctionName::Factorial
+            | FunctionName::Gcd
+            | FunctionName::Lcm
+            | FunctionName::Scale
+            | FunctionName::MinScale
+            | FunctionName::WidthBucket => Some(DataType::Int64),
+
+            FunctionName::TrimScale => Some(DataType::Numeric(None)),
+
+            FunctionName::Setseed => Some(DataType::Unknown),
+
+            FunctionName::SafeAdd
+            | FunctionName::SafeSubtract
+            | FunctionName::SafeMultiply
+            | FunctionName::SafeDivide => {
                 if args.len() >= 2 {
                     let left_type = Self::infer_expr_type_with_schema(&args[0], schema);
                     let right_type = Self::infer_expr_type_with_schema(&args[1], schema);
@@ -481,7 +1199,7 @@ impl ProjectionWithExprExec {
                 }
             }
 
-            FunctionName::Custom(s) if s == "SAFE_NEGATE" => {
+            FunctionName::SafeNegate => {
                 if !args.is_empty() {
                     let arg_type = Self::infer_expr_type_with_schema(&args[0], schema);
                     match arg_type {
@@ -504,12 +1222,8 @@ impl ProjectionWithExprExec {
             | FunctionName::TrimRight
             | FunctionName::Replace
             | FunctionName::StrReplace
-            | FunctionName::Upper
             | FunctionName::Ucase
-            | FunctionName::Lower
             | FunctionName::Lcase
-            | FunctionName::Substr
-            | FunctionName::Substring
             | FunctionName::Mid
             | FunctionName::Left
             | FunctionName::Right
@@ -526,15 +1240,13 @@ impl ProjectionWithExprExec {
             | FunctionName::ToChar
             | FunctionName::Translate => Some(DataType::String),
 
-            FunctionName::Custom(s)
-                if s == "FORMAT"
-                    || s == "QUOTE_IDENT"
-                    || s == "QUOTE_LITERAL"
-                    || s == "REGEXP_EXTRACT"
-                    || s == "REGEXP_REPLACE" =>
-            {
-                Some(DataType::String)
-            }
+            FunctionName::Format
+            | FunctionName::QuoteIdent
+            | FunctionName::QuoteLiteral
+            | FunctionName::RegexpExtract
+            | FunctionName::RegexpReplace
+            | FunctionName::ReplaceRegexpAll
+            | FunctionName::ReplaceRegexpOne => Some(DataType::String),
 
             FunctionName::Reverse | FunctionName::Strrev => {
                 if !args.is_empty() {
@@ -547,11 +1259,109 @@ impl ProjectionWithExprExec {
                 }
             }
 
+            FunctionName::Substr | FunctionName::Substring => {
+                if !args.is_empty() {
+                    match Self::infer_expr_type_with_schema(&args[0], schema) {
+                        Some(DataType::Bytes) => Some(DataType::Bytes),
+                        _ => Some(DataType::String),
+                    }
+                } else {
+                    Some(DataType::String)
+                }
+            }
+
+            FunctionName::Lower | FunctionName::Upper => {
+                if !args.is_empty() {
+                    match Self::infer_expr_type_with_schema(&args[0], schema) {
+                        Some(DataType::Range(range_type)) => match range_type {
+                            yachtsql_core::types::RangeType::Int4Range
+                            | yachtsql_core::types::RangeType::Int8Range => Some(DataType::Int64),
+                            yachtsql_core::types::RangeType::NumRange => Some(DataType::Float64),
+                            yachtsql_core::types::RangeType::DateRange => Some(DataType::Date),
+                            yachtsql_core::types::RangeType::TsRange
+                            | yachtsql_core::types::RangeType::TsTzRange => {
+                                Some(DataType::Timestamp)
+                            }
+                        },
+                        _ => Some(DataType::String),
+                    }
+                } else {
+                    Some(DataType::String)
+                }
+            }
+
+            FunctionName::LowerInc
+            | FunctionName::UpperInc
+            | FunctionName::LowerInf
+            | FunctionName::UpperInf
+            | FunctionName::Isempty
+            | FunctionName::RangeIsempty
+            | FunctionName::RangeContains
+            | FunctionName::RangeContainsElem
+            | FunctionName::RangeOverlaps
+            | FunctionName::RangeAdjacent
+            | FunctionName::RangeStrictlyLeft
+            | FunctionName::RangeStrictlyRight => Some(DataType::Bool),
+
+            FunctionName::Range => {
+                if !args.is_empty() {
+                    match Self::infer_expr_type_with_schema(&args[0], schema) {
+                        Some(DataType::Date) => {
+                            Some(DataType::Range(yachtsql_core::types::RangeType::DateRange))
+                        }
+                        Some(DataType::Timestamp) | Some(DataType::DateTime) => {
+                            Some(DataType::Range(yachtsql_core::types::RangeType::TsRange))
+                        }
+                        Some(DataType::Int64) => {
+                            Some(DataType::Range(yachtsql_core::types::RangeType::Int8Range))
+                        }
+                        Some(DataType::Float64) => {
+                            Some(DataType::Range(yachtsql_core::types::RangeType::NumRange))
+                        }
+                        _ => Some(DataType::Range(yachtsql_core::types::RangeType::DateRange)),
+                    }
+                } else {
+                    Some(DataType::Range(yachtsql_core::types::RangeType::DateRange))
+                }
+            }
+
+            FunctionName::RangeMerge
+            | FunctionName::RangeUnion
+            | FunctionName::RangeIntersection
+            | FunctionName::RangeDifference => {
+                if !args.is_empty() {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::RangeStart | FunctionName::RangeEnd => {
+                if !args.is_empty() {
+                    match Self::infer_expr_type_with_schema(&args[0], schema) {
+                        Some(DataType::Range(range_type)) => match range_type {
+                            yachtsql_core::types::RangeType::Int4Range
+                            | yachtsql_core::types::RangeType::Int8Range => Some(DataType::Int64),
+                            yachtsql_core::types::RangeType::NumRange => Some(DataType::Float64),
+                            yachtsql_core::types::RangeType::DateRange => Some(DataType::Date),
+                            yachtsql_core::types::RangeType::TsRange
+                            | yachtsql_core::types::RangeType::TsTzRange => {
+                                Some(DataType::Timestamp)
+                            }
+                        },
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+
             FunctionName::Length
             | FunctionName::Len
             | FunctionName::CharLength
             | FunctionName::CharacterLength
             | FunctionName::OctetLength
+            | FunctionName::ByteLength
             | FunctionName::Lengthb
             | FunctionName::Position
             | FunctionName::Strpos
@@ -560,25 +1370,40 @@ impl ProjectionWithExprExec {
             | FunctionName::Ascii
             | FunctionName::Ord => Some(DataType::Int64),
 
-            FunctionName::Custom(s)
-                if s == "STARTS_WITH" || s == "ENDS_WITH" || s == "REGEXP_CONTAINS" =>
-            {
+            FunctionName::StartsWith | FunctionName::EndsWith | FunctionName::RegexpContains => {
                 Some(DataType::Bool)
             }
 
             FunctionName::Md5
             | FunctionName::Md5Hash
             | FunctionName::Sha256
-            | FunctionName::Sha2 => Some(DataType::String),
+            | FunctionName::Sha2
+            | FunctionName::Sha1
+            | FunctionName::Sha224
+            | FunctionName::Sha384
+            | FunctionName::Sha512
+            | FunctionName::Blake3 => Some(DataType::String),
 
-            FunctionName::Custom(s) if s == "SHA1" || s == "SHA512" => Some(DataType::String),
+            FunctionName::FarmFingerprint
+            | FunctionName::Crc32
+            | FunctionName::Crc32c
+            | FunctionName::XxHash32
+            | FunctionName::XxHash64
+            | FunctionName::CityHash64
+            | FunctionName::SipHash64
+            | FunctionName::MurmurHash2_32
+            | FunctionName::MurmurHash2_64
+            | FunctionName::MurmurHash3_32
+            | FunctionName::MurmurHash3_64
+            | FunctionName::JavaHash
+            | FunctionName::HalfMd5
+            | FunctionName::FarmHash64
+            | FunctionName::MetroHash64 => Some(DataType::Int64),
 
-            FunctionName::Custom(s) if s == "FARM_FINGERPRINT" || s == "CRC32" || s == "CRC32C" => {
-                Some(DataType::Int64)
-            }
+            FunctionName::MurmurHash3_128 => Some(DataType::String),
 
-            FunctionName::Custom(s) if s == "TO_HEX" => Some(DataType::String),
-            FunctionName::Custom(s) if s == "FROM_HEX" => Some(DataType::Bytes),
+            FunctionName::ToHex => Some(DataType::String),
+            FunctionName::FromHex => Some(DataType::Bytes),
 
             FunctionName::CurrentDate | FunctionName::Curdate | FunctionName::Today => {
                 Some(DataType::Date)
@@ -601,17 +1426,15 @@ impl ProjectionWithExprExec {
             | FunctionName::DateTrunc
             | FunctionName::TruncDate => Some(DataType::Date),
 
-            FunctionName::Custom(s) if s == "TIMESTAMP_DIFF" => Some(DataType::Int64),
-            FunctionName::Custom(s) if s == "TIMESTAMP_TRUNC" => Some(DataType::Timestamp),
+            FunctionName::TimestampDiff => Some(DataType::Int64),
+            FunctionName::TimestampTrunc => Some(DataType::Timestamp),
 
-            FunctionName::Custom(s) if s == "PARSE_DATE" => Some(DataType::Date),
+            FunctionName::ParseDate => Some(DataType::Date),
             FunctionName::StrToDate | FunctionName::ParseDatetime => Some(DataType::Date),
-            FunctionName::Custom(s) if s == "PARSE_TIMESTAMP" || s == "AT_TIME_ZONE" => {
-                Some(DataType::Timestamp)
-            }
+            FunctionName::ParseTimestamp | FunctionName::AtTimeZone => Some(DataType::Timestamp),
 
-            FunctionName::Custom(s) if s == "MAKE_DATE" => Some(DataType::Date),
-            FunctionName::Custom(s) if s == "MAKE_TIMESTAMP" => Some(DataType::Timestamp),
+            FunctionName::MakeDate => Some(DataType::Date),
+            FunctionName::MakeTimestamp => Some(DataType::Timestamp),
             FunctionName::CurrentTime
             | FunctionName::Curtime
             | FunctionName::Localtime
@@ -622,142 +1445,286 @@ impl ProjectionWithExprExec {
             | FunctionName::Datepart
             | FunctionName::DateDiff
             | FunctionName::Datediff
-            | FunctionName::Timestampdiff
-            | FunctionName::Age => Some(DataType::Int64),
+            | FunctionName::Timestampdiff => Some(DataType::Int64),
 
-            FunctionName::Custom(s)
-                if s == "YEAR"
-                    || s == "MONTH"
-                    || s == "DAY"
-                    || s == "HOUR"
-                    || s == "MINUTE"
-                    || s == "SECOND"
-                    || s == "QUARTER"
-                    || s == "WEEK"
-                    || s == "DOW"
-                    || s == "DOY"
-                    || s == "DAYOFWEEK"
-                    || s == "DAYOFYEAR" =>
-            {
-                Some(DataType::Int64)
+            FunctionName::Age => Some(DataType::Interval),
+
+            FunctionName::JustifyDays
+            | FunctionName::JustifyHours
+            | FunctionName::JustifyInterval => Some(DataType::Interval),
+
+            FunctionName::UnixDate
+            | FunctionName::UnixSeconds
+            | FunctionName::UnixMillis
+            | FunctionName::UnixMicros
+            | FunctionName::DatetimeDiff
+            | FunctionName::TimeDiff => Some(DataType::Int64),
+
+            FunctionName::DateFromUnixDate | FunctionName::LastDay => Some(DataType::Date),
+
+            FunctionName::TimestampSeconds
+            | FunctionName::TimestampMillis
+            | FunctionName::TimestampMicros
+            | FunctionName::TimestampAdd
+            | FunctionName::TimestampSub => Some(DataType::Timestamp),
+
+            FunctionName::DatetimeAdd | FunctionName::DatetimeSub | FunctionName::DatetimeTrunc => {
+                Some(DataType::DateTime)
             }
 
-            FunctionName::FormatTimestamp | FunctionName::DateFormat => Some(DataType::String),
-            FunctionName::Custom(s) if s == "FORMAT_DATE" || s == "FORMAT_TIMESTAMP" => {
+            FunctionName::TimeAdd | FunctionName::TimeSub | FunctionName::TimeTrunc => {
+                Some(DataType::Time)
+            }
+
+            FunctionName::Year
+            | FunctionName::Month
+            | FunctionName::Day
+            | FunctionName::Hour
+            | FunctionName::Minute
+            | FunctionName::Second
+            | FunctionName::Quarter
+            | FunctionName::Week
+            | FunctionName::Dow
+            | FunctionName::Doy
+            | FunctionName::Dayofweek
+            | FunctionName::Dayofyear => Some(DataType::Int64),
+
+            FunctionName::FormatTimestamp | FunctionName::DateFormat | FunctionName::FormatDate => {
                 Some(DataType::String)
             }
 
-            FunctionName::Custom(s)
-                if s == "NEXTVAL" || s == "CURRVAL" || s == "SETVAL" || s == "LASTVAL" =>
-            {
-                Some(DataType::Int64)
-            }
+            FunctionName::Nextval
+            | FunctionName::Currval
+            | FunctionName::Setval
+            | FunctionName::Lastval => Some(DataType::Int64),
 
             FunctionName::ArrayLength | FunctionName::Cardinality => Some(DataType::Int64),
-            FunctionName::Custom(s) if s == "ARRAY_POSITION" => Some(DataType::Int64),
+            FunctionName::ArrayPosition => Some(DataType::Int64),
             FunctionName::ArrayContains | FunctionName::ArrayContainsAll => Some(DataType::Bool),
-            FunctionName::Split | FunctionName::StringSplit => {
-                Some(DataType::Array(Box::new(DataType::String)))
-            }
+            FunctionName::Split
+            | FunctionName::StringSplit
+            | FunctionName::SplitByChar
+            | FunctionName::SplitByString
+            | FunctionName::SplitByRegexp
+            | FunctionName::SplitByWhitespace
+            | FunctionName::SplitByNonAlpha
+            | FunctionName::AlphaTokens
+            | FunctionName::ExtractAll
+            | FunctionName::Ngrams
+            | FunctionName::Tokens => Some(DataType::Array(Box::new(DataType::String))),
             FunctionName::SplitPart => Some(DataType::String),
-            FunctionName::Custom(s) if s == "STRING_TO_ARRAY" => {
+            FunctionName::ArrayStringConcat => Some(DataType::String),
+            FunctionName::ExtractAllGroupsHorizontal | FunctionName::ExtractAllGroupsVertical => {
+                Some(DataType::Array(Box::new(DataType::Array(Box::new(
+                    DataType::String,
+                )))))
+            }
+            FunctionName::StringToArray => Some(DataType::Array(Box::new(DataType::String))),
+
+            FunctionName::Stem
+            | FunctionName::Lemmatize
+            | FunctionName::DetectLanguage
+            | FunctionName::DetectLanguageUnknown
+            | FunctionName::DetectCharset
+            | FunctionName::DetectTonality
+            | FunctionName::DetectProgrammingLanguage
+            | FunctionName::NormalizeQuery => Some(DataType::String),
+            FunctionName::Synonyms | FunctionName::DetectLanguageMixed => {
                 Some(DataType::Array(Box::new(DataType::String)))
             }
+            FunctionName::NormalizedQueryHash
+            | FunctionName::NgramSimHash
+            | FunctionName::WordShingleSimHash => Some(DataType::Int64),
+            FunctionName::WordShingleMinHash => Some(DataType::Array(Box::new(DataType::Int64))),
 
-            FunctionName::Custom(s) if s == "GENERATE_ARRAY" => {
-                Some(DataType::Array(Box::new(DataType::Int64)))
-            }
-            FunctionName::Custom(s) if s == "GENERATE_DATE_ARRAY" => {
-                Some(DataType::Array(Box::new(DataType::Date)))
-            }
-            FunctionName::Custom(s) if s == "GENERATE_TIMESTAMP_ARRAY" => {
+            FunctionName::L1Norm
+            | FunctionName::L2Norm
+            | FunctionName::LinfNorm
+            | FunctionName::LpNorm
+            | FunctionName::L1Distance
+            | FunctionName::L2Distance
+            | FunctionName::LinfDistance
+            | FunctionName::LpDistance
+            | FunctionName::CosineDistance
+            | FunctionName::DotProduct
+            | FunctionName::L2SquaredDistance => Some(DataType::Float64),
+            FunctionName::L1Normalize
+            | FunctionName::L2Normalize
+            | FunctionName::LinfNormalize
+            | FunctionName::LpNormalize => Some(DataType::Array(Box::new(DataType::Float64))),
+
+            FunctionName::GenerateArray => Some(DataType::Array(Box::new(DataType::Int64))),
+            FunctionName::GenerateDateArray => Some(DataType::Array(Box::new(DataType::Date))),
+            FunctionName::GenerateTimestampArray => {
                 Some(DataType::Array(Box::new(DataType::Timestamp)))
             }
             FunctionName::GenerateUuid
             | FunctionName::Uuid
             | FunctionName::GenRandomUuid
             | FunctionName::Newid
-            | FunctionName::UuidGenerateV4 => Some(DataType::String),
-            FunctionName::Custom(s)
-                if s == "UUID_GENERATE_V1" || s == "UUIDV4" || s == "UUIDV7" =>
-            {
-                Some(DataType::String)
-            }
-            FunctionName::Custom(s) if s == "GENERATE_UUID_ARRAY" => {
-                Some(DataType::Array(Box::new(DataType::String)))
-            }
+            | FunctionName::UuidGenerateV4
+            | FunctionName::UuidGenerateV1
+            | FunctionName::Uuidv4
+            | FunctionName::Uuidv7 => Some(DataType::String),
+            FunctionName::GenerateUuidArray => Some(DataType::Array(Box::new(DataType::String))),
 
-            FunctionName::Custom(s) if s == "GEN_RANDOM_BYTES" || s == "DIGEST" => {
-                Some(DataType::Bytes)
-            }
+            FunctionName::GenRandomBytes | FunctionName::Digest => Some(DataType::Bytes),
             FunctionName::Encode => Some(DataType::String),
+            FunctionName::Decode => Some(DataType::Bytes),
 
-            FunctionName::Custom(s)
-                if s == "HSTORE_EXISTS"
-                    || s == "HSTORE_EXISTS_ALL"
-                    || s == "HSTORE_EXISTS_ANY"
-                    || s == "HSTORE_CONTAINS"
-                    || s == "HSTORE_CONTAINED_BY"
-                    || s == "HSTORE_DEFINED"
-                    || s == "DEFINED"
-                    || s == "EXIST" =>
-            {
-                Some(DataType::Bool)
-            }
-            FunctionName::Custom(s)
-                if s == "HSTORE_CONCAT"
-                    || s == "HSTORE_DELETE"
-                    || s == "HSTORE_DELETE_KEY"
-                    || s == "HSTORE_DELETE_KEYS"
-                    || s == "HSTORE_DELETE_HSTORE"
-                    || s == "HSTORE_SLICE"
-                    || s == "SLICE"
-                    || s == "DELETE"
-                    || s == "HSTORE" =>
-            {
-                Some(DataType::Hstore)
-            }
-            FunctionName::Custom(s) if s == "HSTORE_AKEYS" || s == "AKEYS" => {
+            FunctionName::HstoreExists
+            | FunctionName::HstoreExistsAll
+            | FunctionName::HstoreExistsAny
+            | FunctionName::HstoreContains
+            | FunctionName::HstoreContainedBy
+            | FunctionName::HstoreDefined
+            | FunctionName::Defined
+            | FunctionName::Exist => Some(DataType::Bool),
+            FunctionName::HstoreConcat
+            | FunctionName::HstoreDelete
+            | FunctionName::HstoreDeleteKey
+            | FunctionName::HstoreDeleteKeys
+            | FunctionName::HstoreDeleteHstore
+            | FunctionName::HstoreSlice
+            | FunctionName::Slice
+            | FunctionName::Delete
+            | FunctionName::Hstore => Some(DataType::Hstore),
+            FunctionName::HstoreAkeys | FunctionName::Akeys => {
                 Some(DataType::Array(Box::new(DataType::String)))
             }
-            FunctionName::Custom(s) if s == "SKEYS" || s == "SVALS" => Some(DataType::String),
-            FunctionName::Custom(s) if s == "HSTORE_AVALS" || s == "AVALS" => {
+            FunctionName::Skeys | FunctionName::Svals => Some(DataType::String),
+            FunctionName::HstoreAvals | FunctionName::Avals => {
                 Some(DataType::Array(Box::new(DataType::String)))
             }
-            FunctionName::Custom(s) if s == "HSTORE_TO_JSON" || s == "HSTORE_TO_JSONB" => {
-                Some(DataType::Json)
-            }
-            FunctionName::Custom(s) if s == "HSTORE_TO_ARRAY" => {
-                Some(DataType::Array(Box::new(DataType::String)))
-            }
-            FunctionName::Custom(s) if s == "HSTORE_TO_MATRIX" => Some(DataType::Array(Box::new(
-                DataType::Array(Box::new(DataType::String)),
-            ))),
-            FunctionName::Custom(s) if s == "HSTORE_GET" => Some(DataType::String),
-            FunctionName::Custom(s) if s == "HSTORE_GET_VALUES" => {
-                Some(DataType::Array(Box::new(DataType::String)))
-            }
+            FunctionName::HstoreToJson | FunctionName::HstoreToJsonb => Some(DataType::Json),
+            FunctionName::HstoreToArray => Some(DataType::Array(Box::new(DataType::String))),
+            FunctionName::HstoreToMatrix => Some(DataType::Array(Box::new(DataType::Array(
+                Box::new(DataType::String),
+            )))),
+            FunctionName::HstoreGet => Some(DataType::String),
+            FunctionName::HstoreGetValues => Some(DataType::Array(Box::new(DataType::String))),
 
-            FunctionName::Custom(s)
-                if s == "ARRAY_REVERSE"
-                    || s == "ARRAY_SORT"
-                    || s == "ARRAY_DISTINCT"
-                    || s == "ARRAY_REPLACE" =>
-            {
-                Self::infer_array_type_from_first_arg(args, schema)
-            }
+            FunctionName::ArrayReverse
+            | FunctionName::ArraySort
+            | FunctionName::ArrayDistinct
+            | FunctionName::ArrayReplace => Self::infer_array_type_from_first_arg(args, schema),
 
-            FunctionName::Custom(s) if s == "ARRAY_APPEND" || s == "ARRAY_REMOVE" => {
+            FunctionName::ArrayAppend | FunctionName::ArrayRemove => {
                 Self::infer_array_type_with_element_fallback(0, 1, args, schema)
             }
 
-            FunctionName::Custom(s) if s == "ARRAY_PREPEND" => {
+            FunctionName::ArrayPrepend => {
                 Self::infer_array_type_with_element_fallback(1, 0, args, schema)
             }
 
             FunctionName::ArrayConcat | FunctionName::ArrayCat => {
                 Self::infer_array_type_from_non_empty_array(args, schema)
             }
+
+            FunctionName::Arraymap
+            | FunctionName::Arrayfilter
+            | FunctionName::Arraysort
+            | FunctionName::Arrayreversesort => {
+                if args.len() >= 2 {
+                    Self::infer_expr_type_with_schema(&args[1], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Arrayexists
+            | FunctionName::Arrayall
+            | FunctionName::Arraycount
+            | FunctionName::Arrayfirstindex
+            | FunctionName::Arraylastindex => Some(DataType::Int64),
+
+            FunctionName::Arrayfirst | FunctionName::Arraylast => {
+                if args.len() >= 2 {
+                    if let Some(DataType::Array(elem_type)) =
+                        Self::infer_expr_type_with_schema(&args[1], schema)
+                    {
+                        Some(*elem_type)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Arraysum | FunctionName::Arraymin | FunctionName::Arraymax => {
+                if args.len() >= 2 && matches!(&args[0], yachtsql_optimizer::Expr::Lambda { .. }) {
+                    Some(DataType::Int64)
+                } else if !args.is_empty() {
+                    if let Some(DataType::Array(elem_type)) =
+                        Self::infer_expr_type_with_schema(&args[0], schema)
+                    {
+                        Some(*elem_type)
+                    } else {
+                        Some(DataType::Int64)
+                    }
+                } else {
+                    Some(DataType::Int64)
+                }
+            }
+
+            FunctionName::Arrayavg => Some(DataType::Float64),
+
+            FunctionName::Arrayfold => {
+                if args.len() >= 3 {
+                    Self::infer_expr_type_with_schema(&args[2], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Arrayreduce => {
+                if args.len() >= 2 {
+                    if let Some(DataType::Array(elem_type)) =
+                        Self::infer_expr_type_with_schema(&args[1], schema)
+                    {
+                        Some(*elem_type)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Arrayreduceinranges => Some(DataType::Array(Box::new(DataType::Unknown))),
+
+            FunctionName::Arraycumsum
+            | FunctionName::Arraycumsumnonnegative
+            | FunctionName::Arraydifference => Some(DataType::Array(Box::new(DataType::Int64))),
+
+            FunctionName::Arraysplit | FunctionName::Arrayreversesplit => {
+                if args.len() >= 2 {
+                    if let Some(arr_type) = Self::infer_expr_type_with_schema(&args[1], schema) {
+                        Some(DataType::Array(Box::new(arr_type)))
+                    } else {
+                        Some(DataType::Array(Box::new(DataType::Array(Box::new(
+                            DataType::Unknown,
+                        )))))
+                    }
+                } else {
+                    Some(DataType::Array(Box::new(DataType::Array(Box::new(
+                        DataType::Unknown,
+                    )))))
+                }
+            }
+
+            FunctionName::Arraycompact => {
+                if !args.is_empty() {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Arrayzip => Some(DataType::Array(Box::new(DataType::Struct(vec![])))),
+
+            FunctionName::Arrayauc => Some(DataType::Float64),
 
             FunctionName::Greatest
             | FunctionName::MaxValue
@@ -791,10 +1758,10 @@ impl ProjectionWithExprExec {
                 }
             }
 
-            FunctionName::Coalesce => Self::infer_coalesce_type(args, schema),
-            FunctionName::Ifnull | FunctionName::Nvl | FunctionName::Isnull => {
-                Self::infer_first_arg_type(args, schema)
-            }
+            FunctionName::Coalesce
+            | FunctionName::Ifnull
+            | FunctionName::Nvl
+            | FunctionName::Isnull => Self::infer_coalesce_type(args, schema),
             FunctionName::Nullif => Self::infer_first_arg_type(args, schema),
 
             FunctionName::If | FunctionName::Iif => args
@@ -831,9 +1798,10 @@ impl ProjectionWithExprExec {
             | FunctionName::CovarPop
             | FunctionName::CovarSamp => Some(DataType::Float64),
 
-            FunctionName::Custom(s) if s == "JSON_AGG" || s == "JSON_OBJECT_AGG" => {
-                Some(DataType::Json)
-            }
+            FunctionName::JsonAgg
+            | FunctionName::JsonbAgg
+            | FunctionName::JsonObjectAgg
+            | FunctionName::JsonbObjectAgg => Some(DataType::Json),
 
             FunctionName::JsonExtract => {
                 if let Some(first_arg) = args.first() {
@@ -845,7 +1813,7 @@ impl ProjectionWithExprExec {
                 }
                 Some(DataType::Json)
             }
-            FunctionName::Custom(s) if s == "JSON_EXTRACT_JSON" => {
+            FunctionName::JsonExtractJson => {
                 if let Some(first_arg) = args.first() {
                     if let Some(arg_type) = Self::infer_expr_type_with_schema(first_arg, schema) {
                         if matches!(arg_type, DataType::Hstore) {
@@ -855,52 +1823,64 @@ impl ProjectionWithExprExec {
                 }
                 Some(DataType::Json)
             }
-            FunctionName::Custom(s)
-                if s == "JSON_ARRAY"
-                    || s == "JSON_OBJECT"
-                    || s == "PARSE_JSON"
-                    || s == "TO_JSON" =>
-            {
-                Some(DataType::Json)
-            }
+            FunctionName::JsonArray
+            | FunctionName::JsonObject
+            | FunctionName::ParseJson
+            | FunctionName::ToJson
+            | FunctionName::ToJsonb
+            | FunctionName::JsonBuildArray
+            | FunctionName::JsonbBuildArray
+            | FunctionName::JsonBuildObject
+            | FunctionName::JsonbBuildObject
+            | FunctionName::JsonStripNulls
+            | FunctionName::JsonbStripNulls
+            | FunctionName::JsonbInsert => Some(DataType::Json),
 
-            FunctionName::Custom(s) if s == "TO_JSON_STRING" => Some(DataType::String),
+            FunctionName::ToJsonString | FunctionName::JsonbPretty => Some(DataType::String),
+            FunctionName::JsonObjectKeys | FunctionName::JsonbObjectKeys => Some(DataType::String),
 
             FunctionName::JsonQuery => Some(DataType::Json),
             FunctionName::JsonType | FunctionName::JsonTypeof => Some(DataType::String),
-            FunctionName::Custom(s) if s == "JSON_EXISTS" => Some(DataType::Bool),
-            FunctionName::Custom(s) if s == "JSONB_PATH_EXISTS" || s == "JSONB_PATH_MATCH" => {
-                Some(DataType::Bool)
-            }
-            FunctionName::Custom(s) if s == "JSONB_PATH_QUERY_FIRST" => Some(DataType::Json),
-            FunctionName::Custom(s) if s == "JSONB_CONTAINS" => Some(DataType::Bool),
-            FunctionName::Custom(s)
-                if s == "JSONB_CONCAT"
-                    || s == "JSONB_DELETE"
-                    || s == "JSONB_DELETE_PATH"
-                    || s == "JSONB_SET" =>
-            {
-                Some(DataType::Json)
-            }
+            FunctionName::JsonExists => Some(DataType::Bool),
+            FunctionName::JsonbPathExists | FunctionName::JsonbPathMatch => Some(DataType::Bool),
+            FunctionName::JsonbPathQueryFirst => Some(DataType::Json),
+            FunctionName::JsonbContains => Some(DataType::Bool),
+            FunctionName::JsonbConcat
+            | FunctionName::JsonbDelete
+            | FunctionName::JsonbDeletePath
+            | FunctionName::JsonbSet => Some(DataType::Json),
             FunctionName::JsonLength | FunctionName::JsonArrayLength => Some(DataType::Int64),
-            FunctionName::Custom(s) if s == "JSON_KEYS" => Some(DataType::Json),
+            FunctionName::JsonKeys | FunctionName::JsonExtractKeys => Some(DataType::Json),
 
-            FunctionName::Custom(s)
-                if s == "IS_JSON_VALUE"
-                    || s == "IS_JSON_ARRAY"
-                    || s == "IS_JSON_OBJECT"
-                    || s == "IS_JSON_SCALAR" =>
-            {
-                Some(DataType::Bool)
+            FunctionName::JsonExtractString | FunctionName::JsonExtractRaw => {
+                Some(DataType::String)
             }
-            FunctionName::Custom(s)
-                if s == "IS_NOT_JSON_VALUE"
-                    || s == "IS_NOT_JSON_ARRAY"
-                    || s == "IS_NOT_JSON_OBJECT"
-                    || s == "IS_NOT_JSON_SCALAR" =>
-            {
-                Some(DataType::Bool)
+            FunctionName::JsonExtractInt
+            | FunctionName::JsonExtractBool
+            | FunctionName::JsonHas => Some(DataType::Int64),
+            FunctionName::JsonExtractFloat => Some(DataType::Float64),
+            FunctionName::JsonExtractArrayRaw | FunctionName::JsonExtractKeysAndValues => {
+                Some(DataType::Array(Box::new(DataType::String)))
             }
+
+            FunctionName::IsJsonValue
+            | FunctionName::IsJsonArray
+            | FunctionName::IsJsonObject
+            | FunctionName::IsJsonScalar => Some(DataType::Bool),
+            FunctionName::IsNotJsonValue
+            | FunctionName::IsNotJsonArray
+            | FunctionName::IsNotJsonObject
+            | FunctionName::IsNotJsonScalar => Some(DataType::Bool),
+
+            FunctionName::JsonSet | FunctionName::JsonRemove => Some(DataType::Json),
+            FunctionName::JsonExtractArray | FunctionName::JsonQueryArray => {
+                Some(DataType::Array(Box::new(DataType::Json)))
+            }
+            FunctionName::JsonValueArray => Some(DataType::Array(Box::new(DataType::String))),
+            FunctionName::LaxBool | FunctionName::JsonBool => Some(DataType::Bool),
+            FunctionName::LaxInt64 | FunctionName::JsonInt64 => Some(DataType::Int64),
+            FunctionName::LaxFloat64 | FunctionName::JsonFloat64 => Some(DataType::Float64),
+            FunctionName::LaxString | FunctionName::JsonStrict => Some(DataType::String),
 
             FunctionName::JsonValue | FunctionName::JsonExtractScalar => args
                 .get(2)
@@ -917,18 +1897,56 @@ impl ProjectionWithExprExec {
                     }
                 })
                 .or(Some(DataType::String)),
-            FunctionName::JsonExtractString => Some(DataType::String),
-            FunctionName::Custom(s) if s == "JSON_VALUE_TEXT" => Some(DataType::String),
-            FunctionName::Custom(s) if s == "JSON_EXTRACT_PATH_ARRAY" => Some(DataType::Json),
-            FunctionName::Custom(s) if s == "JSON_EXTRACT_PATH_ARRAY_TEXT" => {
-                Some(DataType::String)
-            }
+            FunctionName::JsonValueText => Some(DataType::String),
+            FunctionName::JsonExtractPathArray => Some(DataType::Json),
+            FunctionName::JsonExtractPathArrayText => Some(DataType::String),
 
-            FunctionName::Custom(s) if s == "BIT_AND" || s == "BIT_OR" || s == "BIT_XOR" => {
+            FunctionName::BitAnd | FunctionName::BitOr | FunctionName::BitXor => {
                 Some(DataType::Int64)
             }
 
-            FunctionName::Custom(s) if s == "BOOL_AND" || s == "BOOL_OR" || s == "EVERY" => {
+            FunctionName::BitCount | FunctionName::GetBit => Some(DataType::Int64),
+
+            FunctionName::SetBit => Some(DataType::Bytes),
+
+            FunctionName::PositionCaseInsensitive
+            | FunctionName::PositionUtf8
+            | FunctionName::PositionCaseInsensitiveUtf8
+            | FunctionName::CountSubstrings
+            | FunctionName::CountSubstringsCaseInsensitive
+            | FunctionName::CountMatches
+            | FunctionName::CountMatchesCaseInsensitive
+            | FunctionName::MultiSearchFirstIndex
+            | FunctionName::MultiSearchFirstPosition
+            | FunctionName::MultiMatchAnyIndex => Some(DataType::Int64),
+
+            FunctionName::HasToken
+            | FunctionName::HasTokenCaseInsensitive
+            | FunctionName::Match
+            | FunctionName::MultiSearchAny
+            | FunctionName::MultiMatchAny => Some(DataType::Int64),
+
+            FunctionName::MultiSearchAllPositions => Some(DataType::Array(Box::new(
+                DataType::Array(Box::new(DataType::Int64)),
+            ))),
+
+            FunctionName::MultiMatchAllIndices => Some(DataType::Array(Box::new(DataType::Int64))),
+
+            FunctionName::ExtractGroups => Some(DataType::Array(Box::new(DataType::String))),
+
+            FunctionName::NgramDistance | FunctionName::NgramSearch => Some(DataType::Float64),
+
+            FunctionName::ReplaceOne
+            | FunctionName::ReplaceAll
+            | FunctionName::TrimBoth
+            | FunctionName::RegexpQuoteMeta
+            | FunctionName::TranslateUtf8
+            | FunctionName::NormalizeUtf8Nfc
+            | FunctionName::NormalizeUtf8Nfd
+            | FunctionName::NormalizeUtf8Nfkc
+            | FunctionName::NormalizeUtf8Nfkd => Some(DataType::String),
+
+            FunctionName::BoolAnd | FunctionName::BoolOr | FunctionName::Every => {
                 Some(DataType::Bool)
             }
 
@@ -940,87 +1958,414 @@ impl ProjectionWithExprExec {
                 Some(DataType::Array(Box::new(DataType::String)))
             }
 
-            FunctionName::Custom(s) if s == "INTERVAL_LITERAL" || s == "INTERVAL_PARSE" => {
-                Some(DataType::Interval)
+            FunctionName::IntervalLiteral | FunctionName::IntervalParse => Some(DataType::Interval),
+
+            FunctionName::NetIpFromString
+            | FunctionName::NetSafeIpFromString
+            | FunctionName::NetIpv4FromInt64
+            | FunctionName::NetIpNetMask
+            | FunctionName::NetIpTrunc => Some(DataType::Bytes),
+            FunctionName::NetIpv4ToInt64 => Some(DataType::Int64),
+
+            FunctionName::ToInt8
+            | FunctionName::ToInt16
+            | FunctionName::ToInt32
+            | FunctionName::ToInt64
+            | FunctionName::ToUInt8
+            | FunctionName::ToUInt16
+            | FunctionName::ToUInt32
+            | FunctionName::ToUInt64
+            | FunctionName::ToInt64OrNull
+            | FunctionName::ToInt64OrZero
+            | FunctionName::ReinterpretAsInt64 => Some(DataType::Int64),
+
+            FunctionName::ToFloat32
+            | FunctionName::ToFloat64
+            | FunctionName::ToFloat64OrNull
+            | FunctionName::ToFloat64OrZero => Some(DataType::Float64),
+
+            FunctionName::ChToString
+            | FunctionName::ToFixedString
+            | FunctionName::ReinterpretAsString
+            | FunctionName::ToTypeName => Some(DataType::String),
+
+            FunctionName::ToDateOrNull => Some(DataType::Date),
+
+            FunctionName::ChToDateTime
+            | FunctionName::ToDateTime64
+            | FunctionName::ToDateTimeOrNull
+            | FunctionName::ChParseDateTime
+            | FunctionName::ParseDateTimeBestEffort
+            | FunctionName::ParseDateTimeBestEffortOrNull => Some(DataType::Timestamp),
+
+            FunctionName::ToDecimal32 | FunctionName::ToDecimal64 | FunctionName::ToDecimal128 => {
+                Some(DataType::Numeric(None))
             }
 
-            FunctionName::Custom(s)
-                if s == "NET.IP_FROM_STRING"
-                    || s == "NET.SAFE_IP_FROM_STRING"
-                    || s == "NET.IPV4_FROM_INT64"
-                    || s == "NET.IP_NET_MASK"
-                    || s == "NET.IP_TRUNC" =>
-            {
+            FunctionName::AccurateCast | FunctionName::AccurateCastOrNull => {
+                if args.len() >= 2 {
+                    if let crate::optimizer::expr::Expr::Literal(
+                        crate::optimizer::expr::LiteralValue::String(s),
+                    ) = &args[1]
+                    {
+                        return match s.to_uppercase().as_str() {
+                            "INT8" | "INT16" | "INT32" | "INT64" => Some(DataType::Int64),
+                            "UINT8" | "UINT16" | "UINT32" | "UINT64" => Some(DataType::Int64),
+                            "FLOAT32" | "FLOAT64" => Some(DataType::Float64),
+                            "STRING" => Some(DataType::String),
+                            "DATE" => Some(DataType::Date),
+                            "DATETIME" | "DATETIME64" => Some(DataType::DateTime),
+                            _ => None,
+                        };
+                    }
+                }
+                None
+            }
+
+            FunctionName::NetIpToString
+            | FunctionName::NetHost
+            | FunctionName::NetPublicSuffix
+            | FunctionName::NetRegDomain => Some(DataType::String),
+
+            FunctionName::KeysKeysetChain
+            | FunctionName::AeadEncrypt
+            | FunctionName::DeterministicEncrypt => Some(DataType::Bytes),
+            FunctionName::AeadDecryptBytes | FunctionName::DeterministicDecryptBytes => {
                 Some(DataType::Bytes)
             }
-            FunctionName::Custom(s) if s == "NET.IPV4_TO_INT64" => Some(DataType::Int64),
-            FunctionName::Custom(s)
-                if s == "NET.IP_TO_STRING"
-                    || s == "NET.HOST"
-                    || s == "NET.PUBLIC_SUFFIX"
-                    || s == "NET.REG_DOMAIN" =>
-            {
+            FunctionName::AeadDecryptString | FunctionName::DeterministicDecryptString => {
                 Some(DataType::String)
             }
 
-            FunctionName::Custom(s)
-                if s == "KEYS.KEYSET_CHAIN"
-                    || s == "AEAD.ENCRYPT"
-                    || s == "DETERMINISTIC_ENCRYPT" =>
-            {
-                Some(DataType::Bytes)
-            }
-            FunctionName::Custom(s)
-                if s == "AEAD.DECRYPT_BYTES" || s == "DETERMINISTIC_DECRYPT_BYTES" =>
-            {
-                Some(DataType::Bytes)
-            }
-            FunctionName::Custom(s)
-                if s == "AEAD.DECRYPT_STRING" || s == "DETERMINISTIC_DECRYPT_STRING" =>
-            {
-                Some(DataType::String)
+            FunctionName::Encrypt | FunctionName::AesEncryptMysql => Some(DataType::Bytes),
+            FunctionName::Decrypt | FunctionName::AesDecryptMysql => Some(DataType::String),
+            FunctionName::Base64UrlEncode | FunctionName::Base64UrlDecode => Some(DataType::String),
+
+            FunctionName::ToTsvector
+            | FunctionName::ToTsquery
+            | FunctionName::PlaintoTsquery
+            | FunctionName::PhrasetoTsquery
+            | FunctionName::WebsearchToTsquery
+            | FunctionName::TsHeadline
+            | FunctionName::Strip
+            | FunctionName::Setweight
+            | FunctionName::TsvectorConcat
+            | FunctionName::TsqueryAnd
+            | FunctionName::TsqueryOr
+            | FunctionName::TsqueryNot => Some(DataType::String),
+            FunctionName::TsRank | FunctionName::TsRankCd => Some(DataType::Float64),
+            FunctionName::TsMatch => Some(DataType::Bool),
+            FunctionName::TsvectorLength => Some(DataType::Int64),
+
+            FunctionName::Point => Some(DataType::Point),
+            FunctionName::Box => Some(DataType::PgBox),
+            FunctionName::Circle => Some(DataType::Circle),
+
+            FunctionName::Area
+            | FunctionName::Width
+            | FunctionName::Height
+            | FunctionName::Radius
+            | FunctionName::Diameter
+            | FunctionName::Distance => Some(DataType::Float64),
+
+            FunctionName::Center => Some(DataType::Point),
+
+            FunctionName::PointX | FunctionName::PointY => Some(DataType::Float64),
+
+            FunctionName::StGeogpoint
+            | FunctionName::StGeogfromtext
+            | FunctionName::StGeogfromgeojson
+            | FunctionName::StMakeline
+            | FunctionName::StMakepolygon
+            | FunctionName::StCentroid
+            | FunctionName::StStartpoint
+            | FunctionName::StEndpoint
+            | FunctionName::StPointn
+            | FunctionName::StBoundary
+            | FunctionName::StBuffer
+            | FunctionName::StBufferwithtolerance
+            | FunctionName::StClosestpoint
+            | FunctionName::StConvexhull
+            | FunctionName::StDifference
+            | FunctionName::StIntersection
+            | FunctionName::StSimplify
+            | FunctionName::StSnaptogrid
+            | FunctionName::StUnion
+            | FunctionName::StBoundingbox
+            | FunctionName::StGeogpointfromgeohash => Some(DataType::Geography),
+
+            FunctionName::StX
+            | FunctionName::StY
+            | FunctionName::StDistance
+            | FunctionName::StLength
+            | FunctionName::StArea
+            | FunctionName::StPerimeter
+            | FunctionName::StMaxdistance
+            | FunctionName::StAzimuth => Some(DataType::Float64),
+
+            FunctionName::StContains
+            | FunctionName::StCovers
+            | FunctionName::StCoveredby
+            | FunctionName::StDisjoint
+            | FunctionName::StDwithin
+            | FunctionName::StEquals
+            | FunctionName::StIntersects
+            | FunctionName::StTouches
+            | FunctionName::StWithin
+            | FunctionName::StIsempty
+            | FunctionName::StIsclosed
+            | FunctionName::StIscollection => Some(DataType::Bool),
+
+            FunctionName::StNumpoints | FunctionName::StNpoints | FunctionName::StDimension => {
+                Some(DataType::Int64)
             }
 
-            FunctionName::Custom(s)
-                if s == "TO_TSVECTOR"
-                    || s == "TO_TSQUERY"
-                    || s == "PLAINTO_TSQUERY"
-                    || s == "PHRASETO_TSQUERY"
-                    || s == "WEBSEARCH_TO_TSQUERY"
-                    || s == "TS_HEADLINE"
-                    || s == "STRIP"
-                    || s == "SETWEIGHT"
-                    || s == "TSVECTOR_CONCAT"
-                    || s == "TSQUERY_AND"
-                    || s == "TSQUERY_OR"
-                    || s == "TSQUERY_NOT" =>
-            {
-                Some(DataType::String)
-            }
-            FunctionName::Custom(s) if s == "TS_RANK" || s == "TS_RANK_CD" => {
-                Some(DataType::Float64)
-            }
-            FunctionName::Custom(s) if s == "TS_MATCH" => Some(DataType::Bool),
-            FunctionName::Custom(s) if s == "TSVECTOR_LENGTH" => Some(DataType::Int64),
+            FunctionName::StAstext
+            | FunctionName::StAsgeojson
+            | FunctionName::StGeometrytype
+            | FunctionName::StGeohash => Some(DataType::String),
 
-            FunctionName::Custom(s) if s == "POINT" => Some(DataType::Point),
-            FunctionName::Custom(s) if s == "BOX" => Some(DataType::PgBox),
-            FunctionName::Custom(s) if s == "CIRCLE" => Some(DataType::Circle),
+            FunctionName::StAsbinary => Some(DataType::Bytes),
 
-            FunctionName::Custom(s)
-                if s == "AREA"
-                    || s == "WIDTH"
-                    || s == "HEIGHT"
-                    || s == "DIAGONAL"
-                    || s == "RADIUS"
-                    || s == "DIAMETER"
-                    || s == "CENTER"
-                    || s == "DISTANCE" =>
-            {
-                Some(DataType::Float64)
+            FunctionName::Map => {
+                if args.len() >= 2 {
+                    let key_type = Self::infer_expr_type_with_schema(&args[0], schema)
+                        .unwrap_or(DataType::String);
+                    let value_type = Self::infer_expr_type_with_schema(&args[1], schema)
+                        .unwrap_or(DataType::String);
+                    Some(DataType::Map(Box::new(key_type), Box::new(value_type)))
+                } else {
+                    Some(DataType::Map(
+                        Box::new(DataType::String),
+                        Box::new(DataType::String),
+                    ))
+                }
+            }
+            FunctionName::MapFromArrays => {
+                if args.len() >= 2 {
+                    let key_type = Self::infer_expr_type_with_schema(&args[0], schema)
+                        .and_then(|dt| match dt {
+                            DataType::Array(elem) => Some(*elem),
+                            _ => None,
+                        })
+                        .unwrap_or(DataType::String);
+                    let value_type = Self::infer_expr_type_with_schema(&args[1], schema)
+                        .and_then(|dt| match dt {
+                            DataType::Array(elem) => Some(*elem),
+                            _ => None,
+                        })
+                        .unwrap_or(DataType::String);
+                    Some(DataType::Map(Box::new(key_type), Box::new(value_type)))
+                } else {
+                    Some(DataType::Map(
+                        Box::new(DataType::String),
+                        Box::new(DataType::String),
+                    ))
+                }
+            }
+            FunctionName::MapKeys => {
+                if !args.is_empty() {
+                    if let Some(DataType::Map(key_type, _)) =
+                        Self::infer_expr_type_with_schema(&args[0], schema)
+                    {
+                        Some(DataType::Array(key_type))
+                    } else {
+                        Some(DataType::Array(Box::new(DataType::String)))
+                    }
+                } else {
+                    Some(DataType::Array(Box::new(DataType::String)))
+                }
+            }
+            FunctionName::MapValues => {
+                if !args.is_empty() {
+                    if let Some(DataType::Map(_, value_type)) =
+                        Self::infer_expr_type_with_schema(&args[0], schema)
+                    {
+                        Some(DataType::Array(value_type))
+                    } else {
+                        Some(DataType::Array(Box::new(DataType::String)))
+                    }
+                } else {
+                    Some(DataType::Array(Box::new(DataType::String)))
+                }
+            }
+            FunctionName::MapContains => Some(DataType::Bool),
+            FunctionName::MapAdd
+            | FunctionName::MapSubtract
+            | FunctionName::MapUpdate
+            | FunctionName::MapConcat
+            | FunctionName::MapPopulateSeries
+            | FunctionName::MapFilter
+            | FunctionName::MapApply
+            | FunctionName::MapSort
+            | FunctionName::MapReverseSort
+            | FunctionName::MapPartialSort => {
+                if !args.is_empty() {
+                    let first_map_arg =
+                        if matches!(&args[0], yachtsql_optimizer::Expr::Lambda { .. }) {
+                            args.get(1)
+                        } else {
+                            args.first()
+                        };
+                    if let Some(arg) = first_map_arg {
+                        if let Some(map_type @ DataType::Map(_, _)) =
+                            Self::infer_expr_type_with_schema(arg, schema)
+                        {
+                            return Some(map_type);
+                        }
+                    }
+                }
+                Some(DataType::Map(
+                    Box::new(DataType::String),
+                    Box::new(DataType::Int64),
+                ))
+            }
+            FunctionName::MapExists | FunctionName::MapAll => Some(DataType::Bool),
+
+            FunctionName::CurrentDatabase
+            | FunctionName::CurrentUser
+            | FunctionName::Version
+            | FunctionName::Timezone
+            | FunctionName::ServerTimezone
+            | FunctionName::HostName
+            | FunctionName::Fqdn
+            | FunctionName::DumpColumnStructure
+            | FunctionName::QueryId
+            | FunctionName::InitialQueryId
+            | FunctionName::ServerUuid
+            | FunctionName::GetSetting
+            | FunctionName::PgTypeof
+            | FunctionName::SessionUser
+            | FunctionName::CurrentSchema
+            | FunctionName::CurrentCatalog
+            | FunctionName::CurrentSetting
+            | FunctionName::SetConfig
+            | FunctionName::PgSizePretty
+            | FunctionName::PgCurrentSnapshot
+            | FunctionName::PgGetViewdef
+            | FunctionName::ObjDescription
+            | FunctionName::ColDescription
+            | FunctionName::ShobjDescription
+            | FunctionName::InetClientAddr
+            | FunctionName::InetServerAddr => Some(DataType::String),
+
+            FunctionName::Uptime
+            | FunctionName::BlockNumber
+            | FunctionName::RowNumberInBlock
+            | FunctionName::RowNumberInAllBlocks
+            | FunctionName::BlockSize
+            | FunctionName::CountDigits
+            | FunctionName::PgBackendPid
+            | FunctionName::PgColumnSize
+            | FunctionName::PgDatabaseSize
+            | FunctionName::PgTableSize
+            | FunctionName::PgIndexesSize
+            | FunctionName::PgTotalRelationSize
+            | FunctionName::PgRelationSize
+            | FunctionName::PgTablespaceSize
+            | FunctionName::InetClientPort
+            | FunctionName::InetServerPort
+            | FunctionName::TxidCurrent
+            | FunctionName::TxidSnapshotXmin
+            | FunctionName::TxidSnapshotXmax
+            | FunctionName::PgCurrentXactId
+            | FunctionName::PgSnapshotXmin
+            | FunctionName::PgSnapshotXmax => Some(DataType::Int64),
+
+            FunctionName::IsFinite
+            | FunctionName::IsInfinite
+            | FunctionName::IsNan
+            | FunctionName::IsDecimalOverflow
+            | FunctionName::PgIsInRecovery
+            | FunctionName::HasTablePrivilege
+            | FunctionName::HasSchemaPrivilege
+            | FunctionName::HasDatabasePrivilege
+            | FunctionName::HasColumnPrivilege
+            | FunctionName::TxidVisibleInSnapshot
+            | FunctionName::PgVisibleInSnapshot => Some(DataType::Bool),
+
+            FunctionName::TxidCurrentSnapshot
+            | FunctionName::TxidStatus
+            | FunctionName::PgXactStatus => Some(DataType::String),
+
+            FunctionName::TxidSnapshotXip | FunctionName::PgSnapshotXip => {
+                Some(DataType::Array(Box::new(DataType::Int64)))
             }
 
-            FunctionName::Custom(s) if s == "POINT_X" || s == "POINT_Y" => Some(DataType::Float64),
+            FunctionName::TxidCurrentIfAssigned | FunctionName::PgCurrentXactIdIfAssigned => None,
+
+            FunctionName::PgConfLoadTime | FunctionName::PgPostmasterStartTime => {
+                Some(DataType::Timestamp)
+            }
+
+            FunctionName::DefaultValueOfArgumentType => {
+                if !args.is_empty() {
+                    Self::infer_expr_type_with_schema(&args[0], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::DefaultValueOfTypeName => None,
+
+            FunctionName::CurrentSchemas => Some(DataType::Array(Box::new(DataType::String))),
+
+            // Tuple functions
+            FunctionName::Tuple => {
+                let mut struct_fields = Vec::with_capacity(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    let field_type = Self::infer_expr_type_with_schema(arg, schema)
+                        .unwrap_or(yachtsql_core::types::DataType::Unknown);
+                    struct_fields.push(yachtsql_core::types::StructField {
+                        name: (i + 1).to_string(),
+                        data_type: field_type,
+                    });
+                }
+                Some(DataType::Struct(struct_fields))
+            }
+
+            FunctionName::Untuple
+            | FunctionName::TuplePlus
+            | FunctionName::TupleMinus
+            | FunctionName::TupleMultiply
+            | FunctionName::TupleDivide
+            | FunctionName::TupleNegate
+            | FunctionName::TupleMultiplyByNumber
+            | FunctionName::TupleDivideByNumber
+            | FunctionName::TupleConcat
+            | FunctionName::TupleIntDiv
+            | FunctionName::TupleIntDivOrZero
+            | FunctionName::TupleModulo
+            | FunctionName::TupleModuloByNumber => Some(DataType::Struct(vec![])),
+
+            FunctionName::TupleElement => {
+                if args.len() >= 2 {
+                    let tuple_type = Self::infer_expr_type_with_schema(&args[0], schema);
+                    if let Some(DataType::Struct(fields)) = tuple_type {
+                        if let yachtsql_optimizer::expr::Expr::Literal(
+                            yachtsql_optimizer::expr::LiteralValue::Int64(idx),
+                        ) = &args[1]
+                        {
+                            let idx = *idx as usize;
+                            if idx > 0 && idx <= fields.len() {
+                                return Some(fields[idx - 1].data_type.clone());
+                            }
+                        }
+                        if !fields.is_empty() {
+                            return Some(fields[0].data_type.clone());
+                        }
+                    }
+                }
+                None
+            }
+
+            FunctionName::TupleHammingDistance => Some(DataType::Int64),
+
+            FunctionName::TupleToNameValuePairs => {
+                Some(DataType::Array(Box::new(DataType::Struct(vec![]))))
+            }
+
+            FunctionName::TupleNames => Some(DataType::Array(Box::new(DataType::String))),
 
             _ => None,
         }
@@ -1035,6 +2380,12 @@ impl ProjectionWithExprExec {
 
         match expr {
             Expr::Column { name, table } => {
+                if let Some(table_name) = table {
+                    let qualified_name = format!("{}.{}", table_name, name);
+                    if let Some(field) = schema.field(&qualified_name) {
+                        return Some(field.data_type.clone());
+                    }
+                }
                 if schema.field(name).is_some() {
                     schema.field(name).map(|f| f.data_type.clone())
                 } else if let Some(table_name) = table {
@@ -1072,7 +2423,10 @@ impl ProjectionWithExprExec {
             | Expr::InList { .. }
             | Expr::TupleInList { .. }
             | Expr::TupleInSubquery { .. }
-            | Expr::IsDistinctFrom { .. } => Self::infer_comparison_operator_type(),
+            | Expr::IsDistinctFrom { .. }
+            | Expr::AnyOp { .. }
+            | Expr::AllOp { .. } => Self::infer_comparison_operator_type(),
+            Expr::Grouping { .. } | Expr::GroupingId { .. } => Some(DataType::Int64),
             Expr::StructLiteral { fields } => {
                 let mut struct_fields = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -1125,6 +2479,7 @@ impl ProjectionWithExprExec {
             Expr::ArrayIndex { array, .. } => {
                 match Self::infer_expr_type_with_schema(array, schema)? {
                     DataType::Array(elem_type) => Some(*elem_type),
+                    DataType::Map(_, value_type) => Some(*value_type),
                     _ => None,
                 }
             }
@@ -1153,6 +2508,18 @@ impl ProjectionWithExprExec {
                 } else {
                     yachtsql_core::types::coercion::CoercionRules::find_common_type(&types).ok()
                 }
+            }
+            Expr::Tuple(exprs) => {
+                let mut struct_fields = Vec::with_capacity(exprs.len());
+                for (i, expr) in exprs.iter().enumerate() {
+                    let field_type = Self::infer_expr_type_with_schema(expr, schema)
+                        .unwrap_or(DataType::Unknown);
+                    struct_fields.push(StructField {
+                        name: (i + 1).to_string(),
+                        data_type: field_type,
+                    });
+                }
+                Some(DataType::Struct(struct_fields))
             }
             _ => None,
         }
@@ -1186,7 +2553,10 @@ impl ProjectionWithExprExec {
             | Expr::InList { .. }
             | Expr::TupleInList { .. }
             | Expr::TupleInSubquery { .. }
-            | Expr::IsDistinctFrom { .. } => Self::infer_comparison_operator_type(),
+            | Expr::IsDistinctFrom { .. }
+            | Expr::AnyOp { .. }
+            | Expr::AllOp { .. } => Self::infer_comparison_operator_type(),
+            Expr::Grouping { .. } | Expr::GroupingId { .. } => Some(DataType::Int64),
             Expr::StructLiteral { fields } => {
                 let mut struct_fields = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -1210,6 +2580,7 @@ impl ProjectionWithExprExec {
             },
             Expr::ArrayIndex { array, .. } => match Self::infer_expr_type(array)? {
                 DataType::Array(elem_type) => Some(*elem_type),
+                DataType::Map(_, value_type) => Some(*value_type),
                 _ => None,
             },
             Expr::ArraySlice { array, .. } => Self::infer_expr_type(array),

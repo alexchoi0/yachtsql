@@ -6,9 +6,9 @@ use yachtsql_capability::FeatureId;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::DataType;
 use yachtsql_optimizer::expr::Expr;
-use yachtsql_storage::Schema;
+use yachtsql_storage::{Schema, TableEngine};
 
-use crate::RecordBatch;
+use crate::Table;
 
 mod aggregate;
 mod aggregate_strategy;
@@ -26,6 +26,7 @@ mod set_ops;
 mod sort;
 mod tablesample;
 mod type_inference;
+mod values;
 mod window;
 
 pub use aggregate::{AggregateExec, SortAggregateExec};
@@ -35,7 +36,8 @@ pub use cte::{CteExec, EmptyRelationExec, MaterializedViewScanExec, SubqueryScan
 pub use distinct::{DistinctExec, DistinctOnExec};
 pub use index_scan::IndexScanExec;
 pub use join::{
-    HashJoinExec, IndexNestedLoopJoinExec, LateralJoinExec, MergeJoinExec, NestedLoopJoinExec,
+    AsOfJoinExec, HashJoinExec, IndexNestedLoopJoinExec, LateralJoinExec, MergeJoinExec,
+    NestedLoopJoinExec, PasteJoinExec,
 };
 pub use join_strategy::JoinStrategy;
 pub use limit::LimitExec;
@@ -44,6 +46,7 @@ pub use pivot::{PivotAggregateFunction, PivotExec, UnpivotExec};
 pub use set_ops::{ExceptExec, IntersectExec, UnionExec};
 pub use sort::SortExec;
 pub use tablesample::{SampleSize, SamplingMethod, TableSampleExec};
+pub use values::{ValuesExec, infer_values_schema};
 pub use window::WindowExec;
 
 thread_local! {
@@ -53,6 +56,11 @@ thread_local! {
 
 thread_local! {
     pub(super) static SUBQUERY_EXECUTOR_CONTEXT: std::cell::RefCell<Option<Rc<dyn SubqueryExecutor>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
+    pub(crate) static SEQUENCE_EXECUTOR_CONTEXT: std::cell::RefCell<Option<Rc<RefCell<dyn SequenceValueExecutor>>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -85,6 +93,18 @@ pub trait SubqueryExecutor {
         &self,
         plan: &yachtsql_optimizer::plan::PlanNode,
     ) -> Result<Vec<yachtsql_core::types::Value>>;
+
+    fn execute_tuple_in_subquery(
+        &self,
+        plan: &yachtsql_optimizer::plan::PlanNode,
+    ) -> Result<Vec<Vec<yachtsql_core::types::Value>>>;
+}
+
+pub trait SequenceValueExecutor {
+    fn nextval(&mut self, sequence_name: &str) -> Result<i64>;
+    fn currval(&self, sequence_name: &str) -> Result<i64>;
+    fn setval(&mut self, sequence_name: &str, value: i64, is_called: bool) -> Result<i64>;
+    fn lastval(&self) -> Result<i64>;
 }
 
 pub(crate) struct FeatureRegistryContextGuard {
@@ -132,6 +152,31 @@ impl Drop for SubqueryExecutorContextGuard {
     fn drop(&mut self) {
         let previous = self.previous.clone();
         SUBQUERY_EXECUTOR_CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = previous;
+        });
+    }
+}
+
+pub(crate) struct SequenceExecutorContextGuard {
+    previous: Option<Rc<RefCell<dyn SequenceValueExecutor>>>,
+}
+
+impl SequenceExecutorContextGuard {
+    pub(crate) fn set(executor: Rc<RefCell<dyn SequenceValueExecutor>>) -> Self {
+        let previous = SEQUENCE_EXECUTOR_CONTEXT.with(|ctx| {
+            let mut slot = ctx.borrow_mut();
+            let prior = slot.clone();
+            *slot = Some(executor);
+            prior
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for SequenceExecutorContextGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.clone();
+        SEQUENCE_EXECUTOR_CONTEXT.with(|ctx| {
             *ctx.borrow_mut() = previous;
         });
     }
@@ -189,7 +234,7 @@ pub(crate) fn infer_expr_type_for_returning(expr: &Expr, schema: &Schema) -> Opt
 
 pub trait ExecutionPlan: fmt::Debug {
     fn schema(&self) -> &Schema;
-    fn execute(&self) -> Result<Vec<RecordBatch>>;
+    fn execute(&self) -> Result<Vec<Table>>;
     fn children(&self) -> Vec<Rc<dyn ExecutionPlan>>;
     fn statistics(&self) -> ExecutionStatistics {
         ExecutionStatistics::default()
@@ -240,7 +285,7 @@ impl PhysicalPlan {
         &self.schema
     }
 
-    pub fn execute(&self) -> Result<Vec<RecordBatch>> {
+    pub fn execute(&self) -> Result<Vec<Table>> {
         self.root.execute()
     }
 
@@ -282,6 +327,8 @@ pub struct TableScanExec {
     projection: Option<Vec<usize>>,
     statistics: ExecutionStatistics,
     storage: Rc<RefCell<yachtsql_storage::Storage>>,
+    only: bool,
+    final_modifier: bool,
 }
 
 impl TableScanExec {
@@ -296,6 +343,43 @@ impl TableScanExec {
             projection: None,
             statistics: ExecutionStatistics::default(),
             storage,
+            only: false,
+            final_modifier: false,
+        }
+    }
+
+    pub fn new_with_only(
+        schema: Schema,
+        table_name: String,
+        storage: Rc<RefCell<yachtsql_storage::Storage>>,
+        only: bool,
+    ) -> Self {
+        Self {
+            schema,
+            table_name,
+            projection: None,
+            statistics: ExecutionStatistics::default(),
+            storage,
+            only,
+            final_modifier: false,
+        }
+    }
+
+    pub fn new_with_final(
+        schema: Schema,
+        table_name: String,
+        storage: Rc<RefCell<yachtsql_storage::Storage>>,
+        only: bool,
+        final_modifier: bool,
+    ) -> Self {
+        Self {
+            schema,
+            table_name,
+            projection: None,
+            statistics: ExecutionStatistics::default(),
+            storage,
+            only,
+            final_modifier,
         }
     }
 
@@ -309,6 +393,8 @@ impl TableScanExec {
             projection: None,
             statistics: ExecutionStatistics::default(),
             storage,
+            only: false,
+            final_modifier: false,
         }
     }
 
@@ -321,6 +407,239 @@ impl TableScanExec {
         self.statistics = statistics;
         self
     }
+
+    fn apply_final_merge(
+        &self,
+        rows: Vec<yachtsql_storage::Row>,
+        engine: &TableEngine,
+        table_schema: &Schema,
+    ) -> Result<Vec<yachtsql_storage::Row>> {
+        use std::collections::HashMap;
+
+        use yachtsql_core::types::Value;
+
+        match engine {
+            TableEngine::SummingMergeTree {
+                order_by,
+                sum_columns,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sum_indices = if sum_columns.is_empty() {
+                    self.get_numeric_column_indices(table_schema, &key_indices)
+                } else {
+                    self.get_column_indices(sum_columns, table_schema)
+                };
+
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+
+                    groups
+                        .entry(key)
+                        .and_modify(|existing| {
+                            for &idx in &sum_indices {
+                                let existing_val =
+                                    existing.get(idx).cloned().unwrap_or(Value::null());
+                                let new_val = row.get(idx).cloned().unwrap_or(Value::null());
+                                if let (Some(e), Some(n)) =
+                                    (existing_val.as_i64(), new_val.as_i64())
+                                {
+                                    let _ = existing.set(idx, Value::int64(e + n));
+                                } else if let (Some(e), Some(n)) =
+                                    (existing_val.as_f64(), new_val.as_f64())
+                                {
+                                    let _ = existing.set(idx, Value::float64(e + n));
+                                }
+                            }
+                        })
+                        .or_insert(row);
+                }
+
+                Ok(groups.into_values().collect())
+            }
+
+            TableEngine::ReplacingMergeTree {
+                order_by,
+                version_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let version_idx = version_column
+                    .as_ref()
+                    .and_then(|vc| self.get_column_index(vc, table_schema));
+
+                let mut groups: HashMap<Vec<Value>, yachtsql_storage::Row> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+
+                    let should_replace = if let Some(ver_idx) = version_idx {
+                        groups.get(&key).is_none_or(|existing| {
+                            let existing_ver =
+                                existing.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            let new_ver = row.get(ver_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                            new_ver >= existing_ver
+                        })
+                    } else {
+                        true
+                    };
+
+                    if should_replace {
+                        groups.insert(key, row);
+                    }
+                }
+
+                Ok(groups.into_values().collect())
+            }
+
+            TableEngine::CollapsingMergeTree {
+                order_by,
+                sign_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sign_idx = self
+                    .get_column_index(sign_column, table_schema)
+                    .unwrap_or(0);
+
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+
+                let mut result = Vec::new();
+                for (_key, group_rows) in groups {
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+                    let mut last_negative: Option<yachtsql_storage::Row> = None;
+
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        } else {
+                            last_negative = Some(row);
+                        }
+                    }
+
+                    if sum_sign > 0 {
+                        if let Some(row) = last_positive {
+                            result.push(row);
+                        }
+                    } else if sum_sign < 0 {
+                        if let Some(row) = last_negative {
+                            result.push(row);
+                        }
+                    }
+                }
+
+                Ok(result)
+            }
+
+            TableEngine::VersionedCollapsingMergeTree {
+                order_by,
+                sign_column,
+                version_column,
+            } => {
+                let key_indices = self.get_key_column_indices(order_by, table_schema);
+                let sign_idx = self
+                    .get_column_index(sign_column, table_schema)
+                    .unwrap_or(0);
+                let version_idx = self
+                    .get_column_index(version_column, table_schema)
+                    .unwrap_or(0);
+
+                let mut groups: HashMap<Vec<Value>, Vec<yachtsql_storage::Row>> = HashMap::new();
+
+                for row in rows {
+                    let key: Vec<Value> = key_indices
+                        .iter()
+                        .map(|&i| row.get(i).cloned().unwrap_or(Value::null()))
+                        .collect();
+                    groups.entry(key).or_default().push(row);
+                }
+
+                let mut result = Vec::new();
+                for (_key, mut group_rows) in groups {
+                    group_rows.sort_by(|a, b| {
+                        let va = a.get(version_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                        let vb = b.get(version_idx).and_then(|v| v.as_i64()).unwrap_or(0);
+                        va.cmp(&vb)
+                    });
+
+                    let mut sum_sign: i64 = 0;
+                    let mut last_positive: Option<yachtsql_storage::Row> = None;
+
+                    for row in group_rows {
+                        let sign = row.get(sign_idx).and_then(|v| v.as_i64()).unwrap_or(1);
+                        sum_sign += sign;
+                        if sign > 0 {
+                            last_positive = Some(row);
+                        }
+                    }
+
+                    if sum_sign > 0 {
+                        if let Some(row) = last_positive {
+                            result.push(row);
+                        }
+                    }
+                }
+
+                Ok(result)
+            }
+
+            _ => Ok(rows),
+        }
+    }
+
+    fn get_key_column_indices(&self, order_by: &[String], schema: &Schema) -> Vec<usize> {
+        order_by
+            .iter()
+            .filter_map(|col| self.get_column_index(col, schema))
+            .collect()
+    }
+
+    fn get_column_index(&self, col_name: &str, schema: &Schema) -> Option<usize> {
+        let col_lower = col_name.to_lowercase();
+        schema
+            .fields()
+            .iter()
+            .position(|f| f.name.to_lowercase() == col_lower)
+    }
+
+    fn get_column_indices(&self, col_names: &[String], schema: &Schema) -> Vec<usize> {
+        col_names
+            .iter()
+            .filter_map(|col| self.get_column_index(col, schema))
+            .collect()
+    }
+
+    fn get_numeric_column_indices(&self, schema: &Schema, exclude: &[usize]) -> Vec<usize> {
+        schema
+            .fields()
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| {
+                !exclude.contains(i)
+                    && matches!(
+                        f.data_type,
+                        DataType::Int64 | DataType::Float64 | DataType::Numeric(_)
+                    )
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 impl ExecutionPlan for TableScanExec {
@@ -328,7 +647,7 @@ impl ExecutionPlan for TableScanExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         let storage = self.storage.borrow();
 
         let (dataset_name, table_id) = if let Some(dot_pos) = self.table_name.find('.') {
@@ -347,14 +666,97 @@ impl ExecutionPlan for TableScanExec {
             .get_table(table_id)
             .ok_or_else(|| Error::TableNotFound(format!("Table '{}' not found", table_id)))?;
 
-        let rows = table.get_all_rows();
+        let (actual_table, actual_engine) = match table.engine() {
+            TableEngine::Distributed {
+                database,
+                table: target_table,
+                ..
+            } => {
+                let target_db = if database.is_empty() {
+                    dataset_name
+                } else {
+                    database.as_str()
+                };
+                let target_dataset = storage.get_dataset(target_db).ok_or_else(|| {
+                    Error::DatasetNotFound(format!("Dataset '{}' not found", target_db))
+                })?;
+                let underlying = target_dataset.get_table(target_table).ok_or_else(|| {
+                    Error::TableNotFound(format!("Table '{}' not found", target_table))
+                })?;
+                (underlying, underlying.engine().clone())
+            }
+            TableEngine::Buffer {
+                database,
+                table: target_table,
+            } => {
+                let target_db = if database.is_empty() {
+                    dataset_name
+                } else {
+                    database.as_str()
+                };
+                let target_dataset = storage.get_dataset(target_db).ok_or_else(|| {
+                    Error::DatasetNotFound(format!("Dataset '{}' not found", target_db))
+                })?;
+                let underlying = target_dataset.get_table(target_table).ok_or_else(|| {
+                    Error::TableNotFound(format!("Table '{}' not found", target_table))
+                })?;
+                (underlying, underlying.engine().clone())
+            }
+            engine => (table, engine.clone()),
+        };
 
-        if rows.is_empty() {
-            return Ok(vec![RecordBatch::empty(self.schema.clone())]);
+        let mut all_rows = actual_table.get_all_rows();
+
+        if !self.only {
+            let parent_col_count = self.schema.fields().len();
+            let mut descendants_to_process: Vec<String> = table.schema().child_tables().to_vec();
+            let mut processed: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            while let Some(child_full_name) = descendants_to_process.pop() {
+                if processed.contains(&child_full_name) {
+                    continue;
+                }
+                processed.insert(child_full_name.clone());
+
+                let (child_dataset_name, child_table_id) =
+                    if let Some(dot_pos) = child_full_name.find('.') {
+                        (&child_full_name[..dot_pos], &child_full_name[dot_pos + 1..])
+                    } else {
+                        ("default", child_full_name.as_str())
+                    };
+
+                if let Some(child_dataset) = storage.get_dataset(child_dataset_name) {
+                    if let Some(child_table) = child_dataset.get_table(child_table_id) {
+                        let child_rows = child_table.get_all_rows();
+                        for row in child_rows {
+                            let values: Vec<_> = row
+                                .values()
+                                .iter()
+                                .take(parent_col_count)
+                                .cloned()
+                                .collect();
+                            all_rows.push(yachtsql_storage::Row::from_values(values));
+                        }
+                        for grandchild in child_table.schema().child_tables() {
+                            if !processed.contains(grandchild) {
+                                descendants_to_process.push(grandchild.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.final_modifier {
+            all_rows = self.apply_final_merge(all_rows, &actual_engine, actual_table.schema())?;
+        }
+
+        if all_rows.is_empty() {
+            return Ok(vec![Table::empty(self.schema.clone())]);
         }
 
         use yachtsql_storage::Column;
-        let num_rows = rows.len();
+        let num_rows = all_rows.len();
         let num_cols = self.schema.fields().len();
         let mut columns: Vec<Column> = Vec::with_capacity(num_cols);
 
@@ -362,7 +764,7 @@ impl ExecutionPlan for TableScanExec {
             let field = &self.schema.fields()[col_idx];
             let mut column = Column::new(&field.data_type, num_rows);
 
-            for row in &rows {
+            for row in &all_rows {
                 let value = match row.get(col_idx) {
                     Some(v) => v.clone(),
                     None => yachtsql_core::types::Value::null(),
@@ -373,7 +775,7 @@ impl ExecutionPlan for TableScanExec {
             columns.push(column);
         }
 
-        Ok(vec![RecordBatch::new(self.schema.clone(), columns)?])
+        Ok(vec![Table::new(self.schema.clone(), columns)?])
     }
 
     fn children(&self) -> Vec<Rc<dyn ExecutionPlan>> {
@@ -414,7 +816,7 @@ impl ExecutionPlan for ProjectionExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         let input_batches = self.input.execute()?;
         let mut output_batches = Vec::with_capacity(input_batches.len());
 
@@ -479,7 +881,7 @@ impl ExecutionPlan for ProjectionWithExprExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         use yachtsql_storage::Column;
 
         let _registry_guard = Self::enter_feature_registry_context(self.feature_registry.clone());
@@ -493,7 +895,7 @@ impl ExecutionPlan for ProjectionWithExprExec {
 
         for batch in input_batches {
             if batch.is_empty() {
-                output_batches.push(RecordBatch::empty(self.schema.clone()));
+                output_batches.push(Table::empty(self.schema.clone()));
                 continue;
             }
 
@@ -540,7 +942,7 @@ impl ExecutionPlan for ProjectionWithExprExec {
                     });
                 }
 
-                let output_batch = RecordBatch::new(self.schema.clone(), output_columns)?;
+                let output_batch = Table::new(self.schema.clone(), output_columns)?;
                 output_batches.push(output_batch);
             } else {
                 let mut all_rows: Vec<Vec<yachtsql_core::types::Value>> = Vec::new();
@@ -617,7 +1019,7 @@ impl ExecutionPlan for ProjectionWithExprExec {
                     }
                 }
 
-                let output_batch = RecordBatch::new(self.schema.clone(), output_columns)?;
+                let output_batch = Table::new(self.schema.clone(), output_columns)?;
                 output_batches.push(output_batch);
             }
         }
@@ -636,14 +1038,14 @@ impl ExecutionPlan for ProjectionWithExprExec {
 
 impl ProjectionWithExprExec {
     fn build_correlation_context(
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<crate::CorrelationContext> {
         Self::build_correlation_context_with_aliases(batch, row_idx, &[])
     }
 
     fn build_correlation_context_with_aliases(
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
         outer_table_aliases: &[String],
     ) -> Result<crate::CorrelationContext> {
@@ -696,7 +1098,10 @@ impl ProjectionWithExprExec {
         match expr {
             Expr::Function { name, .. } => {
                 let fn_name = name.as_str();
-                matches!(fn_name, "SKEYS" | "SVALS")
+                matches!(
+                    fn_name,
+                    "SKEYS" | "SVALS" | "JSON_OBJECT_KEYS" | "JSONB_OBJECT_KEYS"
+                )
             }
             Expr::Cast { expr, .. } | Expr::TryCast { expr, .. } => {
                 Self::is_set_returning_function(expr)
@@ -772,7 +1177,7 @@ impl ExecutionPlan for FilterExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         use yachtsql_storage::Column;
 
         let input_batches = self.input.execute()?;
@@ -797,7 +1202,7 @@ impl ExecutionPlan for FilterExec {
             }
 
             if passing_rows.is_empty() {
-                output_batches.push(RecordBatch::empty(self.schema.clone()));
+                output_batches.push(Table::empty(self.schema.clone()));
                 continue;
             }
 
@@ -816,7 +1221,7 @@ impl ExecutionPlan for FilterExec {
                 output_columns.push(output_column);
             }
 
-            let filtered_batch = RecordBatch::new(self.schema.clone(), output_columns)?;
+            let filtered_batch = Table::new(self.schema.clone(), output_columns)?;
             output_batches.push(filtered_batch);
         }
 
@@ -903,12 +1308,12 @@ impl UnnestExec {
             Expr::Literal(LiteralValue::Null) => Ok(Self::empty_array()),
 
 
-            Expr::Function { name, args } if matches!(name, yachtsql_ir::FunctionName::Custom(s) if s == "ARRAY") => {
+            Expr::Function { name, args } if matches!(name, yachtsql_ir::FunctionName::Array) => {
                 self.evaluate_element_list(args)
             }
 
 
-            Expr::Function { name, args } if matches!(name, yachtsql_ir::FunctionName::Custom(s) if s == "GENERATE_ARRAY") => {
+            Expr::Function { name, args } if matches!(name, yachtsql_ir::FunctionName::GenerateArray) => {
                 self.evaluate_generate_array(args)
             }
 
@@ -977,6 +1382,17 @@ impl UnnestExec {
                     })?;
                     Value::date(date)
                 }
+                LiteralValue::Time(t) => {
+                    use chrono::NaiveTime;
+                    let time = NaiveTime::parse_from_str(t, "%H:%M:%S")
+                        .or_else(|_| NaiveTime::parse_from_str(t, "%H:%M:%S%.f"))
+                        .or_else(|_| NaiveTime::parse_from_str(t, "%H:%M"))
+                        .map_err(|e| {
+                            Error::invalid_query(format!("Invalid time '{}': {}", t, e))
+                        })?;
+                    Value::time(time)
+                }
+                LiteralValue::DateTime(dt) => Value::datetime(Self::parse_timestamp(dt)?),
                 LiteralValue::Timestamp(t) => Value::timestamp(Self::parse_timestamp(t)?),
                 LiteralValue::Json(s) => match serde_json::from_str(s) {
                     Ok(json_val) => Value::json(json_val),
@@ -1051,13 +1467,13 @@ impl ExecutionPlan for UnnestExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
-        use crate::RecordBatch;
+    fn execute(&self) -> Result<Vec<Table>> {
+        use crate::Table;
 
         let elements = self.evaluate_array_expr()?;
 
         if elements.is_empty() {
-            return Ok(vec![RecordBatch::empty(self.schema.clone())]);
+            return Ok(vec![Table::empty(self.schema.clone())]);
         }
 
         let mut columns = Vec::new();
@@ -1071,7 +1487,7 @@ impl ExecutionPlan for UnnestExec {
             columns.push(ordinality_column);
         }
 
-        Ok(vec![RecordBatch::new(self.schema.clone(), columns)?])
+        Ok(vec![Table::new(self.schema.clone(), columns)?])
     }
 
     fn children(&self) -> Vec<Rc<dyn ExecutionPlan>> {
@@ -1114,9 +1530,11 @@ impl TableValuedFunctionExec {
     }
 
     fn evaluate_args(&self) -> Result<Vec<crate::types::Value>> {
+        use yachtsql_ir::expr::{Expr, LiteralValue};
         use yachtsql_storage::row::Row;
 
         use crate::query_executor::expression_evaluator::ExpressionEvaluator;
+        use crate::types::Value;
 
         let empty_schema = Schema::from_fields(vec![]);
         let evaluator = ExpressionEvaluator::new(&empty_schema);
@@ -1125,6 +1543,12 @@ impl TableValuedFunctionExec {
         self.args
             .iter()
             .map(|expr| {
+                if let Expr::Literal(LiteralValue::Json(s)) = expr {
+                    return match serde_json::from_str(s) {
+                        Ok(json) => Ok(Value::json(json)),
+                        Err(_) => Ok(Value::null()),
+                    };
+                }
                 let ast_expr = self.ir_expr_to_sql_expr(expr);
                 evaluator.evaluate_expr(&ast_expr, &empty_row)
             })
@@ -1150,6 +1574,12 @@ impl TableValuedFunctionExec {
                 LiteralValue::Int64(i) => value_expr(AstValue::Number(i.to_string(), false)),
                 LiteralValue::Float64(f) => value_expr(AstValue::Number(f.to_string(), false)),
                 LiteralValue::String(s) => value_expr(AstValue::SingleQuotedString(s.clone())),
+                LiteralValue::Json(s) => ast::Expr::Cast {
+                    kind: ast::CastKind::Cast,
+                    expr: Box::new(value_expr(AstValue::SingleQuotedString(s.clone()))),
+                    data_type: ast::DataType::JSON,
+                    format: None,
+                },
                 _ => value_expr(AstValue::Null),
             },
             Expr::Column { name, table } => {
@@ -1239,6 +1669,72 @@ impl TableValuedFunctionExec {
                         ))]),
                         vec![],
                     ),
+                    CastDataType::Inet => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "inet",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Cidr => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "cidr",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Int4Range => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "int4range",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Int8Range => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "int8range",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::NumRange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "numrange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::TsRange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "tsrange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::TsTzRange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "tstzrange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::DateRange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "daterange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Point => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "point",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::PgBox => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "box",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Circle => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "circle",
+                        ))]),
+                        vec![],
+                    ),
                 };
                 ast::Expr::Cast {
                     expr: Box::new(inner),
@@ -1251,7 +1747,7 @@ impl TableValuedFunctionExec {
         }
     }
 
-    fn execute_each(&self, args: &[crate::types::Value]) -> Result<RecordBatch> {
+    fn execute_each(&self, args: &[crate::types::Value]) -> Result<Table> {
         use yachtsql_core::error::Error;
         use yachtsql_storage::Column;
 
@@ -1281,10 +1777,10 @@ impl TableValuedFunctionExec {
             )?;
         }
 
-        RecordBatch::new(self.schema.clone(), vec![key_col, val_col])
+        Table::new(self.schema.clone(), vec![key_col, val_col])
     }
 
-    fn execute_skeys(&self, args: &[crate::types::Value]) -> Result<RecordBatch> {
+    fn execute_skeys(&self, args: &[crate::types::Value]) -> Result<Table> {
         use yachtsql_core::error::Error;
         use yachtsql_storage::Column;
 
@@ -1308,10 +1804,10 @@ impl TableValuedFunctionExec {
             key_col.push(Value::string(k.clone()))?;
         }
 
-        RecordBatch::new(self.schema.clone(), vec![key_col])
+        Table::new(self.schema.clone(), vec![key_col])
     }
 
-    fn execute_svals(&self, args: &[crate::types::Value]) -> Result<RecordBatch> {
+    fn execute_svals(&self, args: &[crate::types::Value]) -> Result<Table> {
         use yachtsql_core::error::Error;
         use yachtsql_storage::Column;
 
@@ -1339,10 +1835,10 @@ impl TableValuedFunctionExec {
             )?;
         }
 
-        RecordBatch::new(self.schema.clone(), vec![val_col])
+        Table::new(self.schema.clone(), vec![val_col])
     }
 
-    fn execute_populate_record(&self, args: &[crate::types::Value]) -> Result<RecordBatch> {
+    fn execute_populate_record(&self, args: &[crate::types::Value]) -> Result<Table> {
         use yachtsql_core::error::Error;
         use yachtsql_storage::Column;
 
@@ -1371,7 +1867,263 @@ impl TableValuedFunctionExec {
             columns.push(col);
         }
 
-        RecordBatch::new(self.schema.clone(), columns)
+        Table::new(self.schema.clone(), columns)
+    }
+
+    fn execute_json_each(&self, args: &[crate::types::Value], as_text: bool) -> Result<Table> {
+        use yachtsql_core::error::Error;
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "json_each() requires exactly 1 argument".to_string(),
+            ));
+        }
+
+        let json_val = args[0]
+            .as_json()
+            .ok_or_else(|| Error::TypeMismatch {
+                expected: "JSON".to_string(),
+                actual: args[0].data_type().to_string(),
+            })?
+            .clone();
+
+        let obj = match json_val {
+            serde_json::Value::Object(map) => map,
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "json_each() requires a JSON object".to_string(),
+                ));
+            }
+        };
+
+        let num_rows = obj.len();
+        let mut key_col = Column::new(&DataType::String, num_rows);
+        let value_type = if as_text {
+            DataType::String
+        } else {
+            DataType::Json
+        };
+        let mut val_col = Column::new(&value_type, num_rows);
+
+        for (k, v) in obj.iter() {
+            key_col.push(Value::string(k.clone()))?;
+            if as_text {
+                let text_val = match v {
+                    serde_json::Value::String(s) => Value::string(s.clone()),
+                    serde_json::Value::Null => Value::null(),
+                    serde_json::Value::Number(n) => Value::string(n.to_string()),
+                    serde_json::Value::Bool(b) => Value::string(b.to_string()),
+                    _ => Value::string(v.to_string()),
+                };
+                val_col.push(text_val)?;
+            } else {
+                val_col.push(Value::json(v.clone()))?;
+            }
+        }
+
+        Table::new(self.schema.clone(), vec![key_col, val_col])
+    }
+
+    fn execute_numbers(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let (start, count) = match args.len() {
+            1 => {
+                let count = args[0].as_i64().unwrap_or(0);
+                (0i64, count)
+            }
+            2 => {
+                let offset = args[0].as_i64().unwrap_or(0);
+                let count = args[1].as_i64().unwrap_or(0);
+                (offset, count)
+            }
+            _ => (0i64, 0i64),
+        };
+
+        let mut col = Column::new(&DataType::Int64, count as usize);
+        for i in start..(start + count) {
+            col.push(Value::int64(i))?;
+        }
+
+        Table::new(self.schema.clone(), vec![col])
+    }
+
+    fn execute_zeros(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let count = args.first().and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+
+        let mut col = Column::new(&DataType::Int64, count);
+        for _ in 0..count {
+            col.push(Value::int64(0))?;
+        }
+
+        Table::new(self.schema.clone(), vec![col])
+    }
+
+    fn execute_one(&self) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let mut col = Column::new(&DataType::Int64, 1);
+        col.push(Value::int64(0))?;
+
+        Table::new(self.schema.clone(), vec![col])
+    }
+
+    fn execute_generate_series(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_core::error::Error;
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let (start, stop, step) = match args.len() {
+            2 => {
+                let start = args[0].as_i64().unwrap_or(0);
+                let stop = args[1].as_i64().unwrap_or(0);
+                (start, stop, 1i64)
+            }
+            3 => {
+                let start = args[0].as_i64().unwrap_or(0);
+                let stop = args[1].as_i64().unwrap_or(0);
+                let step = args[2].as_i64().unwrap_or(1);
+                (start, stop, step)
+            }
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "generateSeries requires 2 or 3 arguments".to_string(),
+                ));
+            }
+        };
+
+        if step == 0 {
+            return Err(Error::InvalidQuery(
+                "generateSeries step cannot be zero".to_string(),
+            ));
+        }
+
+        let mut values = Vec::new();
+        let mut current = start;
+        if step > 0 {
+            while current <= stop {
+                values.push(current);
+                current += step;
+            }
+        } else {
+            while current >= stop {
+                values.push(current);
+                current += step;
+            }
+        }
+
+        let mut col = Column::new(&DataType::Int64, values.len());
+        for v in values {
+            col.push(Value::int64(v))?;
+        }
+
+        Table::new(self.schema.clone(), vec![col])
+    }
+
+    fn execute_generate_random(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use rand::{RngCore, SeedableRng};
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let seed = if args.len() >= 2 {
+            args[1].as_i64().map(|s| s as u64)
+        } else {
+            None
+        };
+
+        let mut rng: Box<dyn rand::RngCore> = if let Some(s) = seed {
+            Box::new(rand::rngs::StdRng::seed_from_u64(s))
+        } else {
+            Box::new(rand::rngs::StdRng::from_entropy())
+        };
+
+        let mut columns: Vec<Column> = Vec::with_capacity(self.schema.fields().len());
+        for field in self.schema.fields() {
+            let mut col = Column::new(&field.data_type, 1);
+            let value = match &field.data_type {
+                DataType::Int64 => Value::int64(rng.next_u64() as i64),
+                DataType::Float64 => Value::float64(rng.next_u64() as f64 / u64::MAX as f64),
+                DataType::String => {
+                    let len = (rng.next_u32() % 15 + 5) as usize;
+                    let s: String = (0..len)
+                        .map(|_| ((rng.next_u32() % 26) as u8 + b'a') as char)
+                        .collect();
+                    Value::string(s)
+                }
+                DataType::Bool => Value::bool_val(rng.next_u32() % 2 == 0),
+                _ => Value::null(),
+            };
+            col.push(value)?;
+            columns.push(col);
+        }
+
+        Table::new(self.schema.clone(), columns)
+    }
+
+    fn execute_values(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        let num_cols = self.schema.fields().len();
+        let num_rows = (args.len().saturating_sub(1)) / num_cols;
+
+        let mut columns: Vec<Column> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(&f.data_type, num_rows))
+            .collect();
+
+        let value_args = &args[1..];
+        for row_idx in 0..num_rows {
+            for col_idx in 0..num_cols {
+                let arg_idx = row_idx * num_cols + col_idx;
+                let value = value_args.get(arg_idx).cloned().unwrap_or(Value::null());
+                columns[col_idx].push(value)?;
+            }
+        }
+
+        Table::new(self.schema.clone(), columns)
+    }
+
+    fn execute_null_table(&self) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        let columns: Vec<Column> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(&f.data_type, 0))
+            .collect();
+
+        Table::new(self.schema.clone(), columns)
+    }
+
+    fn execute_input(&self, _args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        let columns: Vec<Column> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(&f.data_type, 0))
+            .collect();
+
+        Table::new(self.schema.clone(), columns)
     }
 }
 
@@ -1380,16 +2132,27 @@ impl ExecutionPlan for TableValuedFunctionExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         use yachtsql_core::error::Error;
 
         let args = self.evaluate_args()?;
 
         let batch = match self.function_name.to_uppercase().as_str() {
             "EACH" => self.execute_each(&args)?,
+            "JSON_EACH" | "JSONB_EACH" => self.execute_json_each(&args, false)?,
+            "JSON_EACH_TEXT" | "JSONB_EACH_TEXT" => self.execute_json_each(&args, true)?,
             "SKEYS" => self.execute_skeys(&args)?,
             "SVALS" => self.execute_svals(&args)?,
             "POPULATE_RECORD" => self.execute_populate_record(&args)?,
+            "NUMBERS" | "NUMBERS_MT" => self.execute_numbers(&args)?,
+            "ZEROS" | "ZEROS_MT" => self.execute_zeros(&args)?,
+            "ONE" => self.execute_one()?,
+            "GENERATESERIES" | "GENERATE_SERIES" => self.execute_generate_series(&args)?,
+            "GENERATERANDOM" | "GENERATE_RANDOM" => self.execute_generate_random(&args)?,
+            "VALUES" => self.execute_values(&args)?,
+            "NULL" => self.execute_null_table()?,
+            "CLUSTER" | "CLUSTERALLREPLICAS" => self.execute_one()?,
+            "INPUT" => self.execute_input(&args)?,
 
             _ => {
                 return Err(Error::UnsupportedFeature(format!(

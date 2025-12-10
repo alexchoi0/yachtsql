@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use md5;
 use rust_decimal::prelude::ToPrimitive;
 use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use yachtsql_core::error::Result;
 use yachtsql_core::types::{DataType, Value};
 
@@ -154,8 +154,117 @@ pub fn eval_length(value: &Value) -> Result<Value> {
         return Ok(Value::int64(b.len() as i64));
     }
 
+    if let Some(arr) = value.as_array() {
+        return Ok(Value::int64(arr.len() as i64));
+    }
+
+    if let Some(map) = value.as_map() {
+        return Ok(Value::int64(map.len() as i64));
+    }
+
+    Err(yachtsql_core::error::Error::TypeMismatch {
+        expected: "STRING, BYTES, ARRAY, or MAP".to_string(),
+        actual: value.data_type().to_string(),
+    })
+}
+
+pub fn eval_octet_length(value: &Value) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::null());
+    }
+
+    if let Some(s) = value.as_str() {
+        return Ok(Value::int64(s.len() as i64));
+    }
+
+    if let Some(b) = value.as_bytes() {
+        return Ok(Value::int64(b.len() as i64));
+    }
+
     Err(yachtsql_core::error::Error::TypeMismatch {
         expected: "STRING or BYTES".to_string(),
+        actual: value.data_type().to_string(),
+    })
+}
+
+pub fn eval_bit_count(value: &Value) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::null());
+    }
+
+    if let Some(i) = value.as_i64() {
+        return Ok(Value::int64(i.count_ones() as i64));
+    }
+
+    if let Some(b) = value.as_bytes() {
+        let count: u32 = b.iter().map(|byte| byte.count_ones()).sum();
+        return Ok(Value::int64(count as i64));
+    }
+
+    Err(yachtsql_core::error::Error::TypeMismatch {
+        expected: "INTEGER or BYTES".to_string(),
+        actual: value.data_type().to_string(),
+    })
+}
+
+pub fn eval_get_bit(value: &Value, position: i64) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::null());
+    }
+
+    if let Some(b) = value.as_bytes() {
+        let bit_len = b.len() * 8;
+        if position < 0 || position >= bit_len as i64 {
+            return Err(yachtsql_core::error::Error::invalid_query(format!(
+                "GET_BIT: bit index {} out of range (0..{})",
+                position, bit_len
+            )));
+        }
+        let byte_idx = position as usize / 8;
+        let bit_idx = 7 - (position as usize % 8);
+        let bit = (b[byte_idx] >> bit_idx) & 1;
+        return Ok(Value::int64(bit as i64));
+    }
+
+    Err(yachtsql_core::error::Error::TypeMismatch {
+        expected: "BYTES".to_string(),
+        actual: value.data_type().to_string(),
+    })
+}
+
+pub fn eval_set_bit(value: &Value, position: i64, new_value: i64) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::null());
+    }
+
+    if new_value != 0 && new_value != 1 {
+        return Err(yachtsql_core::error::Error::invalid_query(format!(
+            "SET_BIT: new value must be 0 or 1, got {}",
+            new_value
+        )));
+    }
+
+    if let Some(b) = value.as_bytes() {
+        let bit_len = b.len() * 8;
+        if position < 0 || position >= bit_len as i64 {
+            return Err(yachtsql_core::error::Error::invalid_query(format!(
+                "SET_BIT: bit index {} out of range (0..{})",
+                position, bit_len
+            )));
+        }
+        let byte_idx = position as usize / 8;
+        let bit_idx = 7 - (position as usize % 8);
+        let mut result = b.to_vec();
+        if new_value == 1 {
+            result[byte_idx] |= 1 << bit_idx;
+        } else {
+            result[byte_idx] &= !(1 << bit_idx);
+        }
+        return Ok(Value::bytes(result));
+    }
+
+    Err(yachtsql_core::error::Error::TypeMismatch {
+        expected: "BYTES".to_string(),
         actual: value.data_type().to_string(),
     })
 }
@@ -288,6 +397,44 @@ pub fn eval_sha512(value: &Value, return_hex: bool) -> Result<Value> {
     )
 }
 
+pub fn eval_sha224(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let mut hasher = Sha224::new();
+            hasher.update(bytes);
+            hasher.finalize().to_vec()
+        },
+        "SHA224",
+        return_hex,
+    )
+}
+
+pub fn eval_sha384(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let mut hasher = Sha384::new();
+            hasher.update(bytes);
+            hasher.finalize().to_vec()
+        },
+        "SHA384",
+        return_hex,
+    )
+}
+
+pub fn eval_blake3(value: &Value, return_hex: bool) -> Result<Value> {
+    compute_hash(
+        value,
+        |bytes| {
+            let hash = blake3::hash(bytes);
+            hash.as_bytes().to_vec()
+        },
+        "BLAKE3",
+        return_hex,
+    )
+}
+
 pub fn eval_farm_fingerprint(value: &Value) -> Result<Value> {
     let compute_fingerprint = |bytes: &[u8]| -> Value {
         let hash = farmhash::hash64(bytes);
@@ -317,7 +464,7 @@ pub fn eval_to_hex(value: &Value) -> Result<Value> {
     }
 
     if let Some(b) = value.as_bytes() {
-        return Ok(Value::string(hex::encode(b).to_uppercase()));
+        return Ok(Value::string(hex::encode(b)));
     }
 
     Err(yachtsql_core::error::Error::TypeMismatch {

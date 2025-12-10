@@ -123,6 +123,9 @@ jobs:
         with:
           toolchain: nightly-2025-09-14
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -136,7 +139,7 @@ jobs:
             ${{ runner.os }}-x64-cargo-test-
 
       - name: Run tests for ${{ matrix.crate }}
-        run: cargo test -p ${{ matrix.crate }} --no-fail-fast
+        run: cargo nextest run -p ${{ matrix.crate }} --no-fail-fast --no-tests=pass
 
   # ============================================================================
   # Linux ARM64 (ubuntu-24.04-arm)
@@ -191,6 +194,9 @@ jobs:
         with:
           toolchain: nightly-2025-09-14
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -203,7 +209,7 @@ jobs:
             ${{ runner.os }}-arm64-cargo-test-
 
       - name: Run tests
-        run: cargo test --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast --no-tests=pass
 
   # ============================================================================
   # macOS Intel x86_64 (macos-13)
@@ -314,6 +320,9 @@ jobs:
         with:
           toolchain: nightly-2025-09-14
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -326,7 +335,7 @@ jobs:
             ${{ runner.os }}-cargo-test-clickhouse-
 
       - name: Run ClickHouse tests
-        run: cargo test --workspace --features clickhouse-tests --no-fail-fast
+        run: cargo nextest run --workspace --features clickhouse-tests --no-fail-fast --no-tests=pass
 
   # ============================================================================
   # Documentation
@@ -399,3 +408,15 @@ jobs:
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [check, fmt, clippy, test-crate, test-macos, test-clickhouse, doc, bench-compile, security-audit]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            exit 1
+          fi

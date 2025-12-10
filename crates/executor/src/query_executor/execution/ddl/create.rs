@@ -3,9 +3,138 @@ use sqlparser::ast::{ColumnDef, ColumnOption, DataType as SqlDataType};
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::{DataType, Value};
 use yachtsql_parser::Sql2023Types;
-use yachtsql_storage::{DefaultValue, Field, Schema, TableIndexOps};
+use yachtsql_storage::{DefaultValue, Field, Schema, TableEngine, TableIndexOps, TableSchemaOps};
+
+fn parse_engine_from_sql(
+    sql: &str,
+    order_by: Option<&sqlparser::ast::OneOrManyWithParens<sqlparser::ast::Expr>>,
+) -> TableEngine {
+    let upper = sql.to_uppercase();
+
+    let order_by_cols: Vec<String> = order_by
+        .map(|o| match o {
+            sqlparser::ast::OneOrManyWithParens::One(expr) => vec![expr.to_string()],
+            sqlparser::ast::OneOrManyWithParens::Many(exprs) => {
+                exprs.iter().map(|e| e.to_string()).collect()
+            }
+        })
+        .unwrap_or_default();
+
+    if let Some(engine_pos) = upper.find("ENGINE") {
+        let after_engine = &sql[engine_pos + 6..].trim_start();
+        if let Some(after_eq) = after_engine.strip_prefix('=').or(Some(after_engine)) {
+            let after_eq = after_eq.trim_start();
+
+            let engine_with_params: &str = after_eq.split_whitespace().next().unwrap_or("");
+            let engine_upper = engine_with_params.to_uppercase();
+
+            if engine_upper.starts_with("SUMMINGMERGETREE") {
+                let sum_columns = extract_parenthesized_params(after_eq);
+                return TableEngine::SummingMergeTree {
+                    order_by: order_by_cols,
+                    sum_columns,
+                };
+            }
+            if engine_upper.starts_with("REPLACINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let version_column = params.first().cloned();
+                return TableEngine::ReplacingMergeTree {
+                    order_by: order_by_cols,
+                    version_column,
+                };
+            }
+            if engine_upper.starts_with("COLLAPSINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let sign_column = params
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "sign".to_string());
+                return TableEngine::CollapsingMergeTree {
+                    order_by: order_by_cols,
+                    sign_column,
+                };
+            }
+            if engine_upper.starts_with("VERSIONEDCOLLAPSINGMERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let sign_column = params
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "sign".to_string());
+                let version_column = params
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_else(|| "version".to_string());
+                return TableEngine::VersionedCollapsingMergeTree {
+                    order_by: order_by_cols,
+                    sign_column,
+                    version_column,
+                };
+            }
+            if engine_upper.starts_with("AGGREGATINGMERGETREE") {
+                return TableEngine::AggregatingMergeTree {
+                    order_by: order_by_cols,
+                };
+            }
+            if engine_upper.starts_with("MERGETREE") {
+                return TableEngine::MergeTree {
+                    order_by: order_by_cols,
+                };
+            }
+            if engine_upper.starts_with("DISTRIBUTED") {
+                let params = extract_parenthesized_params(after_eq);
+                return TableEngine::Distributed {
+                    cluster: params.first().cloned().unwrap_or_default(),
+                    database: params.get(1).cloned().unwrap_or_default(),
+                    table: params.get(2).cloned().unwrap_or_default(),
+                    sharding_key: params.get(3).cloned(),
+                };
+            }
+            if engine_upper.starts_with("BUFFER") {
+                let params = extract_parenthesized_params(after_eq);
+                return TableEngine::Buffer {
+                    database: params.first().cloned().unwrap_or_default(),
+                    table: params.get(1).cloned().unwrap_or_default(),
+                };
+            }
+            if engine_upper.starts_with("LOG") {
+                return TableEngine::Log;
+            }
+            if engine_upper.starts_with("TINYLOG") {
+                return TableEngine::TinyLog;
+            }
+            if engine_upper.starts_with("STRIPELOG") {
+                return TableEngine::StripeLog;
+            }
+            if engine_upper.starts_with("MEMORY") {
+                return TableEngine::Memory;
+            }
+        }
+    }
+    TableEngine::Memory
+}
+
+fn extract_parenthesized_params(s: &str) -> Vec<String> {
+    if let Some(start) = s.find('(') {
+        if let Some(end) = s.find(')') {
+            let params_str = &s[start + 1..end];
+            return params_str
+                .split(',')
+                .map(|p| p.trim().trim_matches('\'').to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
 
 use super::super::QueryExecutor;
+
+#[derive(Debug, Clone, Copy)]
+enum SerialType {
+    SmallSerial,
+    Serial,
+    BigSerial,
+}
 
 pub trait DdlExecutor {
     fn execute_create_table(
@@ -31,6 +160,7 @@ pub trait DdlExecutor {
     fn parse_columns_to_schema(
         &self,
         dataset_id: &str,
+        table_name: &str,
         columns: &[ColumnDef],
     ) -> Result<(Schema, Vec<sqlparser::ast::TableConstraint>)>;
 
@@ -41,7 +171,7 @@ impl DdlExecutor for QueryExecutor {
     fn execute_create_table(
         &mut self,
         stmt: &sqlparser::ast::Statement,
-        _original_sql: &str,
+        original_sql: &str,
     ) -> Result<()> {
         use sqlparser::ast::Statement;
 
@@ -55,7 +185,17 @@ impl DdlExecutor for QueryExecutor {
         let (dataset_id, table_id) = self.parse_ddl_table_name(&table_name)?;
 
         let (mut schema, column_level_fks) =
-            self.parse_columns_to_schema(&dataset_id, &create_table.columns)?;
+            self.parse_columns_to_schema(&dataset_id, &table_id, &create_table.columns)?;
+
+        if let Some(ref inherits) = create_table.inherits {
+            self.apply_inheritance(&dataset_id, &table_id, &mut schema, inherits)?;
+        }
+
+        if schema.fields().is_empty() {
+            return Err(Error::InvalidQuery(
+                "CREATE TABLE requires at least one column".to_string(),
+            ));
+        }
 
         let mut all_constraints = create_table.constraints.clone();
         all_constraints.extend(column_level_fks);
@@ -113,7 +253,43 @@ impl DdlExecutor for QueryExecutor {
                 }
             }
 
-            dataset.create_table(table_id.clone(), schema)?;
+            dataset.create_table(table_id.clone(), schema.clone())?;
+
+            let engine = parse_engine_from_sql(original_sql, create_table.order_by.as_ref());
+            if let Some(table) = dataset.get_table_mut(&table_id) {
+                table.set_engine(engine);
+            }
+
+            for field in schema.fields() {
+                if let (Some(seq_name), Some(config)) = (
+                    &field.identity_sequence_name,
+                    &field.identity_sequence_config,
+                ) {
+                    dataset.sequences_mut().create_sequence(
+                        seq_name.clone(),
+                        config.clone(),
+                        true,
+                    )?;
+                    dataset.sequences_mut().set_owned_by(
+                        seq_name,
+                        table_id.clone(),
+                        field.name.clone(),
+                    )?;
+                }
+            }
+
+            let child_full_name = format!("{}.{}", dataset_id, table_id);
+            for parent_name in schema.parent_tables() {
+                let (parent_dataset_id, parent_table_id) =
+                    self.parse_ddl_table_name(parent_name)?;
+                if let Some(parent_dataset) = storage.get_dataset_mut(&parent_dataset_id) {
+                    if let Some(parent_table) = parent_dataset.get_table_mut(&parent_table_id) {
+                        parent_table
+                            .schema_mut()
+                            .add_child_table(child_full_name.clone());
+                    }
+                }
+            }
         }
 
         self.plan_cache.borrow_mut().invalidate_all();
@@ -355,6 +531,7 @@ impl DdlExecutor for QueryExecutor {
     fn parse_columns_to_schema(
         &self,
         dataset_id: &str,
+        table_name: &str,
         columns: &[ColumnDef],
     ) -> Result<(Schema, Vec<sqlparser::ast::TableConstraint>)> {
         let mut fields = Vec::new();
@@ -366,6 +543,24 @@ impl DdlExecutor for QueryExecutor {
         for col in columns {
             let name = col.name.value.clone();
 
+            if let SqlDataType::Nested(nested_fields) = &col.data_type {
+                for nested_field in nested_fields {
+                    let nested_col_name = format!("{}.{}", name, nested_field.name.value);
+                    if !column_names.insert(nested_col_name.clone()) {
+                        return Err(Error::InvalidQuery(format!(
+                            "Duplicate column name '{}' in CREATE TABLE",
+                            nested_col_name
+                        )));
+                    }
+                    let inner_type =
+                        self.sql_type_to_data_type(dataset_id, &nested_field.data_type)?;
+                    let array_type = DataType::Array(Box::new(inner_type));
+                    let field = Field::nullable(nested_col_name, array_type);
+                    fields.push(field);
+                }
+                continue;
+            }
+
             if !column_names.insert(name.clone()) {
                 return Err(Error::InvalidQuery(format!(
                     "Duplicate column name '{}' in CREATE TABLE",
@@ -373,6 +568,8 @@ impl DdlExecutor for QueryExecutor {
                 )));
             }
             let data_type = self.sql_type_to_data_type(dataset_id, &col.data_type)?;
+
+            let serial_type = self.detect_serial_type(&col.data_type);
 
             let domain_name = self.extract_domain_name(&col.data_type)?;
 
@@ -385,6 +582,10 @@ impl DdlExecutor for QueryExecutor {
                 yachtsql_storage::schema::GenerationMode,
             )> = None;
             let mut default_value: Option<DefaultValue> = None;
+            let mut identity_info: Option<(
+                yachtsql_storage::IdentityGeneration,
+                yachtsql_storage::sequence::SequenceConfig,
+            )> = None;
 
             for opt in &col.options {
                 match &opt.option {
@@ -423,6 +624,25 @@ impl DdlExecutor for QueryExecutor {
                         };
 
                         generated_expr = Some((expr_sql, Vec::new(), mode));
+                    }
+                    ColumnOption::Generated {
+                        generated_as,
+                        sequence_options,
+                        generation_expr: None,
+                        ..
+                    } => {
+                        use sqlparser::ast::GeneratedAs;
+
+                        let identity_mode = match generated_as {
+                            GeneratedAs::Always => yachtsql_storage::IdentityGeneration::Always,
+                            GeneratedAs::ByDefault => {
+                                yachtsql_storage::IdentityGeneration::ByDefault
+                            }
+                            GeneratedAs::ExpStored => continue,
+                        };
+
+                        let seq_config = parse_sequence_options(sequence_options);
+                        identity_info = Some((identity_mode, seq_config));
                     }
                     ColumnOption::ForeignKey {
                         foreign_table,
@@ -494,13 +714,39 @@ impl DdlExecutor for QueryExecutor {
                 field = field.with_domain(domain);
             }
 
-            fields.push(field);
-        }
+            if let Some(serial) = serial_type {
+                let seq_name = format!("{}_{}_seq", table_name, field.name);
+                field = field.with_identity_by_default(
+                    seq_name,
+                    Some(yachtsql_storage::sequence::SequenceConfig {
+                        start_value: 1,
+                        increment: 1,
+                        min_value: Some(1),
+                        max_value: match serial {
+                            SerialType::SmallSerial => Some(i16::MAX as i64),
+                            SerialType::Serial => Some(i32::MAX as i64),
+                            SerialType::BigSerial => None,
+                        },
+                        cycle: false,
+                        cache: 1,
+                    }),
+                );
+                field.is_auto_increment = true;
+            }
 
-        if fields.is_empty() {
-            return Err(Error::InvalidQuery(
-                "CREATE TABLE requires at least one column".to_string(),
-            ));
+            if let Some((identity_mode, seq_config)) = identity_info {
+                let seq_name = format!("{}_{}_seq", table_name, field.name);
+                field = match identity_mode {
+                    yachtsql_storage::IdentityGeneration::Always => {
+                        field.with_identity_always(seq_name, Some(seq_config))
+                    }
+                    yachtsql_storage::IdentityGeneration::ByDefault => {
+                        field.with_identity_by_default(seq_name, Some(seq_config))
+                    }
+                };
+            }
+
+            fields.push(field);
         }
 
         let mut schema = Schema::from_fields(fields);
@@ -535,6 +781,7 @@ impl DdlExecutor for QueryExecutor {
             | SqlDataType::UInt64
             | SqlDataType::UInt128
             | SqlDataType::UInt256 => Ok(DataType::Int64),
+            SqlDataType::Float32 => Ok(DataType::Float32),
             SqlDataType::Float64
             | SqlDataType::Float(_)
             | SqlDataType::Real
@@ -544,10 +791,14 @@ impl DdlExecutor for QueryExecutor {
             SqlDataType::String(_)
             | SqlDataType::Varchar(_)
             | SqlDataType::Char(_)
-            | SqlDataType::Text => Ok(DataType::String),
+            | SqlDataType::Text
+            | SqlDataType::FixedString(_) => Ok(DataType::String),
             SqlDataType::Bytea | SqlDataType::Bytes(_) => Ok(DataType::Bytes),
+            SqlDataType::Bit(_) | SqlDataType::BitVarying(_) => Ok(DataType::Bytes),
             SqlDataType::Date => Ok(DataType::Date),
+            SqlDataType::Date32 => Ok(DataType::Date32),
             SqlDataType::Timestamp(_, _) => Ok(DataType::Timestamp),
+            SqlDataType::Datetime(_) | SqlDataType::Datetime64(_, _) => Ok(DataType::DateTime),
             SqlDataType::Decimal(info) | SqlDataType::Numeric(info) => {
                 use sqlparser::ast::ExactNumberInfo;
                 let precision_scale = match info {
@@ -572,8 +823,68 @@ impl DdlExecutor for QueryExecutor {
                 let inner_data_type = self.sql_type_to_data_type(dataset_id, inner_type)?;
                 Ok(DataType::Array(Box::new(inner_data_type)))
             }
-            SqlDataType::JSON => Ok(DataType::Json),
+            SqlDataType::Map(key_type, value_type) => {
+                let key_data_type = self.sql_type_to_data_type(dataset_id, key_type)?;
+                let value_data_type = self.sql_type_to_data_type(dataset_id, value_type)?;
+                Ok(DataType::Map(
+                    Box::new(key_data_type),
+                    Box::new(value_data_type),
+                ))
+            }
+            SqlDataType::JSON | SqlDataType::JSONB => Ok(DataType::Json),
+            SqlDataType::Uuid => Ok(DataType::Uuid),
             SqlDataType::Nullable(inner) => self.sql_type_to_data_type(dataset_id, inner),
+            SqlDataType::LowCardinality(inner) => self.sql_type_to_data_type(dataset_id, inner),
+            SqlDataType::Nested(fields) => {
+                let struct_fields: Vec<yachtsql_core::types::StructField> = fields
+                    .iter()
+                    .map(|col| {
+                        let dt = self
+                            .sql_type_to_data_type(dataset_id, &col.data_type)
+                            .unwrap_or(DataType::String);
+                        yachtsql_core::types::StructField {
+                            name: col.name.value.clone(),
+                            data_type: DataType::Array(Box::new(dt)),
+                        }
+                    })
+                    .collect();
+                Ok(DataType::Struct(struct_fields))
+            }
+            SqlDataType::Tuple(fields) => {
+                let struct_fields: Vec<yachtsql_core::types::StructField> = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| {
+                        let dt = self
+                            .sql_type_to_data_type(dataset_id, &field.field_type)
+                            .unwrap_or(DataType::String);
+                        let name = field
+                            .field_name
+                            .as_ref()
+                            .map(|ident| ident.value.clone())
+                            .unwrap_or_else(|| (idx + 1).to_string());
+                        yachtsql_core::types::StructField {
+                            name,
+                            data_type: dt,
+                        }
+                    })
+                    .collect();
+                Ok(DataType::Struct(struct_fields))
+            }
+            SqlDataType::Enum(members, _bits) => {
+                use sqlparser::ast::EnumMember;
+                let labels: Vec<String> = members
+                    .iter()
+                    .map(|m| match m {
+                        EnumMember::Name(name) => name.clone(),
+                        EnumMember::NamedValue(name, _) => name.clone(),
+                    })
+                    .collect();
+                Ok(DataType::Enum {
+                    type_name: String::new(),
+                    labels,
+                })
+            }
             SqlDataType::Interval { .. } => Ok(DataType::Interval),
             SqlDataType::GeometricType(kind) => {
                 use sqlparser::ast::GeometricTypeKind;
@@ -590,7 +901,7 @@ impl DdlExecutor for QueryExecutor {
                     ))),
                 }
             }
-            SqlDataType::Custom(name, _) => {
+            SqlDataType::Custom(name, modifiers) => {
                 let type_name = name
                     .0
                     .last()
@@ -598,6 +909,47 @@ impl DdlExecutor for QueryExecutor {
                     .map(|ident| ident.value.clone())
                     .unwrap_or_default();
                 let canonical = Sql2023Types::normalize_type_name(&type_name);
+                let type_upper = type_name.to_uppercase();
+
+                if type_upper == "VECTOR" {
+                    let dims = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Vector(dims));
+                }
+
+                if type_upper == "DECIMAL32" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((9, scale))));
+                }
+
+                if type_upper == "DECIMAL64" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((18, scale))));
+                }
+
+                if type_upper == "DECIMAL128" {
+                    let scale = modifiers
+                        .first()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    return Ok(DataType::Numeric(Some((38, scale))));
+                }
+
+                if type_upper == "DATETIME64" {
+                    return Ok(DataType::Timestamp);
+                }
+
+                if type_upper == "FIXEDSTRING" {
+                    return Ok(DataType::String);
+                }
 
                 {
                     let storage = self.storage.borrow_mut();
@@ -638,7 +990,7 @@ impl DdlExecutor for QueryExecutor {
                     return self.parse_domain_base_type(&base_type);
                 }
 
-                match canonical.as_str() {
+                match type_upper.as_str() {
                     "GEOGRAPHY" => Ok(DataType::Geography),
                     "JSON" => Ok(DataType::Json),
                     "HSTORE" => Ok(DataType::Hstore),
@@ -649,6 +1001,15 @@ impl DdlExecutor for QueryExecutor {
                     "CIRCLE" => Ok(DataType::Circle),
                     "INET" => Ok(DataType::Inet),
                     "CIDR" => Ok(DataType::Cidr),
+                    "SERIAL" | "SERIAL4" => Ok(DataType::Int64),
+                    "BIGSERIAL" | "SERIAL8" => Ok(DataType::Int64),
+                    "SMALLSERIAL" | "SERIAL2" => Ok(DataType::Int64),
+                    "IPV4" => Ok(DataType::IPv4),
+                    "IPV6" => Ok(DataType::IPv6),
+                    "DATE32" => Ok(DataType::Date32),
+                    "RING" => Ok(DataType::GeoRing),
+                    "POLYGON" => Ok(DataType::GeoPolygon),
+                    "MULTIPOLYGON" => Ok(DataType::GeoMultiPolygon),
 
                     _ => Ok(DataType::Custom(type_name)),
                 }
@@ -657,6 +1018,28 @@ impl DdlExecutor for QueryExecutor {
                 "Unsupported data type: {:?}",
                 sql_type
             ))),
+        }
+    }
+}
+
+impl QueryExecutor {
+    fn detect_serial_type(&self, sql_type: &SqlDataType) -> Option<SerialType> {
+        if let SqlDataType::Custom(name, _) = sql_type {
+            let type_name = name
+                .0
+                .last()
+                .and_then(|part| part.as_ident())
+                .map(|ident| ident.value.to_uppercase())
+                .unwrap_or_default();
+
+            match type_name.as_str() {
+                "SERIAL" | "SERIAL4" => Some(SerialType::Serial),
+                "BIGSERIAL" | "SERIAL8" => Some(SerialType::BigSerial),
+                "SMALLSERIAL" | "SERIAL2" => Some(SerialType::SmallSerial),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 }
@@ -720,6 +1103,68 @@ fn parse_column_default(expr: &sqlparser::ast::Expr) -> Result<DefaultValue> {
             expr
         ))),
     }
+}
+
+fn expr_to_i64(expr: &sqlparser::ast::Expr) -> Option<i64> {
+    use sqlparser::ast::{Expr, Value as SqlValue, ValueWithSpan as SqlValueWithSpan};
+
+    match expr {
+        Expr::Value(SqlValueWithSpan {
+            value: SqlValue::Number(n, _),
+            ..
+        }) => n.parse::<i64>().ok(),
+        Expr::UnaryOp {
+            op: sqlparser::ast::UnaryOperator::Minus,
+            expr,
+        } => expr_to_i64(expr).map(|v| -v),
+        _ => None,
+    }
+}
+
+fn parse_sequence_options(
+    options: &Option<Vec<sqlparser::ast::SequenceOptions>>,
+) -> yachtsql_storage::sequence::SequenceConfig {
+    use sqlparser::ast::SequenceOptions;
+
+    let mut config = yachtsql_storage::sequence::SequenceConfig::default();
+
+    if let Some(opts) = options {
+        for opt in opts {
+            match opt {
+                SequenceOptions::StartWith(start, _) => {
+                    if let Some(value) = expr_to_i64(start) {
+                        config.start_value = value;
+                    }
+                }
+                SequenceOptions::IncrementBy(inc, _) => {
+                    if let Some(value) = expr_to_i64(inc) {
+                        config.increment = value;
+                    }
+                }
+                SequenceOptions::MinValue(Some(min)) => {
+                    if let Some(value) = expr_to_i64(min) {
+                        config.min_value = Some(value);
+                    }
+                }
+                SequenceOptions::MaxValue(Some(max)) => {
+                    if let Some(value) = expr_to_i64(max) {
+                        config.max_value = Some(value);
+                    }
+                }
+                SequenceOptions::Cycle(cycle) => {
+                    config.cycle = *cycle;
+                }
+                SequenceOptions::Cache(cache) => {
+                    if let Some(value) = expr_to_i64(cache) {
+                        config.cache = value as u32;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    config
 }
 
 impl QueryExecutor {
@@ -854,6 +1299,17 @@ impl QueryExecutor {
                     if let Some(chars) = characteristics {
                         if let Some(enforced) = chars.enforced {
                             foreign_key = foreign_key.with_enforced(enforced);
+                        }
+                        if chars.deferrable == Some(true) {
+                            use sqlparser::ast::DeferrableInitial;
+                            use yachtsql_storage::Deferrable;
+                            let deferrable = match chars.initially {
+                                Some(DeferrableInitial::Deferred) => Deferrable::InitiallyDeferred,
+                                Some(DeferrableInitial::Immediate) | None => {
+                                    Deferrable::InitiallyImmediate
+                                }
+                            };
+                            foreign_key = foreign_key.with_deferrable(deferrable);
                         }
                     }
 
@@ -995,5 +1451,106 @@ impl QueryExecutor {
             .ok_or_else(|| Error::invalid_query(format!("Domain '{}' not found", domain_name)))?;
 
         Ok(domain.not_null)
+    }
+
+    fn apply_inheritance(
+        &self,
+        dataset_id: &str,
+        _table_id: &str,
+        schema: &mut yachtsql_storage::Schema,
+        inherits: &[sqlparser::ast::ObjectName],
+    ) -> Result<()> {
+        let storage = self.storage.borrow();
+        let mut all_inherited_fields = Vec::new();
+        let mut parent_names = Vec::new();
+
+        for parent_name in inherits {
+            let parent_name_str = parent_name.to_string();
+            let (parent_dataset_id, parent_table_id) =
+                self.parse_ddl_table_name(&parent_name_str)?;
+
+            let parent_dataset_id =
+                if parent_dataset_id == "default" && !parent_name_str.contains('.') {
+                    dataset_id.to_string()
+                } else {
+                    parent_dataset_id
+                };
+
+            let parent_dataset = storage.get_dataset(&parent_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Parent dataset '{}' not found", parent_dataset_id))
+            })?;
+
+            let parent_table = parent_dataset.get_table(&parent_table_id).ok_or_else(|| {
+                Error::InvalidQuery(format!("Parent table '{}' does not exist", parent_name_str))
+            })?;
+
+            let parent_schema = parent_table.schema();
+            for field in parent_schema.fields() {
+                let already_exists = all_inherited_fields
+                    .iter()
+                    .any(|f: &yachtsql_storage::Field| f.name == field.name)
+                    || schema.field(&field.name).is_some();
+                if !already_exists {
+                    all_inherited_fields.push(field.clone());
+                }
+            }
+
+            parent_names.push(format!("{}.{}", parent_dataset_id, parent_table_id));
+        }
+
+        schema.prepend_inherited_fields(all_inherited_fields);
+        schema.set_parent_tables(parent_names);
+
+        Ok(())
+    }
+}
+
+impl QueryExecutor {
+    pub fn execute_create_table_as(
+        &mut self,
+        new_table: &str,
+        source_table: &str,
+        engine_clause: &str,
+    ) -> Result<crate::Table> {
+        let (new_dataset_id, new_table_id) = self.parse_ddl_table_name(new_table)?;
+        let (source_dataset_id, source_table_id) = self.parse_ddl_table_name(source_table)?;
+
+        let source_schema = {
+            let storage = self.storage.borrow();
+            let dataset = storage.get_dataset(&source_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", source_dataset_id))
+            })?;
+            let table = dataset
+                .get_table(&source_table_id)
+                .ok_or_else(|| Error::table_not_found(&source_table_id))?;
+            table.schema().clone()
+        };
+
+        {
+            let mut storage = self.storage.borrow_mut();
+            let dataset = storage.get_dataset_mut(&new_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", new_dataset_id))
+            })?;
+
+            if dataset.get_table(&new_table_id).is_some() {
+                return Err(Error::InvalidQuery(format!(
+                    "Table '{}.{}' already exists",
+                    new_dataset_id, new_table_id
+                )));
+            }
+
+            dataset.create_table(new_table_id.clone(), source_schema)?;
+
+            let engine = parse_engine_from_sql(engine_clause, None);
+            if let Some(table) = dataset.get_table_mut(&new_table_id) {
+                table.set_engine(engine);
+            }
+        }
+
+        self.plan_cache.borrow_mut().invalidate_all();
+
+        Ok(crate::Table::empty(yachtsql_storage::Schema::from_fields(
+            vec![],
+        )))
     }
 }

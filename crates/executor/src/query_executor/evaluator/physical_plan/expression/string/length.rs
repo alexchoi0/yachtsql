@@ -3,17 +3,56 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_length(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         Self::validate_arg_count("LENGTH", args, 1)?;
         let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
         crate::functions::scalar::eval_length(&val)
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_octet_length(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("OCTET_LENGTH", args, 1)?;
+        Self::evaluate_byte_length_impl(&args[0], batch, row_idx)
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_byte_length(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        Self::validate_arg_count("BYTE_LENGTH", args, 1)?;
+        Self::evaluate_byte_length_impl(&args[0], batch, row_idx)
+    }
+
+    fn evaluate_byte_length_impl(arg: &Expr, batch: &Table, row_idx: usize) -> Result<Value> {
+        let val = Self::evaluate_expr(arg, batch, row_idx)?;
+
+        if val.is_null() {
+            return Ok(Value::null());
+        }
+
+        if let Some(s) = val.as_str() {
+            return Ok(Value::int64(s.len() as i64));
+        }
+
+        if let Some(b) = val.as_bytes() {
+            return Ok(Value::int64(b.len() as i64));
+        }
+
+        Err(crate::error::Error::TypeMismatch {
+            expected: "STRING or BYTES".to_string(),
+            actual: val.data_type().to_string(),
+        })
     }
 }
 

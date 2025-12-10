@@ -8,21 +8,32 @@ use yachtsql_capability::{FeatureId, FeatureRegistry};
 use yachtsql_core::error::{Error, Result};
 use yachtsql_parser::Statement as ParserStatement;
 
-use super::function_validator::validate_function;
+use super::function_validator::validate_function_with_udfs;
 
 const T611_WINDOW_FUNCTIONS: FeatureId = FeatureId("T611");
 
 pub fn validate_statement(stmt: &ParserStatement, registry: &FeatureRegistry) -> Result<()> {
+    validate_statement_with_udfs(stmt, registry, None)
+}
+
+pub fn validate_statement_with_udfs(
+    stmt: &ParserStatement,
+    registry: &FeatureRegistry,
+    udf_names: Option<&HashSet<String>>,
+) -> Result<()> {
     match stmt {
-        ParserStatement::Standard(std_stmt) => {
-            StatementValidator { registry }.validate(std_stmt.ast())
+        ParserStatement::Standard(std_stmt) => StatementValidator {
+            registry,
+            udf_names,
         }
+        .validate(std_stmt.ast()),
         ParserStatement::Custom(_) => Ok(()),
     }
 }
 
 struct StatementValidator<'a> {
     registry: &'a FeatureRegistry,
+    udf_names: Option<&'a HashSet<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,15 +137,36 @@ impl<'a> StatementValidator<'a> {
         projection: &[SelectItem],
         group_by: &GroupByExpr,
     ) -> Result<()> {
-        let group_by_columns = self.extract_group_by_columns(group_by);
+        let group_by_identifiers = self.extract_group_by_identifiers(group_by);
 
-        if group_by_columns.is_empty() {
+        if group_by_identifiers.is_empty() {
             return Ok(());
         }
 
+        let alias_to_expr = Self::build_alias_map(projection);
+        let mut group_by_columns = HashSet::new();
+        for ident in &group_by_identifiers {
+            let ident_lower = ident.to_lowercase();
+            if let Some(expr) = alias_to_expr.get(&ident_lower) {
+                Self::collect_column_names(expr, &mut group_by_columns);
+            } else {
+                group_by_columns.insert(ident_lower);
+            }
+        }
+        let grouped_aliases: HashSet<String> = group_by_identifiers
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
         for item in projection {
             match item {
-                SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if grouped_aliases.contains(&alias.value.to_lowercase()) {
+                        continue;
+                    }
+                    self.validate_select_expr_against_group_by(expr, &group_by_columns)?;
+                }
+                SelectItem::UnnamedExpr(expr) => {
                     self.validate_select_expr_against_group_by(expr, &group_by_columns)?;
                 }
                 SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {}
@@ -142,6 +174,68 @@ impl<'a> StatementValidator<'a> {
         }
 
         Ok(())
+    }
+
+    fn build_alias_map(projection: &[SelectItem]) -> std::collections::HashMap<String, &Expr> {
+        let mut map = std::collections::HashMap::new();
+        for item in projection {
+            if let SelectItem::ExprWithAlias { expr, alias } = item {
+                map.insert(alias.value.to_lowercase(), expr);
+            }
+        }
+        map
+    }
+
+    fn extract_group_by_identifiers(&self, group_by: &GroupByExpr) -> Vec<String> {
+        let mut identifiers = Vec::new();
+        match group_by {
+            GroupByExpr::All(_) => {}
+            GroupByExpr::Expressions(exprs, _) => {
+                for expr in exprs {
+                    Self::collect_identifiers(expr, &mut identifiers);
+                }
+            }
+        }
+        identifiers
+    }
+
+    fn collect_identifiers(expr: &Expr, identifiers: &mut Vec<String>) {
+        match expr {
+            Expr::Identifier(ident) => {
+                identifiers.push(ident.value.clone());
+            }
+            Expr::CompoundIdentifier(parts) => {
+                if let Some(last) = parts.last() {
+                    identifiers.push(last.value.clone());
+                }
+            }
+            Expr::Nested(inner) => Self::collect_identifiers(inner, identifiers),
+            Expr::Rollup(sets) | Expr::Cube(sets) => {
+                for set in sets {
+                    for col_expr in set {
+                        Self::collect_identifiers(col_expr, identifiers);
+                    }
+                }
+            }
+            Expr::GroupingSets(sets) => {
+                for set in sets {
+                    for col_expr in set {
+                        Self::collect_identifiers(col_expr, identifiers);
+                    }
+                }
+            }
+            Expr::Function(_)
+            | Expr::BinaryOp { .. }
+            | Expr::UnaryOp { .. }
+            | Expr::Cast { .. } => {
+                let mut cols = HashSet::new();
+                Self::collect_column_names(expr, &mut cols);
+                for col in cols {
+                    identifiers.push(col);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn extract_group_by_columns(&self, group_by: &GroupByExpr) -> HashSet<String> {
@@ -168,6 +262,20 @@ impl<'a> StatementValidator<'a> {
                 }
             }
             Expr::Nested(inner) => Self::collect_column_names(inner, columns),
+            Expr::Rollup(sets) | Expr::Cube(sets) => {
+                for set in sets {
+                    for col_expr in set {
+                        Self::collect_column_names(col_expr, columns);
+                    }
+                }
+            }
+            Expr::GroupingSets(sets) => {
+                for set in sets {
+                    for col_expr in set {
+                        Self::collect_column_names(col_expr, columns);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -270,6 +378,7 @@ impl<'a> StatementValidator<'a> {
                 | "EVERY"
                 | "BIT_AND"
                 | "BIT_OR"
+                | "BIT_XOR"
                 | "STDDEV"
                 | "STDDEV_POP"
                 | "STDDEV_SAMP"
@@ -339,6 +448,109 @@ impl<'a> StatementValidator<'a> {
                 | "SUMWITHOVERFLOW"
                 | "WINDOW_FUNNEL"
                 | "WINDOWFUNNEL"
+                | "JSON_AGG"
+                | "JSONB_AGG"
+                | "JSON_OBJECT_AGG"
+                | "JSONB_OBJECT_AGG"
+                | "SKEW_POP"
+                | "SKEWPOP"
+                | "SKEW_SAMP"
+                | "SKEWSAMP"
+                | "KURT_POP"
+                | "KURTPOP"
+                | "KURT_SAMP"
+                | "KURTSAMP"
+                | "AVG_WEIGHTED"
+                | "AVGWEIGHTED"
+                | "ANY_IF"
+                | "ANYIF"
+                | "MIN_IF"
+                | "MINIF"
+                | "MAX_IF"
+                | "MAXIF"
+                | "DELTA_SUM"
+                | "DELTASUM"
+                | "DELTA_SUM_TIMESTAMP"
+                | "DELTASUMTIMESTAMP"
+                | "SIMPLE_LINEAR_REGRESSION"
+                | "SIMPLELINEARREGRESSION"
+                | "RANK_CORR"
+                | "RANKCORR"
+                | "EXPONENTIAL_MOVING_AVERAGE"
+                | "EXPONENTIALMOVINGAVERAGE"
+                | "MANN_WHITNEY_U_TEST"
+                | "MANNWHITNEYUTEST"
+                | "STUDENT_T_TEST"
+                | "STUDENTTTEST"
+                | "WELCH_T_TEST"
+                | "WELCHTTEST"
+                | "CRAMERS_V"
+                | "CRAMERSV"
+                | "THEIL_U"
+                | "THEILSU"
+                | "CATEGORICAL_INFORMATION_VALUE"
+                | "CATEGORICALINFORMATIONVALUE"
+                | "SEQUENCE_MATCH"
+                | "SEQUENCEMATCH"
+                | "SEQUENCE_COUNT"
+                | "SEQUENCECOUNT"
+                | "BOUNDING_RATIO"
+                | "BOUNDINGRATIO"
+                | "COUNT_EQUAL"
+                | "COUNTEQUAL"
+                | "CONTINGENCY"
+                | "ENTROPY"
+                | "RETENTION"
+                | "SUM_ARRAY"
+                | "SUMARRAY"
+                | "AVG_ARRAY"
+                | "AVGARRAY"
+                | "MIN_ARRAY"
+                | "MINARRAY"
+                | "MAX_ARRAY"
+                | "MAXARRAY"
+                | "ANY_LAST"
+                | "ANYLAST"
+                | "UNIQEXACT"
+                | "UNIQCOMBINED64"
+                | "UNIQUPTO"
+                | "TOP_K_WEIGHTED"
+                | "TOPKWEIGHTED"
+                | "NOTHING"
+                | "SUMKAHAN"
+                | "SINGLEVALUEORNULL"
+                | "BOUNDEDSAMPLE"
+                | "LARGESTTRIANGLETHREEBUCKETS"
+                | "SPARKBAR"
+                | "MAXINTERSECTIONS"
+                | "MAXINTERSECTIONSPOSITION"
+                | "SUMORNULL"
+                | "SUMORDEFAULT"
+                | "SUMRESAMPLE"
+                | "SUMSTATE"
+                | "SUM_STATE"
+                | "SUMMERGE"
+                | "SUM_MERGE"
+                | "AVGSTATE"
+                | "AVG_STATE"
+                | "AVGMERGE"
+                | "AVG_MERGE"
+                | "COUNTSTATE"
+                | "COUNT_STATE"
+                | "COUNTMERGE"
+                | "COUNT_MERGE"
+                | "MINSTATE"
+                | "MIN_STATE"
+                | "MINMERGE"
+                | "MIN_MERGE"
+                | "MAXSTATE"
+                | "MAX_STATE"
+                | "MAXMERGE"
+                | "MAX_MERGE"
+                | "UNIQSTATE"
+                | "UNIQ_STATE"
+                | "UNIQMERGE"
+                | "UNIQ_MERGE"
         )
     }
 
@@ -369,7 +581,7 @@ impl<'a> StatementValidator<'a> {
                     ));
                 }
 
-                validate_function(&func_name, self.registry)?;
+                validate_function_with_udfs(&func_name, self.registry, self.udf_names)?;
 
                 if let FunctionArguments::List(list) = &func.args {
                     if func_name_upper == "COALESCE" && list.args.is_empty() {

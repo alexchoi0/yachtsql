@@ -17,7 +17,7 @@ impl JoinReorder {
             PlanNode::Filter { .. } => 1000,
             PlanNode::Projection { input, .. } => Self::estimate_cardinality(input),
             PlanNode::Aggregate { .. } => 100,
-            PlanNode::Join { left, right, .. } => {
+            PlanNode::Join { left, right, .. } | PlanNode::AsOfJoin { left, right, .. } => {
                 let left_card = Self::estimate_cardinality(left);
                 let right_card = Self::estimate_cardinality(right);
 
@@ -52,6 +52,7 @@ impl JoinReorder {
             PlanNode::AlterTable { .. } => 0,
             PlanNode::DistinctOn { input, .. } => Self::estimate_cardinality(input) / 2,
             PlanNode::EmptyRelation => 1,
+            PlanNode::Values { rows } => rows.len(),
             PlanNode::InsertOnConflict { values, .. } => values.len(),
             PlanNode::Insert { values, source, .. } => {
                 if let Some(rows) = values {
@@ -132,6 +133,29 @@ impl JoinReorder {
                         right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
                         on: on.clone(),
                         join_type: *join_type,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_join_chain(left);
+                let right_opt = self.optimize_join_chain(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
                     })
                 } else {
                     None
@@ -266,6 +290,7 @@ impl JoinReorder {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_join_chain(cte_plan);
                 let input_opt = self.optimize_join_chain(input);
@@ -278,6 +303,7 @@ impl JoinReorder {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -338,6 +364,7 @@ impl JoinReorder {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -372,6 +399,8 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let card = JoinReorder::estimate_cardinality(&scan);
         assert_eq!(card, 10000);
@@ -383,6 +412,8 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let filter = PlanNode::Filter {
             predicate: Expr::column("x"),
@@ -398,6 +429,8 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let limit = PlanNode::Limit {
             limit: 42,
@@ -436,12 +469,16 @@ mod tests {
             alias: None,
             table_name: "left_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let right_scan = PlanNode::Scan {
             alias: None,
             table_name: "right_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let join = PlanNode::Join {
@@ -465,6 +502,8 @@ mod tests {
             alias: None,
             table_name: "small".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let small_filter = PlanNode::Filter {
             predicate: Expr::column("x"),
@@ -475,12 +514,16 @@ mod tests {
             alias: None,
             table_name: "medium".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let large_scan = PlanNode::Scan {
             alias: None,
             table_name: "large".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let inner_join = PlanNode::Join {
@@ -511,16 +554,22 @@ mod tests {
             alias: None,
             table_name: "left".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let right_scan = PlanNode::Scan {
             alias: None,
             table_name: "right".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
         let third_scan = PlanNode::Scan {
             alias: None,
             table_name: "third".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let left_join = PlanNode::Join {

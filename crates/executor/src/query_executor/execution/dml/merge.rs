@@ -10,7 +10,7 @@ use yachtsql_storage::{Field, Row, Schema};
 use super::super::super::QueryExecutor;
 use super::super::super::expression_evaluator::ExpressionEvaluator;
 use super::super::DdlExecutor;
-use crate::RecordBatch;
+use crate::Table;
 
 pub trait DmlMergeExecutor {
     fn execute_merge(
@@ -18,7 +18,7 @@ pub trait DmlMergeExecutor {
         stmt: &Statement,
         _original_sql: &str,
         merge_returning: Option<String>,
-    ) -> Result<RecordBatch>;
+    ) -> Result<Table>;
 }
 
 impl DmlMergeExecutor for QueryExecutor {
@@ -27,18 +27,21 @@ impl DmlMergeExecutor for QueryExecutor {
         stmt: &Statement,
         _original_sql: &str,
         merge_returning: Option<String>,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
+        let session_udfs = self.session.udfs_for_parser();
         let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
             .with_storage(Rc::clone(&self.storage))
             .with_dialect(self.dialect())
-            .with_merge_returning(merge_returning);
+            .with_merge_returning(merge_returning)
+            .with_udfs(session_udfs);
         let logical_plan = plan_builder.merge_to_plan(stmt)?;
 
         let optimized = self.optimizer.optimize(logical_plan)?;
 
         let planner = crate::query_executor::logical_to_physical::LogicalToPhysicalPlanner::new(
             Rc::clone(&self.storage),
-        );
+        )
+        .with_dialect(self.dialect());
         let logical_plan_for_conversion =
             yachtsql_ir::plan::LogicalPlan::new(optimized.root().clone());
         let physical_plan = planner.create_physical_plan(&logical_plan_for_conversion)?;
@@ -46,22 +49,20 @@ impl DmlMergeExecutor for QueryExecutor {
         let batches = physical_plan.execute()?;
 
         if batches.is_empty() {
-            return Ok(RecordBatch::empty(yachtsql_storage::Schema::from_fields(
-                vec![],
-            )));
+            return Ok(Table::empty(yachtsql_storage::Schema::from_fields(vec![])));
         }
 
         if batches.len() == 1 {
             return Ok(batches.into_iter().next().unwrap());
         }
 
-        RecordBatch::concat(&batches)
+        Table::concat(&batches)
     }
 }
 
 #[allow(dead_code)]
 impl QueryExecutor {
-    fn execute_merge_old(&mut self, stmt: &Statement, _original_sql: &str) -> Result<RecordBatch> {
+    fn execute_merge_old(&mut self, stmt: &Statement, _original_sql: &str) -> Result<Table> {
         let Statement::Merge {
             table,
             source,
@@ -282,7 +283,7 @@ impl QueryExecutor {
         let mut column = Column::new(&DataType::Int64, 1);
         column.push(Value::int64(total_affected as i64))?;
 
-        RecordBatch::new(schema, vec![column])
+        Table::new(schema, vec![column])
     }
 }
 

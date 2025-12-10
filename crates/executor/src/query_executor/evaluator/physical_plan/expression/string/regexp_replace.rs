@@ -3,12 +3,30 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
+
+fn convert_clickhouse_replacement_to_rust(replacement: &str) -> String {
+    let mut result = String::with_capacity(replacement.len());
+    let mut chars = replacement.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next.is_ascii_digit() {
+                    result.push('$');
+                    result.push(chars.next().unwrap());
+                    continue;
+                }
+            }
+        }
+        result.push(c);
+    }
+    result
+}
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_regexp_replace(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         use regex::Regex;
@@ -27,9 +45,12 @@ impl ProjectionWithExprExec {
             pattern_val.as_str(),
             replacement_val.as_str(),
         ) {
+            let converted_replacement = convert_clickhouse_replacement_to_rust(replacement);
             match Regex::new(pattern) {
                 Ok(re) => {
-                    let result = re.replace_all(text, replacement).to_string();
+                    let result = re
+                        .replace_all(text, converted_replacement.as_str())
+                        .to_string();
                     Ok(Value::string(result))
                 }
                 Err(e) => Err(crate::error::Error::invalid_query(format!(

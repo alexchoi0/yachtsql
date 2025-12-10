@@ -5,7 +5,7 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::{ExcludeMode, Expr, OrderByExpr};
 
 use super::WindowExec;
-use crate::RecordBatch;
+use crate::Table;
 use crate::functions::FunctionRegistry;
 
 impl WindowExec {
@@ -14,7 +14,7 @@ impl WindowExec {
         indices: &[usize],
         args: &[Expr],
         order_by: &[OrderByExpr],
-        batch: &RecordBatch,
+        batch: &Table,
         results: &mut [Value],
         exclude: Option<ExcludeMode>,
         registry: &Rc<FunctionRegistry>,
@@ -55,7 +55,9 @@ impl WindowExec {
                     continue;
                 }
 
-                let value = if func_name_upper == "COUNT" && args.is_empty() {
+                let is_count_star = func_name_upper == "COUNT"
+                    && (args.is_empty() || (args.len() == 1 && matches!(args[0], Expr::Wildcard)));
+                let value = if is_count_star {
                     Value::int64(1)
                 } else if args.len() == 1 {
                     Self::evaluate_expr(&args[0], batch, idx).unwrap_or(Value::null())
@@ -83,7 +85,7 @@ impl WindowExec {
         indices: &[usize],
         args: &[Expr],
         order_by: &[OrderByExpr],
-        batch: &RecordBatch,
+        batch: &Table,
         results: &mut [Value],
         exclude: Option<ExcludeMode>,
         registry: &Rc<FunctionRegistry>,

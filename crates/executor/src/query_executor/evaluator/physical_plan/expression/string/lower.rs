@@ -3,15 +3,19 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_lower(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         Self::validate_arg_count("LOWER", args, 1)?;
+        let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if val.as_range().is_some() {
+            return yachtsql_functions::range::range_lower(&val);
+        }
         Self::apply_string_unary("LOWER", &args[0], batch, row_idx, |s| s.to_lowercase())
     }
 }

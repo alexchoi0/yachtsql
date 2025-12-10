@@ -19,10 +19,12 @@ use super::super::aggregator::{AggregateSpec, Aggregator};
 use super::super::expression_evaluator::ExpressionEvaluator;
 use super::super::window_functions::{WindowFunction, WindowFunctionType};
 use super::DdlExecutor;
-use crate::RecordBatch;
+use super::dml::{DmlDeleteExecutor, DmlInsertExecutor, DmlUpdateExecutor};
+use crate::Table;
+use crate::information_schema::{InformationSchemaProvider, InformationSchemaTable};
 
 pub trait QueryExecutorTrait {
-    fn execute_select(&mut self, stmt: &Statement, _original_sql: &str) -> Result<RecordBatch>;
+    fn execute_select(&mut self, stmt: &Statement, _original_sql: &str) -> Result<Table>;
 
     fn scan_table(&self, dataset_id: &str, table_id: &str) -> Result<Vec<Row>>;
 
@@ -39,7 +41,7 @@ pub(crate) trait ScanTableHelper {
 }
 
 impl QueryExecutorTrait for QueryExecutor {
-    fn execute_select(&mut self, stmt: &Statement, original_sql: &str) -> Result<RecordBatch> {
+    fn execute_select(&mut self, stmt: &Statement, original_sql: &str) -> Result<Table> {
         let Statement::Query(query) = stmt else {
             return Err(Error::InternalError("Not a SELECT statement".to_string()));
         };
@@ -147,7 +149,7 @@ impl QueryExecutorTrait for QueryExecutor {
             .get_dataset("default")
             .map(|dataset| dataset.types());
 
-        let mut evaluator = ExpressionEvaluator::new(schema);
+        let mut evaluator = ExpressionEvaluator::new(schema).with_dialect(self.dialect());
         if let Some(tr) = type_registry {
             evaluator = evaluator.with_type_registry(tr);
         }
@@ -397,7 +399,7 @@ impl QueryExecutor {
         &mut self,
         query: &Box<sqlparser::ast::Query>,
         original_sql: &str,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let resource_tracker =
             crate::resource_limits::ResourceTracker::new(self.resource_limits.clone());
 
@@ -420,15 +422,63 @@ impl QueryExecutor {
         resource_tracker.check_timeout()?;
 
         let optimized_plan = {
+            let session_vars = self.session.variables();
+            let session_udfs = self.session.udfs_for_parser();
+            let has_variables = !session_vars.is_empty();
+            let has_udfs = !session_udfs.is_empty();
+
             let mut cache = self.plan_cache.borrow_mut();
-            if let Some(cached) = cache.get(&cache_key) {
-                (*cached.plan).clone()
+            if !has_variables && !has_udfs {
+                if let Some(cached) = cache.get(&cache_key) {
+                    (*cached.plan).clone()
+                } else {
+                    drop(cache);
+
+                    let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
+                        .with_sql(original_sql)
+                        .with_storage(Rc::clone(&self.storage))
+                        .with_dialect(self.dialect());
+                    let logical_plan = plan_builder.query_to_plan(&query_for_plan)?;
+
+                    resource_tracker.check_timeout()?;
+
+                    let optimized = self.optimizer.optimize(logical_plan)?;
+
+                    resource_tracker.check_timeout()?;
+
+                    let cached_plan = crate::plan_cache::CachedPlan::new(
+                        optimized.root().clone(),
+                        original_sql.to_string(),
+                    );
+                    self.plan_cache.borrow_mut().insert(cache_key, cached_plan);
+
+                    optimized.root().clone()
+                }
             } else {
                 drop(cache);
 
+                let parser_vars: std::collections::HashMap<
+                    String,
+                    yachtsql_parser::SessionVariable,
+                > = session_vars
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            yachtsql_parser::SessionVariable {
+                                data_type: v.data_type.clone(),
+                                value: v.value.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+
                 let plan_builder = yachtsql_parser::LogicalPlanBuilder::new()
+                    .with_sql(original_sql)
                     .with_storage(Rc::clone(&self.storage))
-                    .with_dialect(self.dialect());
+                    .with_dialect(self.dialect())
+                    .with_variables(parser_vars)
+                    .with_udfs(session_udfs);
                 let logical_plan = plan_builder.query_to_plan(&query_for_plan)?;
 
                 resource_tracker.check_timeout()?;
@@ -437,24 +487,27 @@ impl QueryExecutor {
 
                 resource_tracker.check_timeout()?;
 
-                let cached_plan = crate::plan_cache::CachedPlan::new(
-                    optimized.root().clone(),
-                    original_sql.to_string(),
-                );
-                self.plan_cache.borrow_mut().insert(cache_key, cached_plan);
-
                 optimized.root().clone()
             }
         };
 
         let planner = crate::query_executor::logical_to_physical::LogicalToPhysicalPlanner::new(
             Rc::clone(&self.storage),
-        );
+        )
+        .with_dialect(self.dialect());
 
         let logical_plan_for_conversion = yachtsql_ir::plan::LogicalPlan::new(optimized_plan);
         let physical_plan = planner.create_physical_plan(&logical_plan_for_conversion)?;
 
         resource_tracker.check_timeout()?;
+
+        let sequence_executor = Rc::new(RefCell::new(super::StorageSequenceExecutor::new(
+            Rc::clone(&self.storage),
+        )));
+        let _sequence_guard =
+            crate::query_executor::evaluator::physical_plan::SequenceExecutorContextGuard::set(
+                sequence_executor,
+            );
 
         let batches = physical_plan.execute()?;
 
@@ -468,17 +521,22 @@ impl QueryExecutor {
         resource_tracker.check_timeout()?;
 
         let result = if batches.is_empty() {
-            Ok(RecordBatch::empty(physical_plan.schema().clone()))
+            Ok(Table::empty(physical_plan.schema().clone()))
         } else if batches.len() == 1 {
             Ok(batches.into_iter().next().expect("checked len == 1"))
         } else {
             Self::merge_batches(batches)
         };
 
+        if let Some(sqlparser::ast::FormatClause::Null) = query.format_clause {
+            let schema = result?.schema().clone();
+            return Ok(Table::empty(schema));
+        }
+
         result
     }
 
-    fn merge_batches(batches: Vec<RecordBatch>) -> Result<RecordBatch> {
+    fn merge_batches(batches: Vec<Table>) -> Result<Table> {
         if batches.is_empty() {
             return Err(Error::InternalError(
                 "Cannot merge empty batches".to_string(),
@@ -507,7 +565,7 @@ impl QueryExecutor {
             columns.push(column);
         }
 
-        RecordBatch::new(schema, columns)
+        Table::new(schema, columns)
     }
 
     fn infer_column_name(&self, expr: &Expr) -> String {
@@ -1145,7 +1203,7 @@ impl QueryExecutor {
         &mut self,
         select: &Select,
         order_by: Option<&OrderBy>,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         if let Some(ref where_clause) = select.selection {
             self.validate_where_clause(where_clause)?;
         }
@@ -1209,9 +1267,49 @@ impl QueryExecutor {
         let actual_table_id = self.resolve_table_name(&dataset_id, &table_id);
 
         if dataset_id.eq_ignore_ascii_case("information_schema") {
-            return Err(Error::unsupported_feature(
-                "information_schema is not supported".to_string(),
-            ));
+            debug_eprintln!(
+                "[executor::query] Handling information_schema query for table '{}'",
+                table_id
+            );
+            let info_table = InformationSchemaTable::from_str(&table_id)?;
+            let provider = InformationSchemaProvider::new(Rc::clone(&self.storage));
+            let (schema, rows) = provider.query(info_table)?;
+
+            let filtered_rows = if let Some(ref where_expr) = select.selection {
+                let evaluator = ExpressionEvaluator::new(&schema);
+                rows.into_iter()
+                    .filter(|row| evaluator.evaluate_where(where_expr, row).unwrap_or(false))
+                    .collect()
+            } else {
+                rows
+            };
+
+            let order_by_columns: Vec<String> = if let Some(order_by_clause) = order_by {
+                let expressions = match &order_by_clause.kind {
+                    OrderByKind::Expressions(exprs) => exprs,
+                    _ => &vec![],
+                };
+                let mut columns = Vec::new();
+                for order_expr in expressions {
+                    if let Ok(col_name) = self.extract_column_name(&order_expr.expr) {
+                        columns.push(col_name);
+                    } else {
+                        collect_column_refs_from_expr(&order_expr.expr, &mut columns);
+                    }
+                }
+                columns
+            } else {
+                vec![]
+            };
+
+            let (result_schema, result_rows) = self.project_rows_with_order_by(
+                filtered_rows,
+                &schema,
+                &select.projection,
+                &order_by_columns,
+            )?;
+
+            return self.rows_to_record_batch(result_schema, result_rows);
         }
 
         let view_info = {
@@ -1325,7 +1423,7 @@ impl QueryExecutor {
         self.rows_to_record_batch(result_schema, result_rows)
     }
 
-    fn execute_group_by_select(&mut self, select: &Select) -> Result<RecordBatch> {
+    fn execute_group_by_select(&mut self, select: &Select) -> Result<Table> {
         if select.from.is_empty() {
             return Err(Error::InvalidQuery(
                 "GROUP BY requires a FROM clause".to_string(),
@@ -1956,6 +2054,45 @@ impl QueryExecutor {
 
                 Ok((schema, rows))
             }
+            "NUMBERS" => {
+                if evaluated_args.is_empty() || evaluated_args.len() > 2 {
+                    return Err(Error::InvalidQuery(
+                        "numbers() requires 1 or 2 arguments".to_string(),
+                    ));
+                }
+
+                let (start, count) = if evaluated_args.len() == 1 {
+                    let count = evaluated_args[0]
+                        .as_i64()
+                        .ok_or_else(|| Error::TypeMismatch {
+                            expected: "INT64".to_string(),
+                            actual: evaluated_args[0].data_type().to_string(),
+                        })?;
+                    (0i64, count)
+                } else {
+                    let offset = evaluated_args[0]
+                        .as_i64()
+                        .ok_or_else(|| Error::TypeMismatch {
+                            expected: "INT64".to_string(),
+                            actual: evaluated_args[0].data_type().to_string(),
+                        })?;
+                    let count = evaluated_args[1]
+                        .as_i64()
+                        .ok_or_else(|| Error::TypeMismatch {
+                            expected: "INT64".to_string(),
+                            actual: evaluated_args[1].data_type().to_string(),
+                        })?;
+                    (offset, count)
+                };
+
+                let schema = Schema::from_fields(vec![Field::nullable("number", DataType::Int64)]);
+
+                let rows: Vec<Row> = (start..start + count)
+                    .map(|n| Row::from_values(vec![Value::int64(n)]))
+                    .collect();
+
+                Ok((schema, rows))
+            }
             "POPULATE_RECORD" => {
                 if args.args.len() != 2 {
                     return Err(Error::InvalidQuery(
@@ -2052,7 +2189,7 @@ impl QueryExecutor {
         select: &Select,
         schema: Schema,
         rows: Vec<Row>,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let is_select_star = select.projection.len() == 1
             && matches!(&select.projection[0], SelectItem::Wildcard(_));
 
@@ -2071,7 +2208,7 @@ impl QueryExecutor {
                 }
             }
 
-            return RecordBatch::new(schema, columns);
+            return Table::new(schema, columns);
         }
 
         let evaluator = ExpressionEvaluator::new(&schema);
@@ -2115,7 +2252,7 @@ impl QueryExecutor {
         }
 
         let result_schema = Schema::from_fields(result_schema_fields);
-        RecordBatch::new(result_schema, result_columns)
+        Table::new(result_schema, result_columns)
     }
 
     #[allow(dead_code)]
@@ -2218,21 +2355,21 @@ impl QueryExecutor {
         }
     }
 
-    fn rows_to_record_batch(&self, schema: Schema, rows: Vec<Row>) -> Result<RecordBatch> {
+    fn rows_to_record_batch(&self, schema: Schema, rows: Vec<Row>) -> Result<Table> {
         if rows.is_empty() {
-            return Ok(RecordBatch::empty(schema));
+            return Ok(Table::empty(schema));
         }
 
         let values: Vec<Vec<Value>> = rows.into_iter().map(|row| row.values().to_vec()).collect();
 
-        RecordBatch::from_values(schema, values)
+        Table::from_values(schema, values)
     }
 
     fn execute_multi_join_query(
         &mut self,
         select: &Select,
         table_with_joins: &TableWithJoins,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let (mut current_schema, mut current_rows) =
             self.get_table_data(&table_with_joins.relation)?;
         let mut current_alias = self.extract_table_alias(&table_with_joins.relation)?;
@@ -2307,7 +2444,7 @@ impl QueryExecutor {
         self.rows_to_record_batch(result_schema, result_rows)
     }
 
-    fn execute_join_query(&mut self, select: &Select) -> Result<RecordBatch> {
+    fn execute_join_query(&mut self, select: &Select) -> Result<Table> {
         let table_with_joins = &select.from[0];
 
         if table_with_joins.joins.is_empty() {
@@ -2785,7 +2922,7 @@ impl QueryExecutor {
         self.finalize_join_result_base(select, joined_schema, joined_rows)
     }
 
-    fn execute_cartesian_product_query(&mut self, select: &Select) -> Result<RecordBatch> {
+    fn execute_cartesian_product_query(&mut self, select: &Select) -> Result<Table> {
         let (schema, rows) = self.execute_cartesian_product_base(select)?;
 
         let filtered_rows = if let Some(ref where_expr) = select.selection {
@@ -2979,7 +3116,7 @@ impl QueryExecutor {
         right_rows: Vec<Row>,
         using_cols: &[sqlparser::ast::ObjectName],
         join_type: JoinType,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let col_names: Vec<String> = using_cols
             .iter()
             .filter_map(|obj_name| {
@@ -3018,7 +3155,7 @@ impl QueryExecutor {
         left_rows: Vec<Row>,
         right_rows: Vec<Row>,
         join_type: JoinType,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let left_col_names: std::collections::HashSet<_> = left_schema
             .fields()
             .iter()
@@ -3142,7 +3279,7 @@ impl QueryExecutor {
         select: &Select,
         joined_schema: Schema,
         joined_rows: Vec<Row>,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let (schema, filtered_rows) =
             self.finalize_join_result_base(select, joined_schema, joined_rows)?;
 
@@ -3154,14 +3291,14 @@ impl QueryExecutor {
 
     fn apply_distinct_order_limit_offset(
         &self,
-        batch: RecordBatch,
+        batch: Table,
         distinct: bool,
         order_by: Option<&OrderBy>,
         limit_clause: Option<&LimitClause>,
         fetch: Option<&Fetch>,
         select_projection: Option<&[SelectItem]>,
         top_clause: Option<&sqlparser::ast::Top>,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let schema = batch.schema().clone();
         let mut rows: Vec<Row> = batch.rows()?;
 
@@ -3935,6 +4072,92 @@ impl QueryExecutor {
                         | "BITMAP_CARDINALITY"
                         | "BITMAP_AND_CARDINALITY"
                         | "BITMAP_OR_CARDINALITY"
+                        | "GROUPARRAY"
+                        | "GROUPARRAYSAMPLE"
+                        | "GROUPARRAYSORTED"
+                        | "GROUPARRAYINSERTAT"
+                        | "GROUPARRAYMOVINGAVG"
+                        | "GROUPARRAYMOVINGSUM"
+                        | "GROUPUNIQARRAY"
+                        | "GROUPARRAYLAST"
+                        | "GROUPARRAYINTERSECT"
+                        | "GROUPBITAND"
+                        | "GROUPBITOR"
+                        | "GROUPBITXOR"
+                        | "GROUPBITMAP"
+                        | "GROUPCONCAT"
+                        | "SUMMAP"
+                        | "MINMAP"
+                        | "MAXMAP"
+                        | "AVGMAP"
+                        | "AVG_MAP"
+                        | "GROUP_ARRAY_LAST"
+                        | "GROUP_ARRAY_SORTED"
+                        | "GROUP_ARRAY_INTERSECT"
+                        | "HISTOGRAM"
+                        | "SUMDISTINCT"
+                        | "AVGDISTINCT"
+                        | "SKEW_POP"
+                        | "SKEWPOP"
+                        | "SKEW_SAMP"
+                        | "SKEWSAMP"
+                        | "KURT_POP"
+                        | "KURTPOP"
+                        | "KURT_SAMP"
+                        | "KURTSAMP"
+                        | "AVG_WEIGHTED"
+                        | "AVGWEIGHTED"
+                        | "ANY_IF"
+                        | "ANYIF"
+                        | "SUMIF"
+                        | "AVGIF"
+                        | "MINIF"
+                        | "MAXIF"
+                        | "ARGMIN"
+                        | "ARGMAX"
+                        | "RANKCORR"
+                        | "EXPONENTIALMOVINGAVERAGE"
+                        | "SIMPLELINEARREGRESSION"
+                        | "MANNWHITNEYUTEST"
+                        | "STUDENTTTEST"
+                        | "WELCHTTEST"
+                        | "DELTASUM"
+                        | "DELTASUMTIMESTAMP"
+                        | "WINDOWFUNNEL"
+                        | "INTERVALLENGTHSUM"
+                        | "SEQUENCEMATCH"
+                        | "SEQUENCECOUNT"
+                        | "ANYHEAVY"
+                        | "ANYLAST"
+                        | "CRAMERSV"
+                        | "THEILSU"
+                        | "CATEGORICALINFORMATIONVALUE"
+                        | "SUMWITHOVERFLOW"
+                        | "SUMARRAY"
+                        | "AVGARRAY"
+                        | "MINARRAY"
+                        | "MAXARRAY"
+                        | "COUNTEQUAL"
+                        | "BOUNDINGRATIO"
+                        | "UNIQEXACT"
+                        | "UNIQCOMBINED"
+                        | "UNIQCOMBINED64"
+                        | "UNIQHLL12"
+                        | "UNIQTHETASKETCH"
+                        | "UNIQUPTO"
+                        | "TOPK"
+                        | "TOPKWEIGHTED"
+                        | "NOTHING"
+                        | "SUMKAHAN"
+                        | "SINGLEVALUEORNULL"
+                        | "BOUNDEDSAMPLE"
+                        | "LARGESTTRIANGLETHREEBUCKETS"
+                        | "SPARKBAR"
+                        | "MAXINTERSECTIONS"
+                        | "MAXINTERSECTIONSPOSITION"
+                        | "SUMORNULL"
+                        | "SUMORDEFAULT"
+                        | "SUMRESAMPLE"
                 )
             }
             _ => false,
@@ -4264,7 +4487,7 @@ impl QueryExecutor {
         Ok(())
     }
 
-    fn execute_window_select_base(&mut self, select: &Select) -> Result<RecordBatch> {
+    fn execute_window_select_base(&mut self, select: &Select) -> Result<Table> {
         use super::super::window_functions::WindowExecutor;
 
         if select.from.is_empty() {
@@ -4352,11 +4575,7 @@ impl QueryExecutor {
         self.rows_to_record_batch(final_schema, final_rows)
     }
 
-    fn apply_window_projection(
-        &self,
-        batch: RecordBatch,
-        projection: &[SelectItem],
-    ) -> Result<RecordBatch> {
+    fn apply_window_projection(&self, batch: Table, projection: &[SelectItem]) -> Result<Table> {
         let schema = batch.schema();
         let rows = batch.rows()?;
 
@@ -5107,7 +5326,7 @@ impl QueryExecutor {
         Ok(combined_rows)
     }
 
-    fn execute_select_without_from(&mut self, select: &Select) -> Result<RecordBatch> {
+    fn execute_select_without_from(&mut self, select: &Select) -> Result<Table> {
         use crate::query_executor::expression_evaluator::ExpressionEvaluator;
 
         for item in &select.projection {
@@ -5163,7 +5382,10 @@ impl QueryExecutor {
                             "NEXTVAL" | "CURRVAL" | "SETVAL" | "LASTVAL"
                         ) {
                             (self.evaluate_sequence_function(&func_name, func)?, false)
-                        } else if matches!(func_name.as_str(), "SKEYS" | "SVALS") {
+                        } else if matches!(
+                            func_name.as_str(),
+                            "SKEYS" | "SVALS" | "JSON_OBJECT_KEYS" | "JSONB_OBJECT_KEYS"
+                        ) {
                             (evaluator.evaluate_expr(expr, &dummy_row)?, true)
                         } else {
                             (evaluator.evaluate_expr(expr, &dummy_row)?, false)
@@ -5192,7 +5414,7 @@ impl QueryExecutor {
 
                         let rows: Vec<Vec<Value>> = elements.into_iter().map(|v| vec![v]).collect();
 
-                        return RecordBatch::from_values(srf_schema, rows);
+                        return Table::from_values(srf_schema, rows);
                     }
 
                     let data_type = Self::infer_data_type_from_value(&value);
@@ -5215,7 +5437,7 @@ impl QueryExecutor {
 
         let result_schema = Schema::from_fields(projected_fields);
 
-        RecordBatch::from_values(result_schema, vec![result_values])
+        Table::from_values(result_schema, vec![result_values])
     }
 
     fn infer_data_type_from_value(value: &Value) -> DataType {
@@ -5312,7 +5534,7 @@ impl QueryExecutor {
         set_quantifier: &SetQuantifier,
         left: &SetExpr,
         right: &SetExpr,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let left_result = self.execute_set_expr(left)?;
         let right_result = self.execute_set_expr(right)?;
 
@@ -5332,7 +5554,7 @@ impl QueryExecutor {
         Ok(result)
     }
 
-    fn execute_set_expr(&mut self, set_expr: &SetExpr) -> Result<RecordBatch> {
+    fn execute_set_expr(&mut self, set_expr: &SetExpr) -> Result<Table> {
         match set_expr {
             SetExpr::Select(select) => self.execute_simple_select(select.as_ref(), None),
             SetExpr::Query(query) => self.execute_select(&Statement::Query(query.clone()), ""),
@@ -5430,10 +5652,10 @@ impl QueryExecutor {
 
     fn union_results(
         &self,
-        left: RecordBatch,
-        right: RecordBatch,
+        left: Table,
+        right: Table,
         set_quantifier: &SetQuantifier,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let schema = left.schema().clone();
         let mut rows = Vec::new();
 
@@ -5453,10 +5675,10 @@ impl QueryExecutor {
 
     fn intersect_results(
         &self,
-        left: RecordBatch,
-        right: RecordBatch,
+        left: Table,
+        right: Table,
         set_quantifier: &SetQuantifier,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let schema = left.schema().clone();
         let left_rows = left.rows()?;
         let right_rows = right.rows()?;
@@ -5512,10 +5734,10 @@ impl QueryExecutor {
 
     fn except_results(
         &self,
-        left: RecordBatch,
-        right: RecordBatch,
+        left: Table,
+        right: Table,
         set_quantifier: &SetQuantifier,
-    ) -> Result<RecordBatch> {
+    ) -> Result<Table> {
         let schema = left.schema().clone();
         let left_rows = left.rows()?;
         let right_rows = right.rows()?;
@@ -5604,6 +5826,28 @@ impl QueryExecutor {
                 (schema, rows)
             };
 
+            let schema = if !cte.alias.columns.is_empty() {
+                let column_aliases: Vec<String> = cte
+                    .alias
+                    .columns
+                    .iter()
+                    .map(|c| c.name.value.clone())
+                    .collect();
+                let renamed_fields: Vec<yachtsql_storage::Field> = schema
+                    .fields()
+                    .iter()
+                    .zip(column_aliases.iter())
+                    .map(|(field, alias)| {
+                        let mut new_field = field.clone();
+                        new_field.name = alias.clone();
+                        new_field
+                    })
+                    .collect();
+                yachtsql_storage::Schema::from_fields(renamed_fields)
+            } else {
+                schema
+            };
+
             let mut storage = self.storage.borrow_mut();
 
             if storage.get_dataset("default").is_none() {
@@ -5639,6 +5883,233 @@ impl QueryExecutor {
         }
 
         Ok(())
+    }
+
+    pub fn execute_cte_dml(
+        &mut self,
+        stmt: &Statement,
+        operation: crate::query_executor::execution::dispatcher::DmlOperation,
+        original_sql: &str,
+    ) -> Result<Table> {
+        use crate::query_executor::execution::dispatcher::DmlOperation;
+
+        let query = match stmt {
+            Statement::Query(q) => q,
+            _ => return Err(Error::InvalidQuery("Expected Query statement".to_string())),
+        };
+
+        let cte_names = if let Some(ref with_clause) = query.with {
+            self.process_ctes(with_clause)?
+        } else {
+            Vec::new()
+        };
+
+        let result = match (operation, query.body.as_ref()) {
+            (DmlOperation::Insert, SetExpr::Insert(insert_stmt)) => {
+                let mut modified_stmt = insert_stmt.clone();
+                Self::rename_cte_refs_in_statement(&mut modified_stmt, &cte_names);
+                let modified_sql = modified_stmt.to_string();
+                self.execute_insert(&modified_stmt, &modified_sql)
+            }
+            (DmlOperation::Update, SetExpr::Update(update_stmt)) => {
+                let mut modified_stmt = update_stmt.clone();
+                Self::rename_cte_refs_in_statement(&mut modified_stmt, &cte_names);
+                let modified_sql = modified_stmt.to_string();
+                self.execute_update(&modified_stmt, &modified_sql)
+            }
+            (DmlOperation::Delete, SetExpr::Delete(delete_stmt)) => {
+                let mut modified_stmt = delete_stmt.clone();
+                Self::rename_cte_refs_in_statement(&mut modified_stmt, &cte_names);
+                let modified_sql = modified_stmt.to_string();
+                self.execute_delete(&modified_stmt, &modified_sql)
+            }
+            _ => Err(Error::InvalidQuery(
+                "Mismatched CTE DML operation".to_string(),
+            )),
+        };
+
+        if !cte_names.is_empty() {
+            self.cleanup_ctes(&cte_names)?;
+        }
+
+        result
+    }
+
+    fn rename_cte_refs_in_statement(stmt: &mut Statement, cte_names: &[String]) {
+        for cte_name in cte_names {
+            let cte_table = format!("__cte_{}", cte_name);
+            Self::rename_cte_refs_in_stmt_inner(stmt, cte_name, &cte_table);
+        }
+    }
+
+    fn rename_cte_refs_in_stmt_inner(stmt: &mut Statement, old_name: &str, new_name: &str) {
+        match stmt {
+            Statement::Insert(insert) => {
+                if let Some(ref mut source) = insert.source {
+                    Self::rename_table_references(&mut source.body, old_name, new_name);
+                }
+            }
+            Statement::Update {
+                selection, from, ..
+            } => {
+                if let Some(sel) = selection {
+                    Self::rename_cte_refs_in_expr(sel, old_name, new_name);
+                }
+                if let Some(from_clause) = from {
+                    Self::rename_cte_refs_in_from(from_clause, old_name, new_name);
+                }
+            }
+            Statement::Delete(delete) => {
+                if let Some(sel) = &mut delete.selection {
+                    Self::rename_cte_refs_in_expr(sel, old_name, new_name);
+                }
+                if let Some(using) = &mut delete.using {
+                    Self::rename_cte_refs_in_using(using, old_name, new_name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rename_cte_refs_in_from(
+        from: &mut sqlparser::ast::UpdateTableFromKind,
+        old_name: &str,
+        new_name: &str,
+    ) {
+        let tables = match from {
+            sqlparser::ast::UpdateTableFromKind::BeforeSet(t) => t,
+            sqlparser::ast::UpdateTableFromKind::AfterSet(t) => t,
+        };
+        for table_with_joins in tables.iter_mut() {
+            Self::rename_cte_refs_in_table_factor(
+                &mut table_with_joins.relation,
+                old_name,
+                new_name,
+            );
+            for join in &mut table_with_joins.joins {
+                Self::rename_cte_refs_in_table_factor(&mut join.relation, old_name, new_name);
+            }
+        }
+    }
+
+    fn rename_cte_refs_in_using(using: &mut [TableWithJoins], old_name: &str, new_name: &str) {
+        for table_with_joins in using.iter_mut() {
+            Self::rename_cte_refs_in_table_factor(
+                &mut table_with_joins.relation,
+                old_name,
+                new_name,
+            );
+            for join in &mut table_with_joins.joins {
+                Self::rename_cte_refs_in_table_factor(&mut join.relation, old_name, new_name);
+            }
+        }
+    }
+
+    fn rename_cte_refs_in_table_factor(table: &mut TableFactor, old_name: &str, new_name: &str) {
+        match table {
+            TableFactor::Table { name, .. } => {
+                if name.to_string() == old_name {
+                    *name = sqlparser::ast::ObjectName(vec![
+                        sqlparser::ast::ObjectNamePart::Identifier(sqlparser::ast::Ident::new(
+                            new_name,
+                        )),
+                    ]);
+                }
+            }
+            TableFactor::Derived { subquery, .. } => {
+                Self::rename_table_references(&mut subquery.body, old_name, new_name);
+            }
+            TableFactor::NestedJoin {
+                table_with_joins, ..
+            } => {
+                Self::rename_cte_refs_in_table_factor(
+                    &mut table_with_joins.relation,
+                    old_name,
+                    new_name,
+                );
+                for join in &mut table_with_joins.joins {
+                    Self::rename_cte_refs_in_table_factor(&mut join.relation, old_name, new_name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rename_cte_refs_in_expr(expr: &mut Expr, old_name: &str, new_name: &str) {
+        match expr {
+            Expr::Subquery(subquery) => {
+                Self::rename_table_references(&mut subquery.body, old_name, new_name);
+            }
+            Expr::InSubquery {
+                subquery,
+                expr: inner_expr,
+                ..
+            } => {
+                Self::rename_table_references(&mut subquery.body, old_name, new_name);
+                Self::rename_cte_refs_in_expr(inner_expr, old_name, new_name);
+            }
+            Expr::Exists { subquery, .. } => {
+                Self::rename_table_references(&mut subquery.body, old_name, new_name);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::rename_cte_refs_in_expr(left, old_name, new_name);
+                Self::rename_cte_refs_in_expr(right, old_name, new_name);
+            }
+            Expr::UnaryOp { expr: inner, .. } => {
+                Self::rename_cte_refs_in_expr(inner, old_name, new_name);
+            }
+            Expr::Nested(inner) => {
+                Self::rename_cte_refs_in_expr(inner, old_name, new_name);
+            }
+            Expr::Between {
+                expr: inner,
+                low,
+                high,
+                ..
+            } => {
+                Self::rename_cte_refs_in_expr(inner, old_name, new_name);
+                Self::rename_cte_refs_in_expr(low, old_name, new_name);
+                Self::rename_cte_refs_in_expr(high, old_name, new_name);
+            }
+            Expr::InList {
+                expr: inner, list, ..
+            } => {
+                Self::rename_cte_refs_in_expr(inner, old_name, new_name);
+                for item in list {
+                    Self::rename_cte_refs_in_expr(item, old_name, new_name);
+                }
+            }
+            Expr::Case {
+                operand,
+                conditions,
+                else_result,
+                ..
+            } => {
+                if let Some(op) = operand {
+                    Self::rename_cte_refs_in_expr(op, old_name, new_name);
+                }
+                for case_when in conditions {
+                    Self::rename_cte_refs_in_expr(&mut case_when.condition, old_name, new_name);
+                    Self::rename_cte_refs_in_expr(&mut case_when.result, old_name, new_name);
+                }
+                if let Some(else_res) = else_result {
+                    Self::rename_cte_refs_in_expr(else_res, old_name, new_name);
+                }
+            }
+            Expr::Function(func) => {
+                if let sqlparser::ast::FunctionArguments::List(arg_list) = &mut func.args {
+                    for arg in &mut arg_list.args {
+                        if let sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(e),
+                        ) = arg
+                        {
+                            Self::rename_cte_refs_in_expr(e, old_name, new_name);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn is_cte_recursive(query: &sqlparser::ast::Query, cte_name: &str) -> bool {
@@ -5922,13 +6393,20 @@ impl QueryExecutor {
 
         fn rename_in_table_factor(table: &mut TableFactor, old_name: &str, new_name: &str) {
             match table {
-                TableFactor::Table { name, .. } => {
+                TableFactor::Table { name, alias, .. } => {
                     if name.to_string() == old_name {
                         *name = sqlparser::ast::ObjectName(vec![
                             sqlparser::ast::ObjectNamePart::Identifier(sqlparser::ast::Ident::new(
                                 new_name,
                             )),
                         ]);
+                    }
+                    if name.to_string() == "__PASTE__" {
+                        if let Some(table_alias) = alias {
+                            if table_alias.name.value == old_name {
+                                table_alias.name.value = new_name.to_string();
+                            }
+                        }
                     }
                 }
                 TableFactor::Derived { subquery, .. } => {
@@ -6211,6 +6689,18 @@ fn compare_values_for_sort_non_null(a: &Value, b: &Value) -> Ordering {
 
     if let (Some(x), Some(y)) = (a.as_bytes(), b.as_bytes()) {
         return x.cmp(y);
+    }
+
+    if let (Some(x), Some(y)) = (a.as_ipv4(), b.as_ipv4()) {
+        return x.cmp(&y);
+    }
+
+    if let (Some(x), Some(y)) = (a.as_ipv6(), b.as_ipv6()) {
+        return x.cmp(&y);
+    }
+
+    if let (Some(x), Some(y)) = (a.as_date32(), b.as_date32()) {
+        return x.0.cmp(&y.0);
     }
 
     if let (Some(left_map), Some(right_map)) = (a.as_struct(), b.as_struct()) {

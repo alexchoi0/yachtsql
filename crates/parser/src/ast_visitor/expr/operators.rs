@@ -1,6 +1,6 @@
 use sqlparser::ast;
 use yachtsql_core::error::{Error, Result};
-use yachtsql_ir::expr::{BinaryOp, Expr, UnaryOp};
+use yachtsql_ir::expr::{BinaryOp, Expr, LiteralValue, UnaryOp};
 
 use super::super::LogicalPlanBuilder;
 
@@ -19,6 +19,13 @@ impl LogicalPlanBuilder {
                 Expr::Subquery {
                     plan: Box::new(subquery_plan.root().clone()),
                 }
+            }
+            ast::Expr::Tuple(elements) => {
+                let array_elements = elements
+                    .iter()
+                    .map(|e| self.sql_expr_to_expr(e))
+                    .collect::<Result<Vec<_>>>()?;
+                Expr::Literal(LiteralValue::Array(array_elements))
             }
             _ => self.sql_expr_to_expr(right)?,
         };
@@ -46,6 +53,13 @@ impl LogicalPlanBuilder {
                 Expr::Subquery {
                     plan: Box::new(subquery_plan.root().clone()),
                 }
+            }
+            ast::Expr::Tuple(elements) => {
+                let array_elements = elements
+                    .iter()
+                    .map(|e| self.sql_expr_to_expr(e))
+                    .collect::<Result<Vec<_>>>()?;
+                Expr::Literal(LiteralValue::Array(array_elements))
             }
             _ => self.sql_expr_to_expr(right)?,
         };
@@ -77,6 +91,7 @@ impl LogicalPlanBuilder {
             ast::BinaryOperator::BitwiseAnd => Ok(BinaryOp::BitwiseAnd),
             ast::BinaryOperator::BitwiseOr => Ok(BinaryOp::BitwiseOr),
             ast::BinaryOperator::BitwiseXor => Ok(BinaryOp::BitwiseXor),
+            ast::BinaryOperator::PGBitwiseXor => Ok(BinaryOp::BitwiseXor),
             ast::BinaryOperator::StringConcat => Ok(BinaryOp::Concat),
             ast::BinaryOperator::PGRegexMatch => Ok(BinaryOp::RegexMatch),
             ast::BinaryOperator::PGRegexNotMatch => Ok(BinaryOp::RegexNotMatch),
@@ -89,15 +104,36 @@ impl LogicalPlanBuilder {
                 "@>" => Ok(BinaryOp::ArrayContains),
                 "<@" => Ok(BinaryOp::ArrayContainedBy),
                 "&&" => Ok(BinaryOp::ArrayOverlap),
+                "-|-" => Ok(BinaryOp::RangeAdjacent),
+                "<<=" => Ok(BinaryOp::InetContainedByOrEqual),
+                ">>=" => Ok(BinaryOp::InetContainsOrEqual),
                 _ => Err(Error::unsupported_feature(format!(
                     "Custom binary operator not supported: {:?}",
                     op_str
                 ))),
             },
 
+            ast::BinaryOperator::PGCustomBinaryOperator(parts) => {
+                let op_name = parts
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect::<Vec<_>>()
+                    .join("");
+                match op_name.as_str() {
+                    "-|-" => Ok(BinaryOp::RangeAdjacent),
+                    _ => Err(Error::unsupported_feature(format!(
+                        "PG custom binary operator not supported: {:?}",
+                        op_name
+                    ))),
+                }
+            }
+
             ast::BinaryOperator::PGOverlap => Ok(BinaryOp::ArrayOverlap),
             ast::BinaryOperator::ArrowAt => Ok(BinaryOp::ArrayContainedBy),
             ast::BinaryOperator::LtDashGt => Ok(BinaryOp::VectorL2Distance),
+            ast::BinaryOperator::HashMinus => Ok(BinaryOp::HashMinus),
+            ast::BinaryOperator::PGBitwiseShiftLeft => Ok(BinaryOp::ShiftLeft),
+            ast::BinaryOperator::PGBitwiseShiftRight => Ok(BinaryOp::ShiftRight),
             _ => Err(Error::unsupported_feature(format!(
                 "Binary operator not supported: {:?}",
                 op
@@ -110,6 +146,7 @@ impl LogicalPlanBuilder {
             ast::UnaryOperator::Not => Ok(UnaryOp::Not),
             ast::UnaryOperator::Minus => Ok(UnaryOp::Negate),
             ast::UnaryOperator::Plus => Ok(UnaryOp::Plus),
+            ast::UnaryOperator::PGBitwiseNot => Ok(UnaryOp::BitwiseNot),
             _ => Err(Error::unsupported_feature(format!(
                 "Unary operator not supported: {:?}",
                 op

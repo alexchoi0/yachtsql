@@ -1,16 +1,30 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use yachtsql_capability::FeatureRegistry;
 use yachtsql_core::diagnostics::DiagnosticArea;
 use yachtsql_core::diagnostics::sqlstate::SqlState;
 use yachtsql_core::error::Error;
+use yachtsql_core::types::{DataType, Value};
 use yachtsql_parser::DialectType;
 use yachtsql_storage::ExtensionRegistry;
 
-use crate::RecordBatch;
+use crate::Table;
 
 const NO_EXCEPTION_DIAGNOSTIC_MESSAGE: &str =
     "No exception diagnostic available; the most recent statement completed successfully";
+
+#[derive(Debug, Clone)]
+pub struct SessionVariable {
+    pub data_type: DataType,
+    pub value: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UdfDefinition {
+    pub parameters: Vec<String>,
+    pub body: sqlparser::ast::Expr,
+}
 
 #[derive(Debug)]
 pub struct SessionState {
@@ -21,6 +35,8 @@ pub struct SessionState {
     feature_registry_snapshot: Option<Rc<FeatureRegistry>>,
     extension_registry: ExtensionRegistry,
     search_path: Vec<String>,
+    variables: HashMap<String, SessionVariable>,
+    udfs: HashMap<String, UdfDefinition>,
 }
 
 impl SessionState {
@@ -38,6 +54,8 @@ impl SessionState {
             feature_registry_snapshot: None,
             extension_registry: ExtensionRegistry::new(),
             search_path: vec!["default".to_string()],
+            variables: HashMap::new(),
+            udfs: HashMap::new(),
         }
     }
 
@@ -115,6 +133,86 @@ impl SessionState {
             .map(|s| s.as_str())
             .unwrap_or("default")
     }
+
+    pub fn declare_variable(
+        &mut self,
+        name: String,
+        data_type: DataType,
+        default_value: Option<Value>,
+    ) {
+        self.variables.insert(
+            name,
+            SessionVariable {
+                data_type,
+                value: default_value,
+            },
+        );
+    }
+
+    pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), Error> {
+        if let Some(var) = self.variables.get_mut(name) {
+            var.value = Some(value);
+        } else {
+            self.variables.insert(
+                name.to_string(),
+                SessionVariable {
+                    data_type: value.data_type(),
+                    value: Some(value),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_variable(&self, name: &str) -> Option<&SessionVariable> {
+        self.variables.get(name)
+    }
+
+    pub fn variables(&self) -> &HashMap<String, SessionVariable> {
+        &self.variables
+    }
+
+    pub fn register_udf(&mut self, name: String, definition: UdfDefinition) {
+        debug_print::debug_eprintln!("[session] Registering UDF: {}", name.to_uppercase());
+        self.udfs.insert(name.to_uppercase(), definition);
+    }
+
+    pub fn get_udf(&self, name: &str) -> Option<&UdfDefinition> {
+        self.udfs.get(&name.to_uppercase())
+    }
+
+    pub fn has_udf(&self, name: &str) -> bool {
+        self.udfs.contains_key(&name.to_uppercase())
+    }
+
+    pub fn drop_udf(&mut self, name: &str) -> bool {
+        self.udfs.remove(&name.to_uppercase()).is_some()
+    }
+
+    pub fn udf_names(&self) -> std::collections::HashSet<String> {
+        let names: std::collections::HashSet<String> = self.udfs.keys().cloned().collect();
+        debug_print::debug_eprintln!("[session] Getting UDF names: {:?}", names);
+        names
+    }
+
+    pub fn udfs(&self) -> &HashMap<String, UdfDefinition> {
+        &self.udfs
+    }
+
+    pub fn udfs_for_parser(&self) -> HashMap<String, yachtsql_parser::UdfDefinition> {
+        self.udfs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    yachtsql_parser::UdfDefinition {
+                        parameters: v.parameters.clone(),
+                        body: v.body.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -154,7 +252,7 @@ impl SessionDiagnostics {
         self.pending_row_count = Some(count);
     }
 
-    pub fn record_success(&mut self, batch: Option<&RecordBatch>, clear_exception: bool) {
+    pub fn record_success(&mut self, batch: Option<&Table>, clear_exception: bool) {
         let mut diag = DiagnosticArea::success();
         let mut applied_row_count = false;
 
@@ -204,7 +302,7 @@ impl SessionDiagnostics {
         }
     }
 
-    fn rows_affected_from_batch(batch: &RecordBatch) -> Option<usize> {
+    fn rows_affected_from_batch(batch: &Table) -> Option<usize> {
         let column = batch.column_by_name("rows_affected")?;
         let value = column.get(0).ok()?;
         if let Some(i) = value.as_i64() {
@@ -284,8 +382,7 @@ mod tests {
             "rows_affected".to_string(),
             DataType::Int64,
         )]);
-        let batch =
-            RecordBatch::from_values(schema, vec![vec![Value::int64(5)]]).expect("batch build");
+        let batch = Table::from_values(schema, vec![vec![Value::int64(5)]]).expect("batch build");
 
         diagnostics.record_success(Some(&batch), false);
         assert_eq!(

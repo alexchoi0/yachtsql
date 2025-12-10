@@ -3,12 +3,12 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn eval_date_add(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         if args.len() != 2 {
@@ -19,42 +19,20 @@ impl ProjectionWithExprExec {
 
         let date_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
 
-        let (interval_value, interval_unit) = match &args[1] {
-            Expr::Function {
-                name,
-                args: interval_args,
-            } if matches!(name, yachtsql_ir::FunctionName::Custom(s) if s == "INTERVAL_LITERAL") => {
-                if interval_args.len() != 2 {
-                    return Err(Error::invalid_query(
-                        "INTERVAL_LITERAL requires exactly 2 arguments".to_string(),
-                    ));
-                }
-                let val = Self::evaluate_expr(&interval_args[0], batch, row_idx)?;
-                let unit = Self::evaluate_expr(&interval_args[1], batch, row_idx)?;
-                match (val.as_i64(), unit.as_str()) {
-                    (Some(v), Some(u)) => (v, u.to_string()),
-                    _ => {
-                        return Err(Error::invalid_query(
-                            "INTERVAL must have INT64 value and STRING unit".to_string(),
-                        ));
-                    }
-                }
-            }
-            _ => {
-                let days_val = Self::evaluate_expr(&args[1], batch, row_idx)?;
-                if days_val.is_null() {
-                    return Ok(Value::null());
-                }
-                match days_val.as_i64() {
-                    Some(days) => (days, "DAY".to_string()),
-                    None => {
-                        return Err(Error::TypeMismatch {
-                            expected: "INTERVAL or INT64".to_string(),
-                            actual: days_val.data_type().to_string(),
-                        });
-                    }
-                }
-            }
+        let interval_val = Self::evaluate_expr(&args[1], batch, row_idx)?;
+        if interval_val.is_null() {
+            return Ok(Value::null());
+        }
+
+        let interval = if let Some(iv) = interval_val.as_interval() {
+            iv.clone()
+        } else if let Some(days) = interval_val.as_i64() {
+            yachtsql_core::types::Interval::new(0, days as i32, 0)
+        } else {
+            return Err(Error::TypeMismatch {
+                expected: "INTERVAL or INT64".to_string(),
+                actual: interval_val.data_type().to_string(),
+            });
         };
 
         if date_val.is_null() {
@@ -63,11 +41,8 @@ impl ProjectionWithExprExec {
 
         match date_val.as_date() {
             Some(d) => {
-                let new_date = crate::query_executor::execution::apply_interval_to_date(
-                    d,
-                    interval_value,
-                    &interval_unit,
-                )?;
+                let new_date =
+                    crate::query_executor::execution::add_interval_to_date(d, &interval)?;
                 Ok(Value::date(new_date))
             }
             None => Err(Error::TypeMismatch {

@@ -75,6 +75,28 @@ impl LimitPushdown {
                     None
                 }
             }
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
+                    })
+                } else {
+                    None
+                }
+            }
             PlanNode::LateralJoin {
                 left,
                 right,
@@ -177,6 +199,7 @@ impl LimitPushdown {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -189,6 +212,7 @@ impl LimitPushdown {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -249,6 +273,7 @@ impl LimitPushdown {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -287,6 +312,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let projection = PlanNode::Projection {
@@ -326,6 +353,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {
@@ -358,6 +387,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let projection = PlanNode::Projection {
@@ -398,6 +429,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let limit = PlanNode::Limit {
@@ -421,6 +454,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let projection1 = PlanNode::Projection {

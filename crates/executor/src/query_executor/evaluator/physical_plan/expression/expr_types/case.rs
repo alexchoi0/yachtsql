@@ -3,35 +3,54 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_case(
         operand: &Option<Box<Expr>>,
         when_then: &[(Expr, Expr)],
         else_expr: &Option<Box<Expr>>,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
+        Self::evaluate_case_internal(
+            operand,
+            when_then,
+            else_expr,
+            batch,
+            row_idx,
+            crate::DialectType::PostgreSQL,
+        )
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_case_internal(
+        operand: &Option<Box<Expr>>,
+        when_then: &[(Expr, Expr)],
+        else_expr: &Option<Box<Expr>>,
+        batch: &Table,
+        row_idx: usize,
+        dialect: crate::DialectType,
+    ) -> Result<Value> {
         if let Some(case_operand) = operand {
-            let operand_value = Self::evaluate_expr(case_operand, batch, row_idx)?;
+            let operand_value =
+                Self::evaluate_expr_internal(case_operand, batch, row_idx, dialect)?;
             for (when_expr, then_expr) in when_then {
-                let when_value = Self::evaluate_expr(when_expr, batch, row_idx)?;
+                let when_value = Self::evaluate_expr_internal(when_expr, batch, row_idx, dialect)?;
                 if Self::values_equal(&operand_value, &when_value) {
-                    return Self::evaluate_expr(then_expr, batch, row_idx);
+                    return Self::evaluate_expr_internal(then_expr, batch, row_idx, dialect);
                 }
             }
         } else {
             for (when_expr, then_expr) in when_then {
-                let condition = Self::evaluate_expr(when_expr, batch, row_idx)?;
+                let condition = Self::evaluate_expr_internal(when_expr, batch, row_idx, dialect)?;
                 if condition.as_bool() == Some(true) {
-                    return Self::evaluate_expr(then_expr, batch, row_idx);
+                    return Self::evaluate_expr_internal(then_expr, batch, row_idx, dialect);
                 }
             }
         }
 
         if let Some(else_e) = else_expr {
-            Self::evaluate_expr(else_e, batch, row_idx)
+            Self::evaluate_expr_internal(else_e, batch, row_idx, dialect)
         } else {
             Ok(Value::null())
         }
@@ -46,7 +65,7 @@ mod tests {
     use super::*;
     use crate::query_executor::evaluator::physical_plan::expression::test_utils::*;
 
-    fn create_test_batch() -> RecordBatch {
+    fn create_test_batch() -> Table {
         create_batch(
             vec![("col1", DataType::Int64), ("col2", DataType::String)],
             vec![

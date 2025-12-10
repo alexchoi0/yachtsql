@@ -5,7 +5,7 @@ use yachtsql_optimizer::expr::Expr;
 use yachtsql_storage::Schema;
 
 use super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(crate) fn compute_column_occurrence_indices(
@@ -50,7 +50,7 @@ impl ProjectionWithExprExec {
 
     pub(crate) fn evaluate_expr_with_occurrence(
         expr: &Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
         occurrence_index: usize,
         dialect: crate::DialectType,
@@ -64,6 +64,16 @@ impl ProjectionWithExprExec {
         };
 
         let schema = batch.schema();
+
+        let qualified_name = format!("{}.{}", table_name, name);
+        if schema.field_index(&qualified_name).is_some() {
+            return Self::get_column_by_occurrence(
+                batch,
+                &qualified_name,
+                row_idx,
+                occurrence_index,
+            );
+        }
 
         if schema.field_index(name).is_some() {
             return Self::get_column_by_occurrence(batch, name, row_idx, occurrence_index);
@@ -107,7 +117,7 @@ impl ProjectionWithExprExec {
     }
 
     fn get_column_by_occurrence(
-        batch: &RecordBatch,
+        batch: &Table,
         name: &str,
         row_idx: usize,
         occurrence_index: usize,
@@ -119,13 +129,13 @@ impl ProjectionWithExprExec {
             .get(row_idx)
     }
 
-    pub(crate) fn evaluate_expr(expr: &Expr, batch: &RecordBatch, row_idx: usize) -> Result<Value> {
-        Self::evaluate_expr_internal(expr, batch, row_idx, crate::DialectType::PostgreSQL)
+    pub(crate) fn evaluate_expr(expr: &Expr, batch: &Table, row_idx: usize) -> Result<Value> {
+        Self::evaluate_expr_internal(expr, batch, row_idx, crate::DialectType::BigQuery)
     }
 
     pub(super) fn evaluate_expr_internal(
         expr: &Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
         _dialect: crate::DialectType,
     ) -> Result<Value> {
@@ -191,11 +201,22 @@ impl ProjectionWithExprExec {
             Expr::Wildcard => Ok(Value::int64(1)),
 
             Expr::BinaryOp { left, op, right } => match op {
-                BinaryOp::And => Self::evaluate_and(left, right, batch, row_idx),
-                BinaryOp::Or => Self::evaluate_or(left, right, batch, row_idx),
+                BinaryOp::And => Self::evaluate_and_internal(left, right, batch, row_idx, _dialect),
+                BinaryOp::Or => Self::evaluate_or_internal(left, right, batch, row_idx, _dialect),
                 _ => {
-                    let left_val = Self::evaluate_expr(left, batch, row_idx)?;
-                    let right_val = Self::evaluate_expr(right, batch, row_idx)?;
+                    if let (
+                        Expr::Tuple(left_exprs),
+                        Expr::Subquery { plan } | Expr::ScalarSubquery { subquery: plan },
+                    ) = (left.as_ref(), right.as_ref())
+                    {
+                        if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+                            return Self::evaluate_row_comparison(
+                                left_exprs, op, plan, batch, row_idx,
+                            );
+                        }
+                    }
+                    let left_val = Self::evaluate_expr_internal(left, batch, row_idx, _dialect)?;
+                    let right_val = Self::evaluate_expr_internal(right, batch, row_idx, _dialect)?;
                     let enum_labels = Self::get_enum_labels_for_expr(left, batch.schema())
                         .or_else(|| Self::get_enum_labels_for_expr(right, batch.schema()));
                     Self::evaluate_binary_op_with_enum(
@@ -211,25 +232,27 @@ impl ProjectionWithExprExec {
                 operand,
                 when_then,
                 else_expr,
-            } => Self::evaluate_case(operand, when_then, else_expr, batch, row_idx),
+            } => Self::evaluate_case_internal(
+                operand, when_then, else_expr, batch, row_idx, _dialect,
+            ),
 
             Expr::Cast { expr, data_type } => {
-                let value = Self::evaluate_expr(expr, batch, row_idx)?;
+                let value = Self::evaluate_expr_internal(expr, batch, row_idx, _dialect)?;
                 Self::cast_value(value, data_type)
             }
 
             Expr::TryCast { expr, data_type } => {
-                let value = Self::evaluate_expr(expr, batch, row_idx)?;
+                let value = Self::evaluate_expr_internal(expr, batch, row_idx, _dialect)?;
                 Ok(Self::try_cast_value(value, data_type))
             }
 
             Expr::UnaryOp { op, expr } => {
-                let operand = Self::evaluate_expr(expr, batch, row_idx)?;
+                let operand = Self::evaluate_expr_internal(expr, batch, row_idx, _dialect)?;
                 Self::evaluate_unary_op(op, &operand)
             }
 
             Expr::Function { name, args } => {
-                Self::evaluate_function_by_category(name, args, batch, row_idx)
+                Self::evaluate_function_by_category(name, args, batch, row_idx, _dialect)
             }
 
             Expr::Aggregate { name, args, .. } => {
@@ -285,7 +308,23 @@ impl ProjectionWithExprExec {
                 Self::evaluate_struct_field_access(expr, field, batch, row_idx)
             }
 
-            Expr::Grouping { column: _ } => Self::evaluate_grouping(),
+            Expr::Grouping { column } => {
+                let grouping_col_name = format!("__grouping_{}", column);
+                Ok(Self::evaluate_column(&grouping_col_name, batch, row_idx)
+                    .unwrap_or_else(|_| Value::int64(0)))
+            }
+
+            Expr::GroupingId { columns } => {
+                let mut id: i64 = 0;
+                for column in columns {
+                    let grouping_col_name = format!("__grouping_{}", column);
+                    let grouping_val = Self::evaluate_column(&grouping_col_name, batch, row_idx)
+                        .unwrap_or_else(|_| Value::int64(0));
+                    let bit = grouping_val.as_i64().unwrap_or(0);
+                    id = (id << 1) | bit;
+                }
+                Ok(Value::int64(id))
+            }
 
             Expr::Between {
                 expr,
@@ -394,6 +433,11 @@ impl ProjectionWithExprExec {
                 }))
             }
 
+            Expr::Lambda { .. } => Err(Error::invalid_query(
+                "Lambda expressions can only be used as arguments to higher-order functions"
+                    .to_string(),
+            )),
+
             _ => Err(Error::unsupported_feature(format!(
                 "Expression evaluation not yet implemented for: {:?}",
                 expr
@@ -404,8 +448,9 @@ impl ProjectionWithExprExec {
     fn evaluate_function_by_category(
         name: &yachtsql_ir::FunctionName,
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
+        dialect: crate::DialectType,
     ) -> Result<Value> {
         use yachtsql_ir::FunctionName;
 
@@ -434,6 +479,8 @@ impl ProjectionWithExprExec {
                 | FunctionName::Len
                 | FunctionName::CharLength
                 | FunctionName::CharacterLength
+                | FunctionName::OctetLength
+                | FunctionName::ByteLength
                 | FunctionName::Split
                 | FunctionName::SplitPart
                 | FunctionName::StringSplit
@@ -458,29 +505,65 @@ impl ProjectionWithExprExec {
                 | FunctionName::Initcap
                 | FunctionName::Proper
                 | FunctionName::Translate
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "TRIM_CHARS"
-                | "LTRIM_CHARS"
-                | "RTRIM_CHARS"
-                | "STRING_TO_ARRAY"
-                | "STARTS_WITH"
-                | "STARTSWITH"
-                | "ENDS_WITH"
-                | "ENDSWITH"
-                | "REGEXP_CONTAINS"
-                | "REGEXP_REPLACE"
-                | "REPLACEREGEXPALL"
-                | "REPLACEREGEXPONE"
-                | "REGEXP_EXTRACT"
-                | "FORMAT"
-                | "QUOTE_IDENT"
-                | "QUOTE_LITERAL"
-                | "CASEFOLD"
-                | "SPLITBYCHAR"
-                | "SPLITBYSTRING"
-            )
+                | FunctionName::TrimChars
+                | FunctionName::LtrimChars
+                | FunctionName::RtrimChars
+                | FunctionName::StringToArray
+                | FunctionName::StartsWith
+                | FunctionName::EndsWith
+                | FunctionName::RegexpContains
+                | FunctionName::RegexpReplace
+                | FunctionName::ReplaceRegexpAll
+                | FunctionName::ReplaceRegexpOne
+                | FunctionName::RegexpExtract
+                | FunctionName::Format
+                | FunctionName::QuoteIdent
+                | FunctionName::QuoteLiteral
+                | FunctionName::Casefold
+                | FunctionName::SplitByChar
+                | FunctionName::SplitByString
+                | FunctionName::SplitByRegexp
+                | FunctionName::SplitByWhitespace
+                | FunctionName::SplitByNonAlpha
+                | FunctionName::ArrayStringConcat
+                | FunctionName::AlphaTokens
+                | FunctionName::ExtractAll
+                | FunctionName::ExtractAllGroupsHorizontal
+                | FunctionName::ExtractAllGroupsVertical
+                | FunctionName::Ngrams
+                | FunctionName::Tokens
+                | FunctionName::BitCount
+                | FunctionName::GetBit
+                | FunctionName::SetBit
+                | FunctionName::PositionCaseInsensitive
+                | FunctionName::PositionUtf8
+                | FunctionName::PositionCaseInsensitiveUtf8
+                | FunctionName::CountSubstrings
+                | FunctionName::CountSubstringsCaseInsensitive
+                | FunctionName::CountMatches
+                | FunctionName::CountMatchesCaseInsensitive
+                | FunctionName::HasToken
+                | FunctionName::HasTokenCaseInsensitive
+                | FunctionName::Match
+                | FunctionName::MultiSearchAny
+                | FunctionName::MultiSearchFirstIndex
+                | FunctionName::MultiSearchFirstPosition
+                | FunctionName::MultiSearchAllPositions
+                | FunctionName::MultiMatchAny
+                | FunctionName::MultiMatchAnyIndex
+                | FunctionName::MultiMatchAllIndices
+                | FunctionName::ExtractGroups
+                | FunctionName::NgramDistance
+                | FunctionName::NgramSearch
+                | FunctionName::ReplaceOne
+                | FunctionName::ReplaceAll
+                | FunctionName::TrimBoth
+                | FunctionName::RegexpQuoteMeta
+                | FunctionName::TranslateUtf8
+                | FunctionName::NormalizeUtf8Nfc
+                | FunctionName::NormalizeUtf8Nfd
+                | FunctionName::NormalizeUtf8Nfkc
+                | FunctionName::NormalizeUtf8Nfkd
         ) {
             return Self::evaluate_string_function(func_name, args, batch, row_idx);
         }
@@ -491,22 +574,18 @@ impl ProjectionWithExprExec {
                 | FunctionName::Cardinality
                 | FunctionName::ArrayConcat
                 | FunctionName::ArrayCat
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "ARRAY_REVERSE"
-                | "ARRAY_APPEND"
-                | "ARRAY_PREPEND"
-                | "ARRAY_POSITION"
-                | "ARRAY_CONTAINS"
-                | "ARRAY_REMOVE"
-                | "ARRAY_REPLACE"
-                | "ARRAY_SORT"
-                | "ARRAY_DISTINCT"
-                | "GENERATE_ARRAY"
-                | "GENERATE_DATE_ARRAY"
-                | "GENERATE_TIMESTAMP_ARRAY"
-            )
+                | FunctionName::ArrayReverse
+                | FunctionName::ArrayAppend
+                | FunctionName::ArrayPrepend
+                | FunctionName::ArrayPosition
+                | FunctionName::ArrayContains
+                | FunctionName::ArrayRemove
+                | FunctionName::ArrayReplace
+                | FunctionName::ArraySort
+                | FunctionName::ArrayDistinct
+                | FunctionName::GenerateArray
+                | FunctionName::GenerateDateArray
+                | FunctionName::GenerateTimestampArray
         ) {
             return Self::evaluate_array_function(func_name, args, batch, row_idx);
         }
@@ -555,19 +634,40 @@ impl ProjectionWithExprExec {
                 | FunctionName::Pi
                 | FunctionName::Random
                 | FunctionName::Rand
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "DEGREES"
-                | "RADIANS"
-                | "SAFE_DIVIDE"
-                | "SAFE_MULTIPLY"
-                | "SAFE_ADD"
-                | "SAFE_SUBTRACT"
-                | "SAFE_NEGATE"
-                | "GAMMA"
-                | "LGAMMA"
-            )
+                | FunctionName::Div
+                | FunctionName::Degrees
+                | FunctionName::Radians
+                | FunctionName::SafeDivide
+                | FunctionName::SafeMultiply
+                | FunctionName::SafeAdd
+                | FunctionName::SafeSubtract
+                | FunctionName::SafeNegate
+                | FunctionName::Gamma
+                | FunctionName::Lgamma
+                | FunctionName::Sinh
+                | FunctionName::Cosh
+                | FunctionName::Tanh
+                | FunctionName::Asinh
+                | FunctionName::Acosh
+                | FunctionName::Atanh
+                | FunctionName::Cot
+                | FunctionName::Sind
+                | FunctionName::Cosd
+                | FunctionName::Tand
+                | FunctionName::Asind
+                | FunctionName::Acosd
+                | FunctionName::Atand
+                | FunctionName::Atan2d
+                | FunctionName::Cotd
+                | FunctionName::Cbrt
+                | FunctionName::Factorial
+                | FunctionName::Gcd
+                | FunctionName::Lcm
+                | FunctionName::Scale
+                | FunctionName::MinScale
+                | FunctionName::TrimScale
+                | FunctionName::WidthBucket
+                | FunctionName::Setseed
         ) {
             return Self::evaluate_math_function(func_name, args, batch, row_idx);
         }
@@ -606,41 +706,75 @@ impl ProjectionWithExprExec {
                 | FunctionName::CastDate
                 | FunctionName::ToDate
                 | FunctionName::Timestampdiff
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "TIMESTAMP_TRUNC"
-                | "FORMAT_DATE"
-                | "PARSE_DATE"
-                | "PARSE_TIMESTAMP"
-                | "MAKE_DATE"
-                | "MAKE_TIMESTAMP"
-                | "TIMESTAMP_DIFF"
-                | "INTERVAL_LITERAL"
-                | "INTERVAL_PARSE"
-                | "YEAR"
-                | "MONTH"
-                | "DAY"
-                | "HOUR"
-                | "MINUTE"
-                | "SECOND"
-                | "QUARTER"
-                | "WEEK"
-                | "ISOWEEK"
-                | "DAYOFWEEK"
-                | "DAYOFYEAR"
-                | "DAYOFMONTH"
-                | "WEEKDAY"
-                | "LAST_DAY"
-                | "AT_TIME_ZONE"
-            )
+                | FunctionName::TimestampTrunc
+                | FunctionName::FormatDate
+                | FunctionName::ParseDate
+                | FunctionName::ParseTimestamp
+                | FunctionName::MakeDate
+                | FunctionName::MakeTimestamp
+                | FunctionName::TimestampDiff
+                | FunctionName::IntervalLiteral
+                | FunctionName::IntervalParse
+                | FunctionName::Year
+                | FunctionName::Month
+                | FunctionName::Day
+                | FunctionName::Hour
+                | FunctionName::Minute
+                | FunctionName::Second
+                | FunctionName::Quarter
+                | FunctionName::Week
+                | FunctionName::Isoweek
+                | FunctionName::Dayofweek
+                | FunctionName::Dayofyear
+                | FunctionName::Dayofmonth
+                | FunctionName::Weekday
+                | FunctionName::LastDay
+                | FunctionName::AtTimeZone
+                | FunctionName::JustifyDays
+                | FunctionName::JustifyHours
+                | FunctionName::JustifyInterval
+                | FunctionName::TimestampAdd
+                | FunctionName::TimestampSub
+                | FunctionName::DatetimeAdd
+                | FunctionName::DatetimeSub
+                | FunctionName::DatetimeDiff
+                | FunctionName::DatetimeTrunc
+                | FunctionName::TimeAdd
+                | FunctionName::TimeSub
+                | FunctionName::TimeDiff
+                | FunctionName::TimeTrunc
+                | FunctionName::UnixDate
+                | FunctionName::DateFromUnixDate
+                | FunctionName::UnixSeconds
+                | FunctionName::TimestampSeconds
+                | FunctionName::UnixMillis
+                | FunctionName::TimestampMillis
+                | FunctionName::UnixMicros
+                | FunctionName::TimestampMicros
         ) {
             return Self::evaluate_datetime_function(func_name, args, batch, row_idx);
         }
 
         {
             let s = name.as_str();
-            if s.starts_with("JSON") || s.starts_with("IS_JSON") || s.starts_with("IS_NOT_JSON") {
+            let is_json_aggregate = matches!(
+                s,
+                "JSON_AGG" | "JSONB_AGG" | "JSON_OBJECT_AGG" | "JSONB_OBJECT_AGG"
+            );
+            if !is_json_aggregate
+                && (s.starts_with("JSON")
+                    || s.starts_with("IS_JSON")
+                    || s.starts_with("IS_NOT_JSON")
+                    || s.starts_with("LAX_")
+                    || s == "TO_JSON"
+                    || s == "TO_JSONB"
+                    || s == "TO_JSON_STRING"
+                    || s == "PARSE_JSON"
+                    || s == "BOOL"
+                    || s == "INT64"
+                    || s == "FLOAT64"
+                    || s == "STRING")
+            {
                 return Self::evaluate_json_function(func_name, args, batch, row_idx);
             }
         }
@@ -652,22 +786,51 @@ impl ProjectionWithExprExec {
                 | FunctionName::Sha256
                 | FunctionName::Sha2
                 | FunctionName::Encode
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "SHA1"
-                | "SHA512"
-                | "FARM_FINGERPRINT"
-                | "TO_HEX"
-                | "FROM_HEX"
-                | "GEN_RANDOM_BYTES"
-                | "DIGEST"
-                | "CRC32"
-                | "CRC32C"
-            )
-        ) || name.as_str().starts_with("NET.")
-        {
-            return Self::evaluate_crypto_hash_network_function(func_name, args, batch, row_idx);
+                | FunctionName::Sha1
+                | FunctionName::Sha224
+                | FunctionName::Sha384
+                | FunctionName::Sha512
+                | FunctionName::Blake3
+                | FunctionName::FarmFingerprint
+                | FunctionName::ToHex
+                | FunctionName::FromHex
+                | FunctionName::GenRandomBytes
+                | FunctionName::Digest
+                | FunctionName::Crc32
+                | FunctionName::Crc32c
+                | FunctionName::XxHash32
+                | FunctionName::XxHash64
+                | FunctionName::CityHash64
+                | FunctionName::SipHash64
+                | FunctionName::MurmurHash2_32
+                | FunctionName::MurmurHash2_64
+                | FunctionName::MurmurHash3_32
+                | FunctionName::MurmurHash3_64
+                | FunctionName::MurmurHash3_128
+                | FunctionName::JavaHash
+                | FunctionName::HalfMd5
+                | FunctionName::FarmHash64
+                | FunctionName::MetroHash64
+                | FunctionName::NetIpFromString
+                | FunctionName::NetSafeIpFromString
+                | FunctionName::NetIpv4FromInt64
+                | FunctionName::NetIpNetMask
+                | FunctionName::NetIpTrunc
+                | FunctionName::NetIpv4ToInt64
+                | FunctionName::NetIpToString
+                | FunctionName::NetHost
+                | FunctionName::NetPublicSuffix
+                | FunctionName::NetRegDomain
+                | FunctionName::Encrypt
+                | FunctionName::Decrypt
+                | FunctionName::AesEncryptMysql
+                | FunctionName::AesDecryptMysql
+                | FunctionName::Base64UrlEncode
+                | FunctionName::Base64UrlDecode
+        ) {
+            return Self::evaluate_crypto_hash_network_function(
+                func_name, args, batch, row_idx, dialect,
+            );
         }
 
         {
@@ -702,66 +865,148 @@ impl ProjectionWithExprExec {
                 | FunctionName::GenRandomUuid
                 | FunctionName::Newid
                 | FunctionName::UuidGenerateV4
-        ) || matches!(
-            name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "GENERATE_UUID_ARRAY" | "UUID_GENERATE_V1" | "UUIDV4" | "UUIDV7"
-            )
+                | FunctionName::GenerateUuidArray
+                | FunctionName::UuidGenerateV1
+                | FunctionName::Uuidv4
+                | FunctionName::Uuidv7
         ) {
             return Self::evaluate_generator_function(func_name, args, batch, row_idx);
         }
 
-        if matches!(name, FunctionName::ToChar)
-            || matches!(name, FunctionName::Custom(s) if s == "TO_NUMBER")
-        {
+        if matches!(
+            name,
+            FunctionName::ToChar
+                | FunctionName::ToNumber
+                | FunctionName::ToInt8
+                | FunctionName::ToInt16
+                | FunctionName::ToInt32
+                | FunctionName::ToInt64
+                | FunctionName::ToUInt8
+                | FunctionName::ToUInt16
+                | FunctionName::ToUInt32
+                | FunctionName::ToUInt64
+                | FunctionName::ToFloat32
+                | FunctionName::ToFloat64
+                | FunctionName::ChToString
+                | FunctionName::ToFixedString
+                | FunctionName::ChToDateTime
+                | FunctionName::ToDateTime64
+                | FunctionName::ToDecimal32
+                | FunctionName::ToDecimal64
+                | FunctionName::ToDecimal128
+                | FunctionName::ToInt64OrNull
+                | FunctionName::ToInt64OrZero
+                | FunctionName::ToFloat64OrNull
+                | FunctionName::ToFloat64OrZero
+                | FunctionName::ToDateOrNull
+                | FunctionName::ToDateTimeOrNull
+                | FunctionName::ReinterpretAsInt64
+                | FunctionName::ReinterpretAsString
+                | FunctionName::AccurateCast
+                | FunctionName::AccurateCastOrNull
+                | FunctionName::ChParseDateTime
+                | FunctionName::ParseDateTimeBestEffort
+                | FunctionName::ParseDateTimeBestEffortOrNull
+        ) {
             return Self::evaluate_conversion_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
             name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "POINT"
-                | "BOX"
-                | "CIRCLE"
-                | "AREA"
-                | "CENTER"
-                | "DIAMETER"
-                | "RADIUS"
-                | "WIDTH"
-                | "HEIGHT"
-                | "DISTANCE"
-                | "CONTAINS"
-                | "CONTAINED_BY"
-                | "OVERLAPS"
-            )
+            FunctionName::Point
+                | FunctionName::Box
+                | FunctionName::Circle
+                | FunctionName::Area
+                | FunctionName::Center
+                | FunctionName::Diameter
+                | FunctionName::Radius
+                | FunctionName::Width
+                | FunctionName::Height
+                | FunctionName::Distance
+                | FunctionName::Contains
+                | FunctionName::ContainedBy
+                | FunctionName::Overlaps
         ) {
             return Self::evaluate_geometric_function(func_name, args, batch, row_idx);
         }
 
         if matches!(
             name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "TO_TSVECTOR"
-                | "TO_TSQUERY"
-                | "PLAINTO_TSQUERY"
-                | "PHRASETO_TSQUERY"
-                | "WEBSEARCH_TO_TSQUERY"
-                | "TS_MATCH"
-                | "TS_MATCH_VQ"
-                | "TS_MATCH_QV"
-                | "TS_RANK"
-                | "TS_RANK_CD"
-                | "TSVECTOR_CONCAT"
-                | "TS_HEADLINE"
-                | "SETWEIGHT"
-                | "STRIP"
-                | "TSVECTOR_LENGTH"
-                | "NUMNODE"
-                | "QUERYTREE"
-                | "TSQUERY_AND"
-                | "TSQUERY_OR"
-                | "TSQUERY_NOT"
-            )
+            FunctionName::StGeogpoint
+                | FunctionName::StGeogfromtext
+                | FunctionName::StGeogfromgeojson
+                | FunctionName::StAstext
+                | FunctionName::StAsgeojson
+                | FunctionName::StAsbinary
+                | FunctionName::StX
+                | FunctionName::StY
+                | FunctionName::StGeometrytype
+                | FunctionName::StIsempty
+                | FunctionName::StIsclosed
+                | FunctionName::StIscollection
+                | FunctionName::StDimension
+                | FunctionName::StNumpoints
+                | FunctionName::StNpoints
+                | FunctionName::StPointn
+                | FunctionName::StStartpoint
+                | FunctionName::StEndpoint
+                | FunctionName::StMakeline
+                | FunctionName::StMakepolygon
+                | FunctionName::StDistance
+                | FunctionName::StLength
+                | FunctionName::StArea
+                | FunctionName::StPerimeter
+                | FunctionName::StMaxdistance
+                | FunctionName::StAzimuth
+                | FunctionName::StCentroid
+                | FunctionName::StContains
+                | FunctionName::StCovers
+                | FunctionName::StCoveredby
+                | FunctionName::StDisjoint
+                | FunctionName::StDwithin
+                | FunctionName::StEquals
+                | FunctionName::StIntersects
+                | FunctionName::StTouches
+                | FunctionName::StWithin
+                | FunctionName::StBoundary
+                | FunctionName::StBuffer
+                | FunctionName::StBufferwithtolerance
+                | FunctionName::StClosestpoint
+                | FunctionName::StConvexhull
+                | FunctionName::StDifference
+                | FunctionName::StIntersection
+                | FunctionName::StSimplify
+                | FunctionName::StSnaptogrid
+                | FunctionName::StUnion
+                | FunctionName::StBoundingbox
+                | FunctionName::StGeohash
+                | FunctionName::StGeogpointfromgeohash
+        ) {
+            return Self::evaluate_geography_function(func_name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::ToTsvector
+                | FunctionName::ToTsquery
+                | FunctionName::PlaintoTsquery
+                | FunctionName::PhrasetoTsquery
+                | FunctionName::WebsearchToTsquery
+                | FunctionName::TsMatch
+                | FunctionName::TsMatchVq
+                | FunctionName::TsMatchQv
+                | FunctionName::TsRank
+                | FunctionName::TsRankCd
+                | FunctionName::TsvectorConcat
+                | FunctionName::TsHeadline
+                | FunctionName::Setweight
+                | FunctionName::Strip
+                | FunctionName::TsvectorLength
+                | FunctionName::Numnode
+                | FunctionName::Querytree
+                | FunctionName::TsqueryAnd
+                | FunctionName::TsqueryOr
+                | FunctionName::TsqueryNot
         ) {
             return Self::evaluate_fulltext_function(func_name, args, batch, row_idx);
         }
@@ -772,39 +1017,302 @@ impl ProjectionWithExprExec {
 
         if matches!(
             name,
-            FunctionName::Custom(s) if matches!(s.as_str(),
-                "HSTORE_EXISTS"
-                | "HSTORE_EXISTS_ALL"
-                | "HSTORE_EXISTS_ANY"
-                | "EXIST"
-                | "HSTORE_CONCAT"
-                | "HSTORE_DELETE"
-                | "HSTORE_DELETE_KEY"
-                | "HSTORE_DELETE_KEYS"
-                | "HSTORE_DELETE_HSTORE"
-                | "DELETE"
-                | "HSTORE_CONTAINS"
-                | "HSTORE_CONTAINED_BY"
-                | "HSTORE_AKEYS"
-                | "AKEYS"
-                | "SKEYS"
-                | "HSTORE_AVALS"
-                | "AVALS"
-                | "SVALS"
-                | "HSTORE_DEFINED"
-                | "DEFINED"
-                | "HSTORE_TO_JSON"
-                | "HSTORE_TO_JSONB"
-                | "HSTORE_TO_ARRAY"
-                | "HSTORE_TO_MATRIX"
-                | "HSTORE_SLICE"
-                | "SLICE"
-                | "HSTORE"
-                | "HSTORE_GET"
-                | "HSTORE_GET_VALUES"
-            )
+            FunctionName::CurrentDatabase
+                | FunctionName::CurrentUser
+                | FunctionName::Version
+                | FunctionName::Uptime
+                | FunctionName::Timezone
+                | FunctionName::ServerTimezone
+                | FunctionName::BlockNumber
+                | FunctionName::RowNumberInBlock
+                | FunctionName::RowNumberInAllBlocks
+                | FunctionName::HostName
+                | FunctionName::Fqdn
+                | FunctionName::IsFinite
+                | FunctionName::IsInfinite
+                | FunctionName::IsNan
+                | FunctionName::ToTypeName
+                | FunctionName::DumpColumnStructure
+                | FunctionName::DefaultValueOfArgumentType
+                | FunctionName::DefaultValueOfTypeName
+                | FunctionName::BlockSize
+                | FunctionName::CurrentSchemas
+                | FunctionName::QueryId
+                | FunctionName::InitialQueryId
+                | FunctionName::ServerUuid
+                | FunctionName::GetSetting
+                | FunctionName::IsDecimalOverflow
+                | FunctionName::CountDigits
+                | FunctionName::PgTypeof
+                | FunctionName::SessionUser
+                | FunctionName::CurrentSchema
+                | FunctionName::CurrentCatalog
+                | FunctionName::CurrentSetting
+                | FunctionName::SetConfig
+                | FunctionName::PgBackendPid
+                | FunctionName::PgColumnSize
+                | FunctionName::PgDatabaseSize
+                | FunctionName::PgTableSize
+                | FunctionName::PgIndexesSize
+                | FunctionName::PgTotalRelationSize
+                | FunctionName::PgRelationSize
+                | FunctionName::PgTablespaceSize
+                | FunctionName::PgSizePretty
+                | FunctionName::PgConfLoadTime
+                | FunctionName::PgIsInRecovery
+                | FunctionName::PgPostmasterStartTime
+                | FunctionName::PgCurrentSnapshot
+                | FunctionName::PgGetViewdef
+                | FunctionName::HasTablePrivilege
+                | FunctionName::HasSchemaPrivilege
+                | FunctionName::HasDatabasePrivilege
+                | FunctionName::HasColumnPrivilege
+                | FunctionName::ObjDescription
+                | FunctionName::ColDescription
+                | FunctionName::ShobjDescription
+                | FunctionName::InetClientAddr
+                | FunctionName::InetClientPort
+                | FunctionName::InetServerAddr
+                | FunctionName::InetServerPort
+                | FunctionName::TxidCurrent
+                | FunctionName::TxidCurrentIfAssigned
+                | FunctionName::TxidCurrentSnapshot
+                | FunctionName::TxidSnapshotXmin
+                | FunctionName::TxidSnapshotXmax
+                | FunctionName::TxidSnapshotXip
+                | FunctionName::TxidVisibleInSnapshot
+                | FunctionName::TxidStatus
+                | FunctionName::PgCurrentXactId
+                | FunctionName::PgCurrentXactIdIfAssigned
+                | FunctionName::PgSnapshotXmin
+                | FunctionName::PgSnapshotXmax
+                | FunctionName::PgSnapshotXip
+                | FunctionName::PgVisibleInSnapshot
+                | FunctionName::PgXactStatus
+        ) {
+            return Self::evaluate_introspection_function(name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::HstoreExists
+                | FunctionName::HstoreExistsAll
+                | FunctionName::HstoreExistsAny
+                | FunctionName::Exist
+                | FunctionName::HstoreConcat
+                | FunctionName::HstoreDelete
+                | FunctionName::HstoreDeleteKey
+                | FunctionName::HstoreDeleteKeys
+                | FunctionName::HstoreDeleteHstore
+                | FunctionName::Delete
+                | FunctionName::HstoreContains
+                | FunctionName::HstoreContainedBy
+                | FunctionName::HstoreAkeys
+                | FunctionName::Akeys
+                | FunctionName::Skeys
+                | FunctionName::HstoreAvals
+                | FunctionName::Avals
+                | FunctionName::Svals
+                | FunctionName::HstoreDefined
+                | FunctionName::Defined
+                | FunctionName::HstoreToJson
+                | FunctionName::HstoreToJsonb
+                | FunctionName::HstoreToArray
+                | FunctionName::HstoreToMatrix
+                | FunctionName::HstoreSlice
+                | FunctionName::Slice
+                | FunctionName::Hstore
+                | FunctionName::HstoreGet
+                | FunctionName::HstoreGetValues
         ) {
             return Self::evaluate_hstore_function(func_name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Arraymap
+                | FunctionName::Arrayfilter
+                | FunctionName::Arrayexists
+                | FunctionName::Arrayall
+                | FunctionName::Arrayfirst
+                | FunctionName::Arraylast
+                | FunctionName::Arrayfirstindex
+                | FunctionName::Arraylastindex
+                | FunctionName::Arraycount
+                | FunctionName::Arraysum
+                | FunctionName::Arrayavg
+                | FunctionName::Arraymin
+                | FunctionName::Arraymax
+                | FunctionName::Arraysort
+                | FunctionName::Arrayreversesort
+                | FunctionName::Arrayfold
+                | FunctionName::Arrayreduce
+                | FunctionName::Arrayreduceinranges
+                | FunctionName::Arraycumsum
+                | FunctionName::Arraycumsumnonnegative
+                | FunctionName::Arraydifference
+                | FunctionName::Arraysplit
+                | FunctionName::Arrayreversesplit
+                | FunctionName::Arraycompact
+                | FunctionName::Arrayzip
+                | FunctionName::Arrayauc
+        ) {
+            return Self::evaluate_higher_order_function(func_name, args, batch, row_idx, dialect);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Map
+                | FunctionName::MapFromArrays
+                | FunctionName::MapKeys
+                | FunctionName::MapValues
+                | FunctionName::MapContains
+                | FunctionName::MapAdd
+                | FunctionName::MapSubtract
+                | FunctionName::MapUpdate
+                | FunctionName::MapConcat
+                | FunctionName::MapPopulateSeries
+                | FunctionName::MapFilter
+                | FunctionName::MapApply
+                | FunctionName::MapExists
+                | FunctionName::MapAll
+                | FunctionName::MapSort
+                | FunctionName::MapReverseSort
+                | FunctionName::MapPartialSort
+        ) {
+            return Self::evaluate_map_function(name, args, batch, row_idx, dialect);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Lower
+                | FunctionName::Upper
+                | FunctionName::LowerInc
+                | FunctionName::UpperInc
+                | FunctionName::LowerInf
+                | FunctionName::UpperInf
+                | FunctionName::Isempty
+                | FunctionName::Range
+                | FunctionName::RangeMerge
+                | FunctionName::RangeIsempty
+                | FunctionName::RangeContains
+                | FunctionName::RangeContainsElem
+                | FunctionName::RangeOverlaps
+                | FunctionName::RangeUnion
+                | FunctionName::RangeIntersection
+                | FunctionName::RangeAdjacent
+                | FunctionName::RangeStrictlyLeft
+                | FunctionName::RangeStrictlyRight
+                | FunctionName::RangeDifference
+                | FunctionName::RangeStart
+                | FunctionName::RangeEnd
+        ) {
+            return Self::evaluate_range_function(func_name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Nextval
+                | FunctionName::Currval
+                | FunctionName::Setval
+                | FunctionName::Lastval
+        ) {
+            return Self::evaluate_sequence_function(func_name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Tuple
+                | FunctionName::TupleElement
+                | FunctionName::Untuple
+                | FunctionName::TupleHammingDistance
+                | FunctionName::TuplePlus
+                | FunctionName::TupleMinus
+                | FunctionName::TupleMultiply
+                | FunctionName::TupleDivide
+                | FunctionName::TupleNegate
+                | FunctionName::TupleMultiplyByNumber
+                | FunctionName::TupleDivideByNumber
+                | FunctionName::TupleConcat
+                | FunctionName::TupleIntDiv
+                | FunctionName::TupleIntDivOrZero
+                | FunctionName::TupleModulo
+                | FunctionName::TupleModuloByNumber
+                | FunctionName::TupleToNameValuePairs
+                | FunctionName::TupleNames
+        ) {
+            return Self::evaluate_tuple_function(name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::BitmapBuild
+                | FunctionName::BitmapToArray
+                | FunctionName::BitmapCardinality
+                | FunctionName::BitmapAnd
+                | FunctionName::BitmapOr
+                | FunctionName::BitmapXor
+                | FunctionName::BitmapAndnot
+                | FunctionName::BitmapContains
+                | FunctionName::BitmapHasAny
+                | FunctionName::BitmapHasAll
+                | FunctionName::BitmapAndCardinality
+                | FunctionName::BitmapOrCardinality
+                | FunctionName::BitmapXorCardinality
+                | FunctionName::BitmapAndnotCardinality
+                | FunctionName::BitmapMin
+                | FunctionName::BitmapMax
+                | FunctionName::BitmapSubsetInRange
+                | FunctionName::BitmapSubsetLimit
+                | FunctionName::BitmapTransform
+                | FunctionName::SubBitmap
+        ) {
+            return Self::evaluate_bitmap_function(name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::Stem
+                | FunctionName::Lemmatize
+                | FunctionName::Synonyms
+                | FunctionName::DetectLanguage
+                | FunctionName::DetectLanguageMixed
+                | FunctionName::DetectLanguageUnknown
+                | FunctionName::DetectCharset
+                | FunctionName::DetectTonality
+                | FunctionName::DetectProgrammingLanguage
+                | FunctionName::NormalizeQuery
+                | FunctionName::NormalizedQueryHash
+                | FunctionName::WordShingleMinHash
+                | FunctionName::WordShingleSimHash
+                | FunctionName::NgramSimHash
+        ) {
+            return Self::evaluate_nlp_function(func_name, args, batch, row_idx);
+        }
+
+        if matches!(
+            name,
+            FunctionName::L1Norm
+                | FunctionName::L2Norm
+                | FunctionName::LinfNorm
+                | FunctionName::LpNorm
+                | FunctionName::L1Distance
+                | FunctionName::L2Distance
+                | FunctionName::LinfDistance
+                | FunctionName::LpDistance
+                | FunctionName::L1Normalize
+                | FunctionName::L2Normalize
+                | FunctionName::LinfNormalize
+                | FunctionName::LpNormalize
+                | FunctionName::CosineDistance
+                | FunctionName::DotProduct
+                | FunctionName::L2SquaredDistance
+        ) {
+            return Self::evaluate_distance_function(func_name, args, batch, row_idx);
+        }
+
+        if let FunctionName::Custom(custom_name) = name {
+            return Self::evaluate_custom_function(custom_name, args, batch, row_idx);
         }
 
         Err(Error::unsupported_feature(format!(
@@ -816,7 +1324,7 @@ impl ProjectionWithExprExec {
     fn compute_aggregate_over_batch(
         agg_name: &yachtsql_ir::FunctionName,
         arg: &Expr,
-        batch: &RecordBatch,
+        batch: &Table,
     ) -> Result<Value> {
         use yachtsql_ir::FunctionName;
 
@@ -931,17 +1439,12 @@ impl ProjectionWithExprExec {
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            FunctionName::Custom(s)
-                if matches!(
-                    s.as_str(),
-                    "UNIQ"
-                        | "UNIQ_EXACT"
-                        | "UNIQ_HLL12"
-                        | "UNIQ_COMBINED"
-                        | "UNIQ_COMBINED_64"
-                        | "UNIQ_THETA_SKETCH"
-                ) =>
-            {
+            FunctionName::Uniq
+            | FunctionName::UniqExact
+            | FunctionName::UniqHll12
+            | FunctionName::UniqCombined
+            | FunctionName::UniqCombined64
+            | FunctionName::UniqThetaSketch => {
                 let mut unique_values = std::collections::HashSet::new();
                 for val in &values {
                     if !val.is_null() {
@@ -951,12 +1454,10 @@ impl ProjectionWithExprExec {
                 }
                 Ok(Value::int64(unique_values.len() as i64))
             }
-            FunctionName::Custom(s)
-                if matches!(
-                    s.as_str(),
-                    "QUANTILE" | "QUANTILE_EXACT" | "QUANTILE_TIMING" | "QUANTILE_TDIGEST"
-                ) =>
-            {
+            FunctionName::Quantile
+            | FunctionName::QuantileExact
+            | FunctionName::QuantileTiming
+            | FunctionName::QuantileTDigest => {
                 let mut numeric_values: Vec<f64> = values
                     .iter()
                     .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
@@ -970,29 +1471,22 @@ impl ProjectionWithExprExec {
                     Ok(Value::float64(numeric_values[median_idx]))
                 }
             }
-            FunctionName::Custom(s) if s == "GROUP_ARRAY" => {
+            FunctionName::GroupArray => {
                 let non_null_values: Vec<Value> =
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            FunctionName::ArgMin => Ok(Value::null()),
-            FunctionName::Custom(s) if s == "ARGMIN" => Ok(Value::null()),
-            FunctionName::ArgMax => Ok(Value::null()),
-            FunctionName::Custom(s) if s == "ARGMAX" => Ok(Value::null()),
-            FunctionName::Custom(s) if matches!(s.as_str(), "TOP_K" | "TOPK") => {
+            FunctionName::ArgMin | FunctionName::ArgMax => Ok(Value::null()),
+            FunctionName::TopK => {
                 let non_null_values: Vec<Value> =
                     values.into_iter().filter(|v| !v.is_null()).collect();
                 Ok(Value::array(non_null_values))
             }
-            FunctionName::Any => values
+            FunctionName::Any | FunctionName::AnyLast | FunctionName::AnyHeavy => values
                 .into_iter()
                 .find(|v| !v.is_null())
                 .map_or(Ok(Value::null()), Ok),
-            FunctionName::Custom(s) if matches!(s.as_str(), "ANY_LAST" | "ANY_HEAVY") => values
-                .into_iter()
-                .find(|v| !v.is_null())
-                .map_or(Ok(Value::null()), Ok),
-            FunctionName::Custom(s) if s == "GROUP_UNIQ_ARRAY" => {
+            FunctionName::GroupUniqArray => {
                 let mut unique_values = std::collections::HashSet::new();
                 let mut result = Vec::new();
                 for val in values {
@@ -1070,6 +1564,26 @@ impl ProjectionWithExprExec {
             (val.as_timestamp(), low.as_timestamp(), high.as_timestamp())
         {
             return Some(v >= l && v <= h);
+        }
+
+        if let Some(v) = val.as_date32() {
+            let l_val = if let Some(d32) = low.as_date32() {
+                Some(d32.0)
+            } else if let Some(s) = low.as_str() {
+                yachtsql_core::types::Date32Value::parse(s).map(|d| d.0)
+            } else {
+                None
+            };
+            let h_val = if let Some(d32) = high.as_date32() {
+                Some(d32.0)
+            } else if let Some(s) = high.as_str() {
+                yachtsql_core::types::Date32Value::parse(s).map(|d| d.0)
+            } else {
+                None
+            };
+            if let (Some(l), Some(h)) = (l_val, h_val) {
+                return Some(v.0 >= l && v.0 <= h);
+            }
         }
 
         None

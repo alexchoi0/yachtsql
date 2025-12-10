@@ -5,7 +5,7 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 #[allow(dead_code)]
 impl ProjectionWithExprExec {
@@ -30,6 +30,13 @@ impl ProjectionWithExprExec {
         list: &[crate::types::Value],
         negated: bool,
     ) -> Result<crate::types::Value> {
+        if value.is_null() {
+            if list.is_empty() {
+                return Ok(Value::bool_val(negated));
+            }
+            return Ok(Value::null());
+        }
+
         let mut found = false;
         let mut has_null = false;
 
@@ -58,7 +65,7 @@ impl ProjectionWithExprExec {
         expr: &Rc<Expr>,
         list: &[Expr],
         negated: bool,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         let value = Self::evaluate_expr(expr, batch, row_idx)?;
@@ -73,7 +80,7 @@ impl ProjectionWithExprExec {
         expr: &Rc<Expr>,
         list: &[Expr],
         negated: bool,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         let left_tuple = Self::evaluate_tuple_values(expr, batch, row_idx)?;
@@ -90,7 +97,7 @@ impl ProjectionWithExprExec {
         tuple: &[Expr],
         list: &[Vec<Expr>],
         negated: bool,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         let left_values: Result<Vec<Value>> = tuple
@@ -115,7 +122,7 @@ impl ProjectionWithExprExec {
         _tuple: &[Expr],
         _plan: &Rc<crate::optimizer::plan::PlanNode>,
         _negated: bool,
-        _batch: &RecordBatch,
+        _batch: &Table,
         _row_idx: usize,
     ) -> Result<Value> {
         Err(crate::error::Error::InvalidOperation(
@@ -125,7 +132,7 @@ impl ProjectionWithExprExec {
 
     pub(super) fn evaluate_tuple_values(
         expr: &Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Vec<Value>> {
         match expr {
@@ -142,7 +149,7 @@ impl ProjectionWithExprExec {
 
     pub(super) fn evaluate_tuple_as_struct(
         exprs: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         let values: Result<Vec<_>> = exprs
@@ -229,7 +236,7 @@ impl ProjectionWithExprExec {
 
     pub(super) fn extract_array_from_value_expr(
         right: &crate::optimizer::expr::Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Vec<crate::types::Value>> {
         let value = Self::evaluate_expr(right, batch, row_idx)?;
@@ -247,7 +254,7 @@ impl ProjectionWithExprExec {
 
     pub(super) fn extract_array_for_quantified_op(
         right: &crate::optimizer::expr::Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Vec<crate::types::Value>> {
         use yachtsql_optimizer::expr::Expr;

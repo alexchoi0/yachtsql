@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use aligned_vec::AVec;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use indexmap::IndexMap;
@@ -97,6 +99,14 @@ pub enum Column {
         data: Vec<yachtsql_core::types::MacAddress>,
         nulls: NullBitmap,
     },
+    Inet {
+        data: Vec<yachtsql_core::types::network::InetAddr>,
+        nulls: NullBitmap,
+    },
+    Cidr {
+        data: Vec<yachtsql_core::types::network::CidrAddr>,
+        nulls: NullBitmap,
+    },
     Enum {
         data: Vec<String>,
         nulls: NullBitmap,
@@ -116,6 +126,54 @@ pub enum Column {
 
     Circle {
         data: Vec<yachtsql_core::types::PgCircle>,
+        nulls: NullBitmap,
+    },
+
+    Map {
+        data: Vec<Vec<(Value, Value)>>,
+        nulls: NullBitmap,
+        key_type: DataType,
+        value_type: DataType,
+    },
+
+    Range {
+        data: Vec<yachtsql_core::types::Range>,
+        nulls: NullBitmap,
+        range_type: yachtsql_core::types::RangeType,
+    },
+
+    IPv4 {
+        data: Vec<yachtsql_core::types::IPv4Addr>,
+        nulls: NullBitmap,
+    },
+
+    IPv6 {
+        data: Vec<yachtsql_core::types::IPv6Addr>,
+        nulls: NullBitmap,
+    },
+
+    Date32 {
+        data: Vec<yachtsql_core::types::Date32Value>,
+        nulls: NullBitmap,
+    },
+
+    GeoPoint {
+        data: Vec<yachtsql_core::types::GeoPointValue>,
+        nulls: NullBitmap,
+    },
+
+    GeoRing {
+        data: Vec<yachtsql_core::types::GeoRingValue>,
+        nulls: NullBitmap,
+    },
+
+    GeoPolygon {
+        data: Vec<yachtsql_core::types::GeoPolygonValue>,
+        nulls: NullBitmap,
+    },
+
+    GeoMultiPolygon {
+        data: Vec<yachtsql_core::types::GeoMultiPolygonValue>,
         nulls: NullBitmap,
     },
 }
@@ -214,6 +272,14 @@ impl Column {
                 data: Vec::with_capacity(capacity),
                 nulls: NullBitmap::new_valid(0),
             },
+            DataType::Inet => Column::Inet {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::Cidr => Column::Cidr {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
             DataType::Enum { type_name, labels } => Column::Enum {
                 data: Vec::with_capacity(capacity),
                 nulls: NullBitmap::new_valid(0),
@@ -234,6 +300,45 @@ impl Column {
                 nulls: NullBitmap::new_valid(0),
             },
             DataType::Circle => Column::Circle {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::Map(key_type, value_type) => Column::Map {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+                key_type: *key_type.clone(),
+                value_type: *value_type.clone(),
+            },
+            DataType::Range(range_type) => Column::Range {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+                range_type: range_type.clone(),
+            },
+            DataType::IPv4 => Column::IPv4 {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::IPv6 => Column::IPv6 {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::Date32 => Column::Date32 {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::GeoPoint => Column::GeoPoint {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::GeoRing => Column::GeoRing {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::GeoPolygon => Column::GeoPolygon {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+            },
+            DataType::GeoMultiPolygon => Column::GeoMultiPolygon {
                 data: Vec::with_capacity(capacity),
                 nulls: NullBitmap::new_valid(0),
             },
@@ -279,6 +384,8 @@ impl Column {
             Column::Hstore { .. } => DataType::Hstore,
             Column::MacAddr { .. } => DataType::MacAddr,
             Column::MacAddr8 { .. } => DataType::MacAddr8,
+            Column::Inet { .. } => DataType::Inet,
+            Column::Cidr { .. } => DataType::Cidr,
             Column::Enum {
                 type_name, labels, ..
             } => DataType::Enum {
@@ -288,6 +395,19 @@ impl Column {
             Column::Point { .. } => DataType::Point,
             Column::PgBox { .. } => DataType::PgBox,
             Column::Circle { .. } => DataType::Circle,
+            Column::Map {
+                key_type,
+                value_type,
+                ..
+            } => DataType::Map(Box::new(key_type.clone()), Box::new(value_type.clone())),
+            Column::Range { range_type, .. } => DataType::Range(range_type.clone()),
+            Column::IPv4 { .. } => DataType::IPv4,
+            Column::IPv6 { .. } => DataType::IPv6,
+            Column::Date32 { .. } => DataType::Date32,
+            Column::GeoPoint { .. } => DataType::GeoPoint,
+            Column::GeoRing { .. } => DataType::GeoRing,
+            Column::GeoPolygon { .. } => DataType::GeoPolygon,
+            Column::GeoMultiPolygon { .. } => DataType::GeoMultiPolygon,
         }
     }
 
@@ -314,10 +434,21 @@ impl Column {
             Column::Hstore { nulls, .. } => nulls.len(),
             Column::MacAddr { nulls, .. } => nulls.len(),
             Column::MacAddr8 { nulls, .. } => nulls.len(),
+            Column::Inet { nulls, .. } => nulls.len(),
+            Column::Cidr { nulls, .. } => nulls.len(),
             Column::Enum { nulls, .. } => nulls.len(),
             Column::Point { nulls, .. } => nulls.len(),
             Column::PgBox { nulls, .. } => nulls.len(),
             Column::Circle { nulls, .. } => nulls.len(),
+            Column::Map { nulls, .. } => nulls.len(),
+            Column::Range { nulls, .. } => nulls.len(),
+            Column::IPv4 { nulls, .. } => nulls.len(),
+            Column::IPv6 { nulls, .. } => nulls.len(),
+            Column::Date32 { nulls, .. } => nulls.len(),
+            Column::GeoPoint { nulls, .. } => nulls.len(),
+            Column::GeoRing { nulls, .. } => nulls.len(),
+            Column::GeoPolygon { nulls, .. } => nulls.len(),
+            Column::GeoMultiPolygon { nulls, .. } => nulls.len(),
         }
     }
 
@@ -348,10 +479,21 @@ impl Column {
             Column::Hstore { nulls, .. } => nulls,
             Column::MacAddr { nulls, .. } => nulls,
             Column::MacAddr8 { nulls, .. } => nulls,
+            Column::Inet { nulls, .. } => nulls,
+            Column::Cidr { nulls, .. } => nulls,
             Column::Enum { nulls, .. } => nulls,
             Column::Point { nulls, .. } => nulls,
             Column::PgBox { nulls, .. } => nulls,
             Column::Circle { nulls, .. } => nulls,
+            Column::Map { nulls, .. } => nulls,
+            Column::Range { nulls, .. } => nulls,
+            Column::IPv4 { nulls, .. } => nulls,
+            Column::IPv6 { nulls, .. } => nulls,
+            Column::Date32 { nulls, .. } => nulls,
+            Column::GeoPoint { nulls, .. } => nulls,
+            Column::GeoRing { nulls, .. } => nulls,
+            Column::GeoPolygon { nulls, .. } => nulls,
+            Column::GeoMultiPolygon { nulls, .. } => nulls,
         }
     }
 
@@ -506,6 +648,10 @@ impl Column {
                     data.push(v);
                     nulls.push(true);
                     Ok(())
+                } else if let Some(v) = value.as_datetime() {
+                    data.push(v);
+                    nulls.push(true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected {}, got {}",
@@ -516,6 +662,10 @@ impl Column {
             }
             Column::DateTime { data, nulls } => {
                 if let Some(v) = value.as_datetime() {
+                    data.push(v);
+                    nulls.push(true);
+                    Ok(())
+                } else if let Some(v) = value.as_timestamp() {
                     data.push(v);
                     nulls.push(true);
                     Ok(())
@@ -545,6 +695,18 @@ impl Column {
                     data.push(*v);
                     nulls.push(true);
                     Ok(())
+                } else if let Some(s) = value.as_str() {
+                    match uuid::Uuid::parse_str(s) {
+                        Ok(uuid_val) => {
+                            data.push(uuid_val);
+                            nulls.push(true);
+                            Ok(())
+                        }
+                        Err(e) => Err(Error::invalid_query(format!(
+                            "Invalid UUID string '{}': {}",
+                            s, e
+                        ))),
+                    }
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected {}, got {}",
@@ -603,6 +765,18 @@ impl Column {
                 if let Some(v) = value.as_array() {
                     Self::validate_vector_value(v, *dimensions)?;
                     data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else if let Some(v) = value.as_vector() {
+                    if *dimensions != 0 && v.len() != *dimensions {
+                        return Err(Error::invalid_query(format!(
+                            "VECTOR dimension mismatch: expected {}, got {}",
+                            dimensions,
+                            v.len()
+                        )));
+                    }
+                    let as_values: Vec<Value> = v.iter().map(|f| Value::float64(*f)).collect();
+                    data.push(as_values);
                     nulls.push(true);
                     Ok(())
                 } else {
@@ -691,6 +865,56 @@ impl Column {
                     )))
                 }
             }
+            Column::Inet { data, nulls } => {
+                if let Some(v) = value.as_inet() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else if let Some(s) = value.as_str() {
+                    match yachtsql_core::types::network::InetAddr::from_str(s) {
+                        Ok(inet) => {
+                            data.push(inet);
+                            nulls.push(true);
+                            Ok(())
+                        }
+                        Err(e) => Err(Error::invalid_query(format!(
+                            "cannot parse '{}' as INET: {}",
+                            s, e
+                        ))),
+                    }
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Cidr { data, nulls } => {
+                if let Some(v) = value.as_cidr() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else if let Some(s) = value.as_str() {
+                    match yachtsql_core::types::network::CidrAddr::from_str(s) {
+                        Ok(cidr) => {
+                            data.push(cidr);
+                            nulls.push(true);
+                            Ok(())
+                        }
+                        Err(e) => Err(Error::invalid_query(format!(
+                            "cannot parse '{}' as CIDR: {}",
+                            s, e
+                        ))),
+                    }
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
             Column::Enum { data, nulls, .. } => {
                 if let Some(s) = value.as_str() {
                     data.push(s.to_string());
@@ -732,6 +956,123 @@ impl Column {
             }
             Column::Circle { data, nulls } => {
                 if let Some(v) = value.as_circle() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Map { data, nulls, .. } => {
+                if let Some(v) = value.as_map() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Range { data, nulls, .. } => {
+                if let Some(v) = value.as_range() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::IPv4 { data, nulls } => {
+                if let Some(v) = value.as_ipv4() {
+                    data.push(*v);
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::IPv6 { data, nulls } => {
+                if let Some(v) = value.as_ipv6() {
+                    data.push(*v);
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Date32 { data, nulls } => {
+                if let Some(v) = value.as_date32() {
+                    data.push(*v);
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoPoint { data, nulls } => {
+                if let Some(v) = value.as_geo_point() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoRing { data, nulls } => {
+                if let Some(v) = value.as_geo_ring() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoPolygon { data, nulls } => {
+                if let Some(v) = value.as_geo_polygon() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoMultiPolygon { data, nulls } => {
+                if let Some(v) = value.as_geo_multipolygon() {
                     data.push(v.clone());
                     nulls.push(true);
                     Ok(())
@@ -839,6 +1180,22 @@ impl Column {
                 ]));
                 nulls.push(false);
             }
+            Column::Inet { data, nulls } => {
+                data.push(yachtsql_core::types::network::InetAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
+                ));
+                nulls.push(false);
+            }
+            Column::Cidr { data, nulls } => {
+                data.push(
+                    yachtsql_core::types::network::CidrAddr::new(
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
+                        0,
+                    )
+                    .unwrap(),
+                );
+                nulls.push(false);
+            }
             Column::Enum { data, nulls, .. } => {
                 data.push(String::new());
                 nulls.push(false);
@@ -859,6 +1216,52 @@ impl Column {
                     yachtsql_core::types::PgPoint::new(0.0, 0.0),
                     0.0,
                 ));
+                nulls.push(false);
+            }
+            Column::Map { data, nulls, .. } => {
+                data.push(Vec::new());
+                nulls.push(false);
+            }
+            Column::Range {
+                data,
+                nulls,
+                range_type,
+            } => {
+                data.push(yachtsql_core::types::Range {
+                    range_type: range_type.clone(),
+                    lower: None,
+                    upper: None,
+                    lower_inclusive: false,
+                    upper_inclusive: false,
+                });
+                nulls.push(false);
+            }
+            Column::IPv4 { data, nulls } => {
+                data.push(yachtsql_core::types::IPv4Addr(0));
+                nulls.push(false);
+            }
+            Column::IPv6 { data, nulls } => {
+                data.push(yachtsql_core::types::IPv6Addr(0));
+                nulls.push(false);
+            }
+            Column::Date32 { data, nulls } => {
+                data.push(yachtsql_core::types::Date32Value(0));
+                nulls.push(false);
+            }
+            Column::GeoPoint { data, nulls } => {
+                data.push(yachtsql_core::types::GeoPointValue { x: 0.0, y: 0.0 });
+                nulls.push(false);
+            }
+            Column::GeoRing { data, nulls } => {
+                data.push(Vec::new());
+                nulls.push(false);
+            }
+            Column::GeoPolygon { data, nulls } => {
+                data.push(Vec::new());
+                nulls.push(false);
+            }
+            Column::GeoMultiPolygon { data, nulls } => {
+                data.push(Vec::new());
                 nulls.push(false);
             }
         }
@@ -988,6 +1391,10 @@ impl Column {
                     data[index] = v;
                     nulls.set(index, true);
                     Ok(())
+                } else if let Some(v) = value.as_datetime() {
+                    data[index] = v;
+                    nulls.set(index, true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected {}, got {}",
@@ -998,6 +1405,10 @@ impl Column {
             }
             Column::DateTime { data, nulls } => {
                 if let Some(v) = value.as_datetime() {
+                    data[index] = v;
+                    nulls.set(index, true);
+                    Ok(())
+                } else if let Some(v) = value.as_timestamp() {
                     data[index] = v;
                     nulls.set(index, true);
                     Ok(())
@@ -1087,6 +1498,18 @@ impl Column {
                     data[index] = v.clone();
                     nulls.set(index, true);
                     Ok(())
+                } else if let Some(v) = value.as_vector() {
+                    if *dimensions != 0 && v.len() != *dimensions {
+                        return Err(Error::invalid_query(format!(
+                            "VECTOR dimension mismatch: expected {}, got {}",
+                            dimensions,
+                            v.len()
+                        )));
+                    }
+                    let as_values: Vec<Value> = v.iter().map(|f| Value::float64(*f)).collect();
+                    data[index] = as_values;
+                    nulls.set(index, true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected VECTOR({}), got {}",
@@ -1173,6 +1596,32 @@ impl Column {
                     )))
                 }
             }
+            Column::Inet { data, nulls } => {
+                if let Some(v) = value.as_inet() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Cidr { data, nulls } => {
+                if let Some(v) = value.as_cidr() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
             Column::Enum { data, nulls, .. } => {
                 if let Some(s) = value.as_str() {
                     data[index] = s.to_string();
@@ -1214,6 +1663,123 @@ impl Column {
             }
             Column::Circle { data, nulls } => {
                 if let Some(v) = value.as_circle() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Map { data, nulls, .. } => {
+                if let Some(v) = value.as_map() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Range { data, nulls, .. } => {
+                if let Some(v) = value.as_range() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::IPv4 { data, nulls } => {
+                if let Some(v) = value.as_ipv4() {
+                    data[index] = *v;
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::IPv6 { data, nulls } => {
+                if let Some(v) = value.as_ipv6() {
+                    data[index] = *v;
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::Date32 { data, nulls } => {
+                if let Some(v) = value.as_date32() {
+                    data[index] = *v;
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoPoint { data, nulls } => {
+                if let Some(v) = value.as_geo_point() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoRing { data, nulls } => {
+                if let Some(v) = value.as_geo_ring() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoPolygon { data, nulls } => {
+                if let Some(v) = value.as_geo_polygon() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
+            Column::GeoMultiPolygon { data, nulls } => {
+                if let Some(v) = value.as_geo_multipolygon() {
                     data[index] = v.clone();
                     nulls.set(index, true);
                     Ok(())
@@ -1318,6 +1884,20 @@ impl Column {
                     yachtsql_core::types::MacAddress::new_macaddr8([0, 0, 0, 0, 0, 0, 0, 0]);
                 nulls.set(index, false);
             }
+            Column::Inet { data, nulls } => {
+                data[index] = yachtsql_core::types::network::InetAddr::new(std::net::IpAddr::V4(
+                    std::net::Ipv4Addr::new(0, 0, 0, 0),
+                ));
+                nulls.set(index, false);
+            }
+            Column::Cidr { data, nulls } => {
+                data[index] = yachtsql_core::types::network::CidrAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
+                    0,
+                )
+                .unwrap();
+                nulls.set(index, false);
+            }
             Column::Enum { data, nulls, .. } => {
                 data[index] = String::new();
                 nulls.set(index, false);
@@ -1338,6 +1918,52 @@ impl Column {
                     yachtsql_core::types::PgPoint::new(0.0, 0.0),
                     0.0,
                 );
+                nulls.set(index, false);
+            }
+            Column::Map { data, nulls, .. } => {
+                data[index] = Vec::new();
+                nulls.set(index, false);
+            }
+            Column::Range {
+                data,
+                nulls,
+                range_type,
+            } => {
+                data[index] = yachtsql_core::types::Range {
+                    range_type: range_type.clone(),
+                    lower: None,
+                    upper: None,
+                    lower_inclusive: false,
+                    upper_inclusive: false,
+                };
+                nulls.set(index, false);
+            }
+            Column::IPv4 { data, nulls } => {
+                data[index] = yachtsql_core::types::IPv4Addr(0);
+                nulls.set(index, false);
+            }
+            Column::IPv6 { data, nulls } => {
+                data[index] = yachtsql_core::types::IPv6Addr(0);
+                nulls.set(index, false);
+            }
+            Column::Date32 { data, nulls } => {
+                data[index] = yachtsql_core::types::Date32Value(0);
+                nulls.set(index, false);
+            }
+            Column::GeoPoint { data, nulls } => {
+                data[index] = yachtsql_core::types::GeoPointValue { x: 0.0, y: 0.0 };
+                nulls.set(index, false);
+            }
+            Column::GeoRing { data, nulls } => {
+                data[index] = Vec::new();
+                nulls.set(index, false);
+            }
+            Column::GeoPolygon { data, nulls } => {
+                data[index] = Vec::new();
+                nulls.set(index, false);
+            }
+            Column::GeoMultiPolygon { data, nulls } => {
+                data[index] = Vec::new();
                 nulls.set(index, false);
             }
         }
@@ -1429,6 +2055,14 @@ impl Column {
                 data.clear();
                 *nulls = NullBitmap::new_valid(0);
             }
+            Column::Inet { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::Cidr { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
             Column::Enum { data, nulls, .. } => {
                 data.clear();
                 *nulls = NullBitmap::new_valid(0);
@@ -1442,6 +2076,42 @@ impl Column {
                 *nulls = NullBitmap::new_valid(0);
             }
             Column::Circle { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::Map { data, nulls, .. } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::Range { data, nulls, .. } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::IPv4 { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::IPv6 { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::Date32 { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::GeoPoint { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::GeoRing { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::GeoPolygon { data, nulls } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
+            Column::GeoMultiPolygon { data, nulls } => {
                 data.clear();
                 *nulls = NullBitmap::new_valid(0);
             }
@@ -1484,10 +2154,23 @@ impl Column {
             Column::Hstore { data, .. } => Ok(Value::hstore(data[index].clone())),
             Column::MacAddr { data, .. } => Ok(Value::macaddr(data[index].clone())),
             Column::MacAddr8 { data, .. } => Ok(Value::macaddr8(data[index].clone())),
+            Column::Inet { data, .. } => Ok(Value::inet(data[index].clone())),
+            Column::Cidr { data, .. } => Ok(Value::cidr(data[index].clone())),
             Column::Enum { data, .. } => Ok(Value::string(data[index].clone())),
             Column::Point { data, .. } => Ok(Value::point(data[index].clone())),
             Column::PgBox { data, .. } => Ok(Value::pgbox(data[index].clone())),
             Column::Circle { data, .. } => Ok(Value::circle(data[index].clone())),
+            Column::Map { data, .. } => Ok(Value::map(data[index].clone())),
+            Column::Range { data, .. } => Ok(Value::range(data[index].clone())),
+            Column::IPv4 { data, .. } => Ok(Value::ipv4(data[index])),
+            Column::IPv6 { data, .. } => Ok(Value::ipv6(data[index])),
+            Column::Date32 { data, .. } => Ok(Value::date32(data[index])),
+            Column::GeoPoint { data, .. } => Ok(Value::geo_point(data[index].clone())),
+            Column::GeoRing { data, .. } => Ok(Value::geo_ring(data[index].clone())),
+            Column::GeoPolygon { data, .. } => Ok(Value::geo_polygon(data[index].clone())),
+            Column::GeoMultiPolygon { data, .. } => {
+                Ok(Value::geo_multipolygon(data[index].clone()))
+            }
         }
     }
 
@@ -1649,6 +2332,8 @@ impl Column {
             Column::Hstore { data, .. } => gather_clone!(data, Hstore),
             Column::MacAddr { data, .. } => gather_clone!(data, MacAddr),
             Column::MacAddr8 { data, .. } => gather_clone!(data, MacAddr8),
+            Column::Inet { data, .. } => gather_clone!(data, Inet),
+            Column::Cidr { data, .. } => gather_clone!(data, Cidr),
             Column::Enum {
                 data,
                 type_name,
@@ -1666,6 +2351,37 @@ impl Column {
             Column::Point { data, .. } => gather_clone!(data, Point),
             Column::PgBox { data, .. } => gather_clone!(data, PgBox),
             Column::Circle { data, .. } => gather_clone!(data, Circle),
+            Column::Map {
+                data,
+                key_type,
+                value_type,
+                ..
+            } => {
+                let gathered_data = indices.iter().map(|&idx| data[idx].clone()).collect();
+                Ok(Column::Map {
+                    data: gathered_data,
+                    nulls,
+                    key_type: key_type.clone(),
+                    value_type: value_type.clone(),
+                })
+            }
+            Column::Range {
+                data, range_type, ..
+            } => {
+                let gathered_data = indices.iter().map(|&idx| data[idx].clone()).collect();
+                Ok(Column::Range {
+                    data: gathered_data,
+                    nulls,
+                    range_type: range_type.clone(),
+                })
+            }
+            Column::IPv4 { data, .. } => gather_clone!(data, IPv4),
+            Column::IPv6 { data, .. } => gather_clone!(data, IPv6),
+            Column::Date32 { data, .. } => gather_clone!(data, Date32),
+            Column::GeoPoint { data, .. } => gather_clone!(data, GeoPoint),
+            Column::GeoRing { data, .. } => gather_clone!(data, GeoRing),
+            Column::GeoPolygon { data, .. } => gather_clone!(data, GeoPolygon),
+            Column::GeoMultiPolygon { data, .. } => gather_clone!(data, GeoMultiPolygon),
         }
     }
 
@@ -1896,6 +2612,21 @@ impl Column {
                 Column::Struct {
                     data: other_data,
                     nulls: other_nulls,
+                },
+            ) => {
+                self_data.extend_from_slice(other_data);
+                self_nulls.append(other_nulls);
+            }
+            (
+                Column::Map {
+                    data: self_data,
+                    nulls: self_nulls,
+                    ..
+                },
+                Column::Map {
+                    data: other_data,
+                    nulls: other_nulls,
+                    ..
                 },
             ) => {
                 self_data.extend_from_slice(other_data);

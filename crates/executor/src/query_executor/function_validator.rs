@@ -1,7 +1,17 @@
+use std::collections::HashSet;
+
 use yachtsql_capability::FeatureRegistry;
 use yachtsql_core::error::{Error, Result};
 
 pub fn validate_function(function_name: &str, registry: &FeatureRegistry) -> Result<()> {
+    validate_function_with_udfs(function_name, registry, None)
+}
+
+pub fn validate_function_with_udfs(
+    function_name: &str,
+    registry: &FeatureRegistry,
+    udf_names: Option<&HashSet<String>>,
+) -> Result<()> {
     let dialect = registry.dialect();
     let function_upper = function_name.to_uppercase();
 
@@ -9,8 +19,18 @@ pub fn validate_function(function_name: &str, registry: &FeatureRegistry) -> Res
         return Ok(());
     }
 
+    if is_sql_keyword_pseudo_function(&function_upper) {
+        return Ok(());
+    }
+
     if is_core_function(&function_upper) {
         return Ok(());
+    }
+
+    if let Some(udfs) = udf_names {
+        if udfs.contains(&function_upper) {
+            return Ok(());
+        }
     }
 
     let is_available = match dialect {
@@ -27,6 +47,10 @@ pub fn validate_function(function_name: &str, registry: &FeatureRegistry) -> Res
             function_name, dialect
         )))
     }
+}
+
+fn is_sql_keyword_pseudo_function(function_name: &str) -> bool {
+    matches!(function_name, "ALL" | "ANY" | "SOME")
 }
 
 fn is_core_function(function_name: &str) -> bool {

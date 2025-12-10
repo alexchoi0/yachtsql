@@ -122,6 +122,9 @@ pub enum Expr {
     Grouping {
         column: String,
     },
+    GroupingId {
+        columns: Vec<String>,
+    },
     Excluded {
         column: String,
     },
@@ -130,6 +133,17 @@ pub enum Expr {
         right: Box<Expr>,
         negated: bool,
     },
+    Lambda {
+        params: Vec<String>,
+        body: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithFill {
+    pub from: Option<Expr>,
+    pub to: Option<Expr>,
+    pub step: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,6 +152,7 @@ pub struct OrderByExpr {
     pub asc: Option<bool>,
     pub nulls_first: Option<bool>,
     pub collation: Option<String>,
+    pub with_fill: Option<WithFill>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,6 +200,17 @@ pub enum CastDataType {
     Hstore,
     MacAddr,
     MacAddr8,
+    Inet,
+    Cidr,
+    Int4Range,
+    Int8Range,
+    NumRange,
+    TsRange,
+    TsTzRange,
+    DateRange,
+    Point,
+    PgBox,
+    Circle,
     Custom(String, Vec<yachtsql_core::types::StructField>),
 }
 
@@ -206,6 +232,8 @@ pub enum BinaryOp {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    ShiftLeft,
+    ShiftRight,
     Like,
     NotLike,
     ILike,
@@ -229,6 +257,15 @@ pub enum BinaryOp {
     GeometricContains,
     GeometricContainedBy,
     GeometricOverlap,
+    HashMinus,
+    RangeAdjacent,
+    RangeStrictlyLeft,
+    RangeStrictlyRight,
+    InetContains,
+    InetContainedBy,
+    InetContainsOrEqual,
+    InetContainedByOrEqual,
+    InetOverlap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +275,7 @@ pub enum UnaryOp {
     Plus,
     IsNull,
     IsNotNull,
+    BitwiseNot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -250,6 +288,8 @@ pub enum LiteralValue {
     String(String),
     Bytes(Vec<u8>),
     Date(String),
+    Time(String),
+    DateTime(String),
     Timestamp(String),
     Uuid(String),
     Json(String),
@@ -283,6 +323,20 @@ impl LiteralValue {
                     Value::null()
                 }
             }
+            LiteralValue::Time(s) => {
+                if let Ok(time) = chrono::NaiveTime::parse_from_str(s, "%H:%M:%S") {
+                    Value::time(time)
+                } else if let Ok(time) = chrono::NaiveTime::parse_from_str(s, "%H:%M:%S%.f") {
+                    Value::time(time)
+                } else if let Ok(time) = chrono::NaiveTime::parse_from_str(s, "%H:%M") {
+                    Value::time(time)
+                } else {
+                    Value::null()
+                }
+            }
+            LiteralValue::DateTime(s) => yachtsql_core::types::parse_timestamp_to_utc(s)
+                .map(Value::datetime)
+                .unwrap_or(Value::null()),
             LiteralValue::Timestamp(s) => yachtsql_core::types::parse_timestamp_to_utc(s)
                 .map(Value::timestamp)
                 .unwrap_or(Value::null()),
@@ -322,6 +376,37 @@ impl LiteralValue {
                     None => Value::null(),
                 },
             },
+        }
+    }
+
+    pub fn from_value(val: &yachtsql_core::types::Value) -> Self {
+        if val.is_null() {
+            LiteralValue::Null
+        } else if let Some(b) = val.as_bool() {
+            LiteralValue::Boolean(b)
+        } else if let Some(i) = val.as_i64() {
+            LiteralValue::Int64(i)
+        } else if let Some(f) = val.as_f64() {
+            LiteralValue::Float64(f)
+        } else if let Some(s) = val.as_str() {
+            LiteralValue::String(s.to_string())
+        } else if let Some(arr) = val.as_array() {
+            let elements: Vec<Expr> = arr
+                .iter()
+                .map(|v| Expr::Literal(LiteralValue::from_value(v)))
+                .collect();
+            LiteralValue::Array(elements)
+        } else {
+            LiteralValue::Null
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            LiteralValue::Float64(f) => Some(*f),
+            LiteralValue::Int64(i) => Some(*i as f64),
+            LiteralValue::Numeric(d) => d.to_string().parse().ok(),
+            _ => None,
         }
     }
 }
@@ -437,11 +522,14 @@ impl Expr {
                 left.contains_subquery() || right.contains_subquery()
             }
 
+            Expr::Lambda { body, .. } => body.contains_subquery(),
+
             Expr::Column { .. }
             | Expr::Literal(_)
             | Expr::Wildcard
             | Expr::QualifiedWildcard { .. }
             | Expr::Grouping { .. }
+            | Expr::GroupingId { .. }
             | Expr::Excluded { .. } => false,
         }
     }

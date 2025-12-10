@@ -131,6 +131,51 @@ impl InterestingOrderRule {
                 Ok((new_node, output_order, left_changed || right_changed))
             }
 
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let join_order = if is_equi_join(equality_condition) {
+                    self.extract_join_key_ordering(equality_condition)
+                } else {
+                    OrderingProperty::empty()
+                };
+
+                let left_requirement = if !join_order.is_empty() {
+                    self.merge_requirements(required_order, &join_order)
+                } else {
+                    required_order.clone()
+                };
+
+                let (opt_left, left_order, left_changed) =
+                    self.optimize_with_context(left, &left_requirement)?;
+
+                let right_requirement = join_order.clone();
+                let (opt_right, right_order, right_changed) =
+                    self.optimize_with_context(right, &right_requirement)?;
+
+                let output_order = if left_order.satisfies(&join_order)
+                    && right_order.satisfies(&join_order)
+                    && !join_order.is_empty()
+                {
+                    left_order
+                } else {
+                    OrderingProperty::empty()
+                };
+
+                let new_node = PlanNode::AsOfJoin {
+                    left: Box::new(opt_left),
+                    right: Box::new(opt_right),
+                    equality_condition: equality_condition.clone(),
+                    match_condition: match_condition.clone(),
+                    is_left_join: *is_left_join,
+                };
+                Ok((new_node, output_order, left_changed || right_changed))
+            }
+
             PlanNode::LateralJoin {
                 left,
                 right,
@@ -287,6 +332,7 @@ impl InterestingOrderRule {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let (opt_cte, _cte_order, cte_changed) =
                     self.optimize_with_context(cte_plan, &OrderingProperty::empty())?;
@@ -300,6 +346,7 @@ impl InterestingOrderRule {
                     recursive: *recursive,
                     use_union_all: *use_union_all,
                     materialization_hint: materialization_hint.clone(),
+                    column_aliases: column_aliases.clone(),
                 };
                 Ok((new_node, input_order, cte_changed || input_changed))
             }
@@ -457,7 +504,8 @@ impl InterestingOrderRule {
             | PlanNode::TableValuedFunction { .. }
             | PlanNode::AlterTable { .. }
             | PlanNode::InsertOnConflict { .. }
-            | PlanNode::EmptyRelation => Ok((node.clone(), OrderingProperty::empty(), false)),
+            | PlanNode::EmptyRelation
+            | PlanNode::Values { .. } => Ok((node.clone(), OrderingProperty::empty(), false)),
         }
     }
 
@@ -629,6 +677,7 @@ mod tests {
             asc: Some(true),
             nulls_first: Some(false),
             collation: None,
+            with_fill: None,
         }
     }
 
@@ -638,6 +687,8 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -672,6 +723,8 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let inner_sort = PlanNode::Sort {
@@ -697,6 +750,8 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {
@@ -727,6 +782,8 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {
@@ -764,6 +821,8 @@ mod tests {
             table_name: "t".to_string(),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let sort = PlanNode::Sort {

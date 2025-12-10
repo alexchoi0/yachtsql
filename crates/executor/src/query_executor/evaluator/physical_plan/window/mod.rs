@@ -20,7 +20,7 @@ use yachtsql_optimizer::expr::Expr;
 use yachtsql_storage::Schema;
 
 use super::ExecutionPlan;
-use crate::RecordBatch;
+use crate::Table;
 
 #[derive(Debug)]
 pub struct WindowExec {
@@ -87,7 +87,7 @@ impl WindowExec {
     fn compute_window_results(
         window_fn: &Expr,
         mut indices: Vec<usize>,
-        batch: &RecordBatch,
+        batch: &Table,
         window_results: &mut Vec<Value>,
         registry: &Rc<crate::functions::FunctionRegistry>,
     ) {
@@ -196,6 +196,41 @@ impl WindowExec {
             }
         }
 
+        if frame_units.is_none() && !order_by.is_empty() {
+            let func_name_upper = name.to_uppercase();
+
+            let is_ranking_function = matches!(
+                func_name_upper.as_str(),
+                "ROW_NUMBER"
+                    | "RANK"
+                    | "DENSE_RANK"
+                    | "NTILE"
+                    | "PERCENT_RANK"
+                    | "CUME_DIST"
+                    | "LAG"
+                    | "LEAD"
+                    | "FIRST_VALUE"
+                    | "LAST_VALUE"
+                    | "NTH_VALUE"
+            );
+
+            if !is_ranking_function && registry.has_aggregate(&func_name_upper) {
+                Self::compute_range_frame_window(
+                    name,
+                    args,
+                    &indices,
+                    order_by,
+                    batch,
+                    results,
+                    None,
+                    Some(0),
+                    exclude,
+                    registry,
+                );
+                return;
+            }
+        }
+
         match name.to_uppercase().as_str() {
             "ROW_NUMBER" => Self::compute_row_number(&indices, results),
             "RANK" => Self::compute_rank(&indices, order_by, batch, results, false),
@@ -264,16 +299,16 @@ impl ExecutionPlan for WindowExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         use yachtsql_core::types::Value;
         use yachtsql_storage::Column;
 
-        use crate::RecordBatch;
+        use crate::Table;
 
         let input_batches = self.input.execute()?;
 
         if input_batches.is_empty() {
-            return Ok(vec![RecordBatch::empty(self.schema.clone())]);
+            return Ok(vec![Table::empty(self.schema.clone())]);
         }
 
         let mut result_batches = Vec::new();
@@ -361,7 +396,7 @@ impl ExecutionPlan for WindowExec {
                 }
             }
 
-            result_batches.push(RecordBatch::new(self.schema.clone(), output_columns)?);
+            result_batches.push(Table::new(self.schema.clone(), output_columns)?);
         }
 
         Ok(result_batches)

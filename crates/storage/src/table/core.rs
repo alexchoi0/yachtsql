@@ -15,6 +15,48 @@ use crate::storage_backend::{
 };
 use crate::{Column, Schema};
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TableEngine {
+    #[default]
+    Memory,
+    Log,
+    TinyLog,
+    StripeLog,
+    MergeTree {
+        order_by: Vec<String>,
+    },
+    ReplacingMergeTree {
+        order_by: Vec<String>,
+        version_column: Option<String>,
+    },
+    SummingMergeTree {
+        order_by: Vec<String>,
+        sum_columns: Vec<String>,
+    },
+    CollapsingMergeTree {
+        order_by: Vec<String>,
+        sign_column: String,
+    },
+    VersionedCollapsingMergeTree {
+        order_by: Vec<String>,
+        sign_column: String,
+        version_column: String,
+    },
+    AggregatingMergeTree {
+        order_by: Vec<String>,
+    },
+    Distributed {
+        cluster: String,
+        database: String,
+        table: String,
+        sharding_key: Option<String>,
+    },
+    Buffer {
+        database: String,
+        table: String,
+    },
+}
+
 pub struct Table {
     pub(super) schema: Schema,
     pub(super) storage: StorageBackend,
@@ -26,6 +68,8 @@ pub struct Table {
     pub(super) indexes: HashMap<String, Box<dyn TableIndex>>,
 
     pub(super) index_metadata: Vec<IndexMetadata>,
+
+    pub(super) engine: TableEngine,
 }
 
 impl Clone for Table {
@@ -39,6 +83,7 @@ impl Clone for Table {
             partition_spec: self.partition_spec.clone(),
             indexes: HashMap::new(),
             index_metadata: Vec::new(),
+            engine: self.engine.clone(),
         }
     }
 }
@@ -54,6 +99,7 @@ impl std::fmt::Debug for Table {
             .field("partition_spec", &self.partition_spec)
             .field("index_count", &self.indexes.len())
             .field("index_metadata", &self.index_metadata)
+            .field("engine", &self.engine)
             .finish()
     }
 }
@@ -87,7 +133,16 @@ impl Table {
             partition_spec: None,
             indexes: HashMap::new(),
             index_metadata: Vec::new(),
+            engine: TableEngine::default(),
         }
+    }
+
+    pub fn engine(&self) -> &TableEngine {
+        &self.engine
+    }
+
+    pub fn set_engine(&mut self, engine: TableEngine) {
+        self.engine = engine;
     }
 
     pub fn schema(&self) -> &Schema {
@@ -210,6 +265,7 @@ impl Table {
                     partition_spec: self.partition_spec.clone(),
                     indexes: HashMap::new(),
                     index_metadata: Vec::new(),
+                    engine: self.engine.clone(),
                 })
             }
         }
@@ -235,6 +291,7 @@ impl Table {
                     partition_spec: self.partition_spec.clone(),
                     indexes: HashMap::new(),
                     index_metadata: Vec::new(),
+                    engine: self.engine.clone(),
                 })
             }
         }
@@ -273,6 +330,7 @@ impl Table {
             partition_spec: self.partition_spec.clone(),
             indexes: HashMap::new(),
             index_metadata: Vec::new(),
+            engine: self.engine.clone(),
         }
     }
 
@@ -286,6 +344,7 @@ impl Table {
             partition_spec: self.partition_spec.clone(),
             indexes: HashMap::new(),
             index_metadata: Vec::new(),
+            engine: self.engine.clone(),
         }
     }
 }

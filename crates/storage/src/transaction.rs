@@ -1,12 +1,9 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::time::Instant;
 
 use yachtsql_core::error::Result;
 use yachtsql_core::types::Value;
 
-use crate::mvcc::VersionStore;
 use crate::{Row, Schema, Storage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,18 +41,31 @@ pub struct DeferredFKState {
     pub pending_checks: Vec<DeferredFKCheck>,
 
     pub constraint_timings: HashMap<String, ConstraintTiming>,
+
+    pub default_mode: Option<ConstraintTiming>,
 }
 
 impl DeferredFKState {
     pub fn get_timing(&self, constraint_name: &str, initial: ConstraintTiming) -> ConstraintTiming {
-        self.constraint_timings
-            .get(constraint_name)
-            .copied()
-            .unwrap_or(initial)
+        if let Some(timing) = self.constraint_timings.get(constraint_name) {
+            return *timing;
+        }
+        if let Some(default) = self.default_mode {
+            return default;
+        }
+        initial
     }
 
     pub fn set_timing(&mut self, constraint_name: String, timing: ConstraintTiming) {
         self.constraint_timings.insert(constraint_name, timing);
+    }
+
+    pub fn set_default_mode(&mut self, timing: ConstraintTiming) {
+        self.default_mode = Some(timing);
+    }
+
+    pub fn pending_checks(&self) -> &[DeferredFKCheck] {
+        &self.pending_checks
     }
 
     pub fn defer_check(&mut self, check: DeferredFKCheck) {
@@ -73,6 +83,11 @@ impl DeferredFKState {
     pub fn clear(&mut self) {
         self.pending_checks.clear();
         self.constraint_timings.clear();
+        self.default_mode = None;
+    }
+
+    pub fn clear_pending_checks(&mut self) {
+        self.pending_checks.clear();
     }
 
     pub fn remove_checks_for_constraints<S: AsRef<str>>(&mut self, constraint_names: &[S]) {
@@ -98,6 +113,34 @@ pub enum IsolationLevel {
     ReadCommitted,
     RepeatableRead,
     Serializable,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransactionCharacteristics {
+    pub isolation_level: Option<IsolationLevel>,
+    pub read_only: Option<bool>,
+    pub deferrable: Option<bool>,
+}
+
+impl TransactionCharacteristics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_isolation_level(mut self, level: IsolationLevel) -> Self {
+        self.isolation_level = Some(level);
+        self
+    }
+
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = Some(read_only);
+        self
+    }
+
+    pub fn with_deferrable(mut self, deferrable: bool) -> Self {
+        self.deferrable = Some(deferrable);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +259,10 @@ pub struct Transaction {
 
     pub isolation_level: IsolationLevel,
 
+    pub read_only: bool,
+
+    pub deferrable: bool,
+
     pub started_at: Instant,
 
     pub deferred_fk_state: DeferredFKState,
@@ -262,12 +309,32 @@ impl Transaction {
         storage: &Storage,
         isolation_level: IsolationLevel,
     ) -> Self {
+        Self::with_characteristics(
+            txn_id,
+            start_timestamp,
+            storage,
+            isolation_level,
+            false,
+            false,
+        )
+    }
+
+    pub fn with_characteristics(
+        txn_id: u64,
+        start_timestamp: u64,
+        storage: &Storage,
+        isolation_level: IsolationLevel,
+        read_only: bool,
+        deferrable: bool,
+    ) -> Self {
         Self {
             txn_id,
             snapshot: storage.clone(),
             pending_changes: Some(PendingChanges::new()),
             savepoints: Vec::new(),
             isolation_level,
+            read_only,
+            deferrable,
             started_at: Instant::now(),
             deferred_fk_state: DeferredFKState::default(),
             start_timestamp,
@@ -303,6 +370,26 @@ impl Transaction {
 
     pub fn mark_active(&mut self) {
         self.status = TransactionStatus::Active;
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
+    pub fn is_deferrable(&self) -> bool {
+        self.deferrable
+    }
+
+    pub fn set_deferrable(&mut self, deferrable: bool) {
+        self.deferrable = deferrable;
+    }
+
+    pub fn set_isolation_level(&mut self, level: IsolationLevel) {
+        self.isolation_level = level;
     }
 
     pub fn track_insert(&mut self, table_name: &str, row: Row) {
@@ -402,34 +489,16 @@ impl Transaction {
         Ok(())
     }
 
+    pub fn deferred_fk_state(&self) -> &DeferredFKState {
+        &self.deferred_fk_state
+    }
+
+    pub fn deferred_fk_state_mut(&mut self) -> &mut DeferredFKState {
+        &mut self.deferred_fk_state
+    }
+
     pub fn elapsed(&self) -> std::time::Duration {
         self.started_at.elapsed()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct SharedTransactionState {
-    version_store: Rc<RefCell<VersionStore>>,
-    global_timestamp: Rc<RefCell<u64>>,
-}
-
-impl SharedTransactionState {
-    pub fn new() -> Self {
-        Self {
-            version_store: Rc::new(RefCell::new(VersionStore::new())),
-            global_timestamp: Rc::new(RefCell::new(1)),
-        }
-    }
-
-    pub fn next_timestamp(&self) -> u64 {
-        let mut ts = self.global_timestamp.borrow_mut();
-        let current = *ts;
-        *ts += 1;
-        current
-    }
-
-    pub fn version_store(&self) -> Rc<RefCell<VersionStore>> {
-        Rc::clone(&self.version_store)
     }
 }
 
@@ -439,7 +508,6 @@ pub struct TransactionManager {
     next_txn_id: u64,
     global_timestamp: u64,
     default_isolation_level: IsolationLevel,
-    shared_state: Option<SharedTransactionState>,
     committed_txns: HashSet<u64>,
     commit_timestamps: HashMap<u64, u64>,
 }
@@ -457,32 +525,15 @@ impl TransactionManager {
             next_txn_id: 1,
             global_timestamp: 1,
             default_isolation_level: IsolationLevel::default(),
-            shared_state: None,
-            committed_txns: HashSet::new(),
-            commit_timestamps: HashMap::new(),
-        }
-    }
-
-    pub fn with_shared_state(shared_state: SharedTransactionState) -> Self {
-        Self {
-            active_transaction: None,
-            next_txn_id: 1,
-            global_timestamp: 1,
-            default_isolation_level: IsolationLevel::default(),
-            shared_state: Some(shared_state),
             committed_txns: HashSet::new(),
             commit_timestamps: HashMap::new(),
         }
     }
 
     fn next_timestamp(&mut self) -> u64 {
-        if let Some(shared) = &self.shared_state {
-            shared.next_timestamp()
-        } else {
-            let ts = self.global_timestamp;
-            self.global_timestamp += 1;
-            ts
-        }
+        let ts = self.global_timestamp;
+        self.global_timestamp += 1;
+        ts
     }
 
     pub fn is_active(&self) -> bool {
@@ -530,10 +581,6 @@ impl TransactionManager {
 
     pub fn default_isolation_level(&self) -> IsolationLevel {
         self.default_isolation_level
-    }
-
-    pub fn shared_state(&self) -> Option<SharedTransactionState> {
-        self.shared_state.clone()
     }
 
     fn no_transaction_error(operation: &str) -> yachtsql_core::error::Error {
@@ -605,6 +652,52 @@ impl TransactionManager {
         self.active_transaction = Some(ActiveTransactionContext { scope, transaction });
 
         Ok(txn_id)
+    }
+
+    pub fn begin_with_characteristics(
+        &mut self,
+        storage: &mut Storage,
+        characteristics: TransactionCharacteristics,
+        scope: TransactionScope,
+    ) -> Result<u64> {
+        if self.active_transaction.is_some() {
+            return Err(yachtsql_core::error::Error::InvalidOperation(
+                "Cannot BEGIN: transaction already active".to_string(),
+            ));
+        }
+
+        let txn_id = self.next_txn_id;
+        let start_timestamp = self.next_timestamp();
+
+        let isolation = characteristics
+            .isolation_level
+            .unwrap_or(self.default_isolation_level);
+        let read_only = characteristics.read_only.unwrap_or(false);
+        let deferrable = characteristics.deferrable.unwrap_or(false);
+
+        let transaction = Transaction::with_characteristics(
+            txn_id,
+            start_timestamp,
+            storage,
+            isolation,
+            read_only,
+            deferrable,
+        );
+
+        self.next_txn_id += 1;
+        self.active_transaction = Some(ActiveTransactionContext { scope, transaction });
+
+        Ok(txn_id)
+    }
+
+    pub fn get_current_characteristics(&self) -> Option<TransactionCharacteristics> {
+        self.active_transaction
+            .as_ref()
+            .map(|ctx| TransactionCharacteristics {
+                isolation_level: Some(ctx.transaction.isolation_level),
+                read_only: Some(ctx.transaction.read_only),
+                deferrable: Some(ctx.transaction.deferrable),
+            })
     }
 
     fn apply_deltas(&self, storage: &mut Storage, changes: &PendingChanges) -> Result<()> {

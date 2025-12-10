@@ -4,12 +4,12 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn eval_extract(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         if args.len() != 2 {
@@ -71,9 +71,11 @@ impl ProjectionWithExprExec {
                     part
                 ))),
             }
+        } else if date_val.as_interval().is_some() {
+            yachtsql_functions::interval::interval_extract(&date_val, &part_upper)
         } else {
             Err(Error::TypeMismatch {
-                expected: "DATE or TIMESTAMP".to_string(),
+                expected: "DATE, TIMESTAMP, or INTERVAL".to_string(),
                 actual: date_val.data_type().to_string(),
             })
         }

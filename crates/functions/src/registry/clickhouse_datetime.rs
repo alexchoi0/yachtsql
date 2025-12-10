@@ -11,8 +11,11 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
     register_extraction_functions(registry);
     register_truncation_functions(registry);
     register_arithmetic_functions(registry);
+    register_subtract_functions(registry);
+    register_now64_function(registry);
     register_formatting_functions(registry);
     register_relative_functions(registry);
+    register_todate_function(registry);
 }
 
 fn register_extraction_functions(registry: &mut FunctionRegistry) {
@@ -33,8 +36,13 @@ fn register_extraction_functions(registry: &mut FunctionRegistry) {
                 if let Some(d) = args[0].as_date() {
                     return Ok(Value::int64(d.year() as i64));
                 }
+                if let Some(d32) = args[0].as_date32() {
+                    if let Some(date) = d32.to_naive_date() {
+                        return Ok(Value::int64(date.year() as i64));
+                    }
+                }
                 Err(Error::TypeMismatch {
-                    expected: "TIMESTAMP or DATE".to_string(),
+                    expected: "TIMESTAMP, DATE, or DATE32".to_string(),
                     actual: args[0].data_type().to_string(),
                 })
             },
@@ -58,8 +66,13 @@ fn register_extraction_functions(registry: &mut FunctionRegistry) {
                 if let Some(d) = args[0].as_date() {
                     return Ok(Value::int64(d.month() as i64));
                 }
+                if let Some(d32) = args[0].as_date32() {
+                    if let Some(date) = d32.to_naive_date() {
+                        return Ok(Value::int64(date.month() as i64));
+                    }
+                }
                 Err(Error::TypeMismatch {
-                    expected: "TIMESTAMP or DATE".to_string(),
+                    expected: "TIMESTAMP, DATE, or DATE32".to_string(),
                     actual: args[0].data_type().to_string(),
                 })
             },
@@ -83,8 +96,13 @@ fn register_extraction_functions(registry: &mut FunctionRegistry) {
                 if let Some(d) = args[0].as_date() {
                     return Ok(Value::int64(d.day() as i64));
                 }
+                if let Some(d32) = args[0].as_date32() {
+                    if let Some(date) = d32.to_naive_date() {
+                        return Ok(Value::int64(date.day() as i64));
+                    }
+                }
                 Err(Error::TypeMismatch {
-                    expected: "TIMESTAMP or DATE".to_string(),
+                    expected: "TIMESTAMP, DATE, or DATE32".to_string(),
                     actual: args[0].data_type().to_string(),
                 })
             },
@@ -834,6 +852,239 @@ fn register_relative_functions(registry: &mut FunctionRegistry) {
                 }
                 Err(Error::TypeMismatch {
                     expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })
+            },
+        }),
+    );
+}
+
+fn register_subtract_functions(registry: &mut FunctionRegistry) {
+    registry.register_scalar(
+        "SUBTRACTYEARS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTYEARS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(years) = args[1].as_i64() {
+                        let new_year = ts.year() - years as i32;
+                        return ts
+                            .with_year(new_year)
+                            .map(Value::timestamp)
+                            .ok_or_else(|| Error::invalid_query("Date overflow in SUBTRACTYEARS"));
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTMONTHS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTMONTHS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(months) = args[1].as_i64() {
+                        return add_months_to_timestamp(&ts, -months).map(Value::timestamp);
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTWEEKS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTWEEKS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(weeks) = args[1].as_i64() {
+                        return ts
+                            .checked_sub_signed(Duration::weeks(weeks))
+                            .map(Value::timestamp)
+                            .ok_or_else(|| Error::invalid_query("Date overflow in SUBTRACTWEEKS"));
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTDAYS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTDAYS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(days) = args[1].as_i64() {
+                        return ts
+                            .checked_sub_signed(Duration::days(days))
+                            .map(Value::timestamp)
+                            .ok_or_else(|| Error::invalid_query("Date overflow in SUBTRACTDAYS"));
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTHOURS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTHOURS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(hours) = args[1].as_i64() {
+                        return ts
+                            .checked_sub_signed(Duration::hours(hours))
+                            .map(Value::timestamp)
+                            .ok_or_else(|| Error::invalid_query("Date overflow in SUBTRACTHOURS"));
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTMINUTES".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTMINUTES".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(minutes) = args[1].as_i64() {
+                        return ts
+                            .checked_sub_signed(Duration::minutes(minutes))
+                            .map(Value::timestamp)
+                            .ok_or_else(|| {
+                                Error::invalid_query("Date overflow in SUBTRACTMINUTES")
+                            });
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "SUBTRACTSECONDS".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "SUBTRACTSECONDS".to_string(),
+            arg_types: vec![DataType::Timestamp, DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    if let Some(seconds) = args[1].as_i64() {
+                        return ts
+                            .checked_sub_signed(Duration::seconds(seconds))
+                            .map(Value::timestamp)
+                            .ok_or_else(|| {
+                                Error::invalid_query("Date overflow in SUBTRACTSECONDS")
+                            });
+                    }
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP, INT64".to_string(),
+                    actual: format!("{}, {}", args[0].data_type(), args[1].data_type()),
+                })
+            },
+        }),
+    );
+}
+
+fn register_now64_function(registry: &mut FunctionRegistry) {
+    registry.register_scalar(
+        "NOW64".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "NOW64".to_string(),
+            arg_types: vec![DataType::Int64],
+            return_type: DataType::Timestamp,
+            variadic: false,
+            evaluator: |_args| Ok(Value::timestamp(Utc::now())),
+        }),
+    );
+}
+
+fn register_todate_function(registry: &mut FunctionRegistry) {
+    registry.register_scalar(
+        "TODATE".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "TODATE".to_string(),
+            arg_types: vec![DataType::Timestamp],
+            return_type: DataType::Date,
+            variadic: false,
+            evaluator: |args| {
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    return Ok(Value::date(ts.date_naive()));
+                }
+                if let Some(d) = args[0].as_date() {
+                    return Ok(Value::date(d));
+                }
+                Err(Error::TypeMismatch {
+                    expected: "TIMESTAMP or DATE".to_string(),
                     actual: args[0].data_type().to_string(),
                 })
             },

@@ -3,13 +3,22 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn eval_sha512(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
+    ) -> Result<Value> {
+        Self::eval_sha512_with_dialect(args, batch, row_idx, crate::DialectType::BigQuery)
+    }
+
+    pub(in crate::query_executor::evaluator::physical_plan) fn eval_sha512_with_dialect(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+        dialect: crate::DialectType,
     ) -> Result<Value> {
         if args.len() != 1 {
             return Err(Error::invalid_query(
@@ -18,8 +27,12 @@ impl ProjectionWithExprExec {
         }
 
         let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        let return_hex = matches!(
+            dialect,
+            crate::DialectType::PostgreSQL | crate::DialectType::ClickHouse
+        );
 
-        yachtsql_functions::scalar::eval_sha512(&val, true)
+        yachtsql_functions::scalar::eval_sha512(&val, return_hex)
     }
 }
 
@@ -31,7 +44,7 @@ mod tests {
     use super::*;
     use crate::query_executor::evaluator::physical_plan::expression::test_utils::*;
 
-    fn create_test_batch() -> RecordBatch {
+    fn create_test_batch() -> Table {
         create_batch(
             vec![("data", DataType::String)],
             vec![
@@ -48,7 +61,7 @@ mod tests {
         let args = vec![Expr::Literal(LiteralValue::String("test".to_string()))];
         let result = ProjectionWithExprExec::eval_sha512(&args, &batch, 0);
         assert!(result.is_ok());
-        assert!(result.unwrap().is_string());
+        assert!(result.unwrap().as_bytes().is_some());
     }
 
     #[test]
@@ -60,7 +73,7 @@ mod tests {
         }];
         let result = ProjectionWithExprExec::eval_sha512(&args, &batch, 0);
         assert!(result.is_ok());
-        assert!(result.unwrap().is_string());
+        assert!(result.unwrap().as_bytes().is_some());
     }
 
     #[test]

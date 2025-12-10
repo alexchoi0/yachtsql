@@ -5,12 +5,170 @@ use super::helpers::ParserHelpers;
 use crate::pattern_matcher::{PatternMatcher, TokenPattern};
 use crate::validator::{
     AlterDomainAction, CompositeTypeField, CustomStatement, DiagnosticsAssignment, DiagnosticsItem,
-    DiagnosticsScope, DomainConstraint,
+    DiagnosticsScope, DomainConstraint, SetConstraintsMode, SetConstraintsTarget,
 };
 
 pub struct CustomStatementParser;
 
 impl CustomStatementParser {
+    pub fn parse_set_constraints(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "SET") {
+            return Ok(None);
+        }
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "CONSTRAINTS") {
+            return Ok(None);
+        }
+
+        let constraints = if ParserHelpers::consume_keyword(tokens, &mut idx, "ALL") {
+            SetConstraintsTarget::All
+        } else {
+            let mut names = Vec::new();
+            loop {
+                let name = match tokens.get(idx) {
+                    Some(Token::Word(word)) => {
+                        idx += 1;
+                        word.value.clone()
+                    }
+                    _ => {
+                        if names.is_empty() {
+                            return Err(Error::parse_error(
+                                "SET CONSTRAINTS requires ALL or constraint name(s)".to_string(),
+                            ));
+                        }
+                        break;
+                    }
+                };
+                names.push(name);
+
+                if matches!(tokens.get(idx), Some(Token::Comma)) {
+                    idx += 1;
+                    continue;
+                }
+                break;
+            }
+            SetConstraintsTarget::Named(names)
+        };
+
+        let mode = if ParserHelpers::consume_keyword(tokens, &mut idx, "DEFERRED") {
+            SetConstraintsMode::Deferred
+        } else if ParserHelpers::consume_keyword(tokens, &mut idx, "IMMEDIATE") {
+            SetConstraintsMode::Immediate
+        } else {
+            return Err(Error::parse_error(
+                "SET CONSTRAINTS requires DEFERRED or IMMEDIATE".to_string(),
+            ));
+        };
+
+        if matches!(tokens.get(idx), Some(Token::SemiColon)) {
+            idx += 1;
+        }
+
+        if idx < tokens.len() {
+            return Err(Error::parse_error(
+                "Unexpected tokens after SET CONSTRAINTS statement".to_string(),
+            ));
+        }
+
+        Ok(Some(CustomStatement::SetConstraints { mode, constraints }))
+    }
+
+    pub fn parse_abort(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "ABORT") {
+            return Ok(None);
+        }
+
+        ParserHelpers::consume_keyword(tokens, &mut idx, "TRANSACTION");
+        ParserHelpers::consume_keyword(tokens, &mut idx, "WORK");
+
+        if matches!(tokens.get(idx), Some(Token::SemiColon)) {
+            idx += 1;
+        }
+
+        if idx < tokens.len() {
+            return Ok(None);
+        }
+
+        Ok(Some(CustomStatement::Abort))
+    }
+
+    pub fn parse_begin_transaction_with_deferrable(
+        tokens: &[&Token],
+    ) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "BEGIN") {
+            return Ok(None);
+        }
+
+        ParserHelpers::consume_keyword(tokens, &mut idx, "TRANSACTION");
+        ParserHelpers::consume_keyword(tokens, &mut idx, "WORK");
+
+        let mut isolation_level = None;
+        let mut read_only = None;
+        let mut deferrable = None;
+        let mut has_deferrable = false;
+
+        while idx < tokens.len() {
+            if matches!(tokens.get(idx), Some(Token::SemiColon)) {
+                idx += 1;
+                break;
+            }
+
+            if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "ISOLATION", "LEVEL") {
+                let level = Self::parse_isolation_level(tokens, &mut idx)?;
+                isolation_level = Some(level);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "READ", "ONLY") {
+                read_only = Some(true);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "READ", "WRITE") {
+                read_only = Some(false);
+            } else if ParserHelpers::consume_keyword_pair(tokens, &mut idx, "NOT", "DEFERRABLE") {
+                deferrable = Some(false);
+                has_deferrable = true;
+            } else if ParserHelpers::consume_keyword(tokens, &mut idx, "DEFERRABLE") {
+                deferrable = Some(true);
+                has_deferrable = true;
+            } else {
+                break;
+            }
+        }
+
+        if idx < tokens.len() && !matches!(tokens.get(idx), Some(Token::SemiColon)) {
+            return Ok(None);
+        }
+
+        if !has_deferrable {
+            return Ok(None);
+        }
+
+        Ok(Some(CustomStatement::BeginTransaction {
+            isolation_level,
+            read_only,
+            deferrable,
+        }))
+    }
+
+    fn parse_isolation_level(tokens: &[&Token], idx: &mut usize) -> Result<String> {
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "READ", "UNCOMMITTED") {
+            return Ok("READ UNCOMMITTED".to_string());
+        }
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "READ", "COMMITTED") {
+            return Ok("READ COMMITTED".to_string());
+        }
+        if ParserHelpers::consume_keyword_pair(tokens, idx, "REPEATABLE", "READ") {
+            return Ok("REPEATABLE READ".to_string());
+        }
+        if ParserHelpers::consume_keyword(tokens, idx, "SERIALIZABLE") {
+            return Ok("SERIALIZABLE".to_string());
+        }
+        Err(Error::parse_error(
+            "Expected isolation level after ISOLATION LEVEL".to_string(),
+        ))
+    }
+
     pub fn parse_refresh_materialized_view(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
         let pattern = vec![
             TokenPattern::Keyword("REFRESH"),
@@ -990,5 +1148,35 @@ impl CustomStatementParser {
             Some(matched) => Ok(Some(builder(&matched)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn parse_exists_table(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
+        let pattern = vec![
+            TokenPattern::Keyword("EXISTS"),
+            TokenPattern::Keyword("TABLE"),
+            TokenPattern::ObjectName,
+        ];
+
+        Self::match_and_build_custom_statement(tokens, &pattern, |matched| {
+            let name = matched
+                .first_object_name()
+                .ok_or_else(|| Error::parse_error("EXISTS TABLE requires table name"))?;
+            Ok(CustomStatement::ExistsTable { name: name.clone() })
+        })
+    }
+
+    pub fn parse_exists_database(tokens: &[&Token]) -> Result<Option<CustomStatement>> {
+        let pattern = vec![
+            TokenPattern::Keyword("EXISTS"),
+            TokenPattern::Keyword("DATABASE"),
+            TokenPattern::ObjectName,
+        ];
+
+        Self::match_and_build_custom_statement(tokens, &pattern, |matched| {
+            let name = matched
+                .first_object_name()
+                .ok_or_else(|| Error::parse_error("EXISTS DATABASE requires database name"))?;
+            Ok(CustomStatement::ExistsDatabase { name: name.clone() })
+        })
     }
 }

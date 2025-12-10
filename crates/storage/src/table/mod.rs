@@ -9,7 +9,7 @@ pub mod query_ops;
 pub mod schema_ops;
 pub mod statistics;
 
-pub use core::Table;
+pub use core::{Table, TableEngine};
 
 pub use constraints::TableConstraintOps;
 pub use indexes::TableIndexOps;

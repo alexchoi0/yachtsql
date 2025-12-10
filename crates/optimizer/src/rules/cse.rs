@@ -140,6 +140,7 @@ impl CommonSubexpressionElimination {
                 format!("tuple:({})", elem_sigs.join(","))
             }
             Expr::Grouping { column } => format!("grouping:{}", column),
+            Expr::GroupingId { columns } => format!("grouping_id:{}", columns.join(",")),
             Expr::Excluded { column } => format!("excluded:{}", column),
             Expr::WindowFunction {
                 name,
@@ -218,6 +219,13 @@ impl CommonSubexpressionElimination {
                     if *negated { "not" } else { "" },
                     Self::expr_signature(left),
                     Self::expr_signature(right)
+                )
+            }
+            Expr::Lambda { params, body } => {
+                format!(
+                    "lambda({}):{}",
+                    params.join(","),
+                    Self::expr_signature(body)
                 )
             }
         }
@@ -363,11 +371,15 @@ impl CommonSubexpressionElimination {
                 Self::count_subexpressions(left, counts);
                 Self::count_subexpressions(right, counts);
             }
+            Expr::Lambda { body, .. } => {
+                Self::count_subexpressions(body, counts);
+            }
             Expr::Column { .. }
             | Expr::Literal(_)
             | Expr::Wildcard
             | Expr::QualifiedWildcard { .. }
             | Expr::Grouping { .. }
+            | Expr::GroupingId { .. }
             | Expr::Excluded { .. } => {}
             Expr::Tuple(exprs) => {
                 for e in exprs {
@@ -384,6 +396,7 @@ impl CommonSubexpressionElimination {
             | Expr::Wildcard
             | Expr::QualifiedWildcard { .. }
             | Expr::Grouping { .. }
+            | Expr::GroupingId { .. }
             | Expr::Excluded { .. }
             | Expr::Tuple(_) => false,
 
@@ -409,7 +422,8 @@ impl CommonSubexpressionElimination {
             | Expr::ScalarSubquery { .. }
             | Expr::StructLiteral { .. }
             | Expr::StructFieldAccess { .. }
-            | Expr::IsDistinctFrom { .. } => true,
+            | Expr::IsDistinctFrom { .. }
+            | Expr::Lambda { .. } => true,
         }
     }
 
@@ -460,6 +474,28 @@ impl CommonSubexpressionElimination {
                         right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
                         on: on.clone(),
                         join_type: *join_type,
+                    })
+                } else {
+                    None
+                }
+            }
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
                     })
                 } else {
                     None
@@ -565,6 +601,7 @@ impl CommonSubexpressionElimination {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -577,6 +614,7 @@ impl CommonSubexpressionElimination {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -637,6 +675,7 @@ impl CommonSubexpressionElimination {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -756,6 +795,8 @@ mod tests {
             alias: None,
             table_name: "test".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let plan = LogicalPlan::new(scan);

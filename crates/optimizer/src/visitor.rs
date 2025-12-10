@@ -55,6 +55,7 @@ pub trait PlanRewriter {
             | PlanNode::TableValuedFunction { .. }
             | PlanNode::AlterTable { .. }
             | PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. } => Ok(None),
 
@@ -155,6 +156,29 @@ pub trait PlanRewriter {
                 }
             }
 
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let new_left = self.rewrite_plan_node(left)?;
+                let new_right = self.rewrite_plan_node(right)?;
+
+                if new_left.is_some() || new_right.is_some() {
+                    Ok(Some(PlanNode::AsOfJoin {
+                        left: Box::new(new_left.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(new_right.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+
             PlanNode::LateralJoin {
                 left,
                 right,
@@ -236,6 +260,7 @@ pub trait PlanRewriter {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let new_cte_plan = self.rewrite_plan_node(cte_plan)?;
                 let new_input = self.rewrite_plan_node(input)?;
@@ -250,6 +275,7 @@ pub trait PlanRewriter {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     }))
                 } else {
                     Ok(None)

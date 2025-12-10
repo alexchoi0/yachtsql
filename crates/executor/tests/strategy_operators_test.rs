@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use yachtsql_core::types::{DataType, Value};
-use yachtsql_executor::RecordBatch;
+use yachtsql_executor::Table;
 use yachtsql_executor::query_executor::evaluator::physical_plan::{
     AggregateStrategy, ExecutionPlan, ExecutionStatistics, JoinStrategy, MergeJoinExec,
     SortAggregateExec, SortExec,
@@ -14,12 +14,12 @@ use yachtsql_storage::{Column, Field, Schema};
 #[derive(Debug)]
 struct MockDataExec {
     schema: Schema,
-    data: Vec<RecordBatch>,
+    data: Vec<Table>,
     stats: ExecutionStatistics,
 }
 
 impl MockDataExec {
-    fn new(schema: Schema, data: Vec<RecordBatch>) -> Self {
+    fn new(schema: Schema, data: Vec<Table>) -> Self {
         Self {
             schema,
             data,
@@ -47,7 +47,7 @@ impl ExecutionPlan for MockDataExec {
         &self.schema
     }
 
-    fn execute(&self) -> yachtsql_core::error::Result<Vec<RecordBatch>> {
+    fn execute(&self) -> yachtsql_core::error::Result<Vec<Table>> {
         Ok(self.data.clone())
     }
 
@@ -64,7 +64,7 @@ impl ExecutionPlan for MockDataExec {
     }
 }
 
-fn create_test_batch(schema: Schema, values: Vec<Vec<Value>>) -> RecordBatch {
+fn create_test_batch(schema: Schema, values: Vec<Vec<Value>>) -> Table {
     let num_rows = values.len();
     let num_cols = schema.fields().len();
 
@@ -80,7 +80,7 @@ fn create_test_batch(schema: Schema, values: Vec<Vec<Value>>) -> RecordBatch {
         columns.push(column);
     }
 
-    RecordBatch::new(schema, columns).unwrap()
+    Table::new(schema, columns).unwrap()
 }
 
 #[test]
@@ -384,6 +384,7 @@ fn test_sort_exec_sets_is_sorted_flag() {
         asc: Some(true),
         nulls_first: Some(false),
         collation: None,
+        with_fill: None,
     }];
 
     let sort_exec = SortExec::new(input, order_by).unwrap();

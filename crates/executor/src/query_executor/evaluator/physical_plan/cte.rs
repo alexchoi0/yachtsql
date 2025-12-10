@@ -2,10 +2,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use yachtsql_core::error::Result;
-use yachtsql_storage::Schema;
+use yachtsql_storage::{Column, Schema};
 
 use super::ExecutionPlan;
-use crate::RecordBatch;
+use crate::Table;
 
 #[derive(Debug)]
 pub struct CteExec {
@@ -13,7 +13,7 @@ pub struct CteExec {
     input: Rc<dyn ExecutionPlan>,
     schema: Schema,
     materialized: bool,
-    cached_result: RefCell<Option<Vec<RecordBatch>>>,
+    cached_result: RefCell<Option<Vec<Table>>>,
 }
 
 impl CteExec {
@@ -33,7 +33,7 @@ impl CteExec {
         }
     }
 
-    pub fn execute_cte(&self) -> Result<Vec<RecordBatch>> {
+    pub fn execute_cte(&self) -> Result<Vec<Table>> {
         if self.materialized {
             let mut cache = self.cached_result.borrow_mut();
             if let Some(ref cached) = *cache {
@@ -54,7 +54,7 @@ impl ExecutionPlan for CteExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         let _ = self.execute_cte()?;
         self.input.execute()
     }
@@ -95,8 +95,25 @@ impl ExecutionPlan for SubqueryScanExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
-        self.subquery.execute()
+    fn execute(&self) -> Result<Vec<Table>> {
+        let results = self.subquery.execute()?;
+        let subquery_schema = self.subquery.schema();
+
+        if subquery_schema == &self.schema {
+            return Ok(results);
+        }
+
+        let mut renamed_results = Vec::with_capacity(results.len());
+        for table in results {
+            let column_table = table.to_column_format()?;
+            let columns: Vec<Column> = column_table
+                .columns()
+                .map(|cols| cols.to_vec())
+                .unwrap_or_default();
+            let renamed = Table::new(self.schema.clone(), columns)?;
+            renamed_results.push(renamed);
+        }
+        Ok(renamed_results)
     }
 
     fn children(&self) -> Vec<Rc<dyn ExecutionPlan>> {
@@ -124,9 +141,9 @@ impl ExecutionPlan for EmptyRelationExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         let one_empty_row = yachtsql_storage::Row::from_values(vec![]);
-        Ok(vec![RecordBatch::from_rows(
+        Ok(vec![Table::from_rows(
             self.schema.clone(),
             vec![one_empty_row],
         )?])
@@ -144,11 +161,11 @@ impl ExecutionPlan for EmptyRelationExec {
 #[derive(Debug)]
 pub struct MaterializedViewScanExec {
     schema: Schema,
-    data: RecordBatch,
+    data: Table,
 }
 
 impl MaterializedViewScanExec {
-    pub fn new(schema: Schema, data: RecordBatch) -> Self {
+    pub fn new(schema: Schema, data: Table) -> Self {
         Self { schema, data }
     }
 }
@@ -158,7 +175,7 @@ impl ExecutionPlan for MaterializedViewScanExec {
         &self.schema
     }
 
-    fn execute(&self) -> Result<Vec<RecordBatch>> {
+    fn execute(&self) -> Result<Vec<Table>> {
         Ok(vec![self.data.to_column_format()?])
     }
 

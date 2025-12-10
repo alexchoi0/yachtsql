@@ -34,9 +34,21 @@ impl ProjectionWithExprExec {
                 | CastDataType::Array(_)
                 | CastDataType::MacAddr
                 | CastDataType::MacAddr8
+                | CastDataType::Inet
+                | CastDataType::Cidr
                 | CastDataType::Hstore
                 | CastDataType::Uuid
-                | CastDataType::Interval => {
+                | CastDataType::Interval
+                | CastDataType::Int4Range
+                | CastDataType::Int8Range
+                | CastDataType::NumRange
+                | CastDataType::TsRange
+                | CastDataType::TsTzRange
+                | CastDataType::DateRange
+                | CastDataType::Point
+                | CastDataType::PgBox
+                | CastDataType::Circle
+                | CastDataType::Vector(_) => {
                     return crate::query_executor::execution::perform_cast(&value, target_type);
                 }
                 _ => {}
@@ -68,6 +80,15 @@ impl ProjectionWithExprExec {
             }
             if let Some(c) = value.as_circle() {
                 return Ok(Value::string(c.to_string()));
+            }
+            if let Some(ipv4) = value.as_ipv4() {
+                return Ok(Value::string(ipv4.to_string()));
+            }
+            if let Some(ipv6) = value.as_ipv6() {
+                return Ok(Value::string(ipv6.to_string()));
+            }
+            if let Some(d32) = value.as_date32() {
+                return Ok(Value::string(d32.to_string()));
             }
         }
 
@@ -164,8 +185,19 @@ impl ProjectionWithExprExec {
                     "HSTORE" => CastDataType::Hstore,
                     "MACADDR" => CastDataType::MacAddr,
                     "MACADDR8" => CastDataType::MacAddr8,
+                    "INET" => CastDataType::Inet,
+                    "CIDR" => CastDataType::Cidr,
                     "INTERVAL" => CastDataType::Interval,
                     "UUID" => CastDataType::Uuid,
+                    "INT4RANGE" => CastDataType::Int4Range,
+                    "INT8RANGE" => CastDataType::Int8Range,
+                    "NUMRANGE" => CastDataType::NumRange,
+                    "TSRANGE" => CastDataType::TsRange,
+                    "TSTZRANGE" => CastDataType::TsTzRange,
+                    "DATERANGE" => CastDataType::DateRange,
+                    "POINT" => CastDataType::Point,
+                    "BOX" => CastDataType::PgBox,
+                    "CIRCLE" => CastDataType::Circle,
                     _ => {
                         if let Some(s) = value.as_str() {
                             return Ok(Value::string(s.to_string()));

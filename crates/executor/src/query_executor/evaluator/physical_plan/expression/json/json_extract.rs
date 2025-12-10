@@ -3,12 +3,12 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_json_extract(
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         if args.len() != 2 {
@@ -34,7 +34,7 @@ impl ProjectionWithExprExec {
             .as_str()
             .ok_or_else(|| Error::invalid_query("JSON path must be a string"))?;
 
-        yachtsql_functions::json::json_extract(&left_val, path_str)
+        yachtsql_functions::json::json_extract_json(&left_val, path_str)
     }
 }
 

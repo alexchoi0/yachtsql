@@ -41,6 +41,7 @@ impl PhysicalPlanner {
                 table_name,
                 alias,
                 projection,
+                ..
             } => self.create_table_scan(table_name, alias.as_deref(), projection.as_deref()),
 
 
@@ -77,6 +78,7 @@ impl PhysicalPlanner {
             PlanNode::Unnest {
                 array_expr,
                 alias: _,
+                column_alias: _,
                 with_offset,
                 offset_alias: _,
             } => self.create_unnest(array_expr, *with_offset),
@@ -119,6 +121,11 @@ impl PhysicalPlanner {
                 on: _,
             } => self.create_lateral_join(left, right, *join_type),
 
+            PlanNode::AsOfJoin { .. } => Err(Error::unsupported_feature(
+                "AsOfJoin requires the LogicalToPhysicalPlanner (use execute_sql instead)"
+                    .to_string(),
+            )),
+
             PlanNode::Union { left, right, all } => self.create_union(left, right, *all),
 
             PlanNode::Intersect { left, right, all } => self.create_intersect(left, right, *all),
@@ -132,6 +139,7 @@ impl PhysicalPlanner {
                 recursive: _,
                 use_union_all: _,
                 materialization_hint,
+                column_aliases: _,
             } => self.create_cte(cte_plan, input, materialization_hint),
 
             PlanNode::SubqueryScan { subquery, alias: _ } => self.create_subquery_scan(subquery),
@@ -174,6 +182,12 @@ impl PhysicalPlanner {
             PlanNode::EmptyRelation => {
                 let schema = Schema::from_fields(vec![]);
                 Ok(Rc::new(EmptyRelationExec::new(schema)))
+            }
+
+            PlanNode::Values { rows } => {
+                use super::physical_plan::{infer_values_schema, ValuesExec};
+                let schema = infer_values_schema(rows);
+                Ok(Rc::new(ValuesExec::new(schema, rows.clone())))
             }
 
             PlanNode::TableSample {

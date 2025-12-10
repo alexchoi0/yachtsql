@@ -21,25 +21,32 @@ use crate::aggregate::boolean_bitwise::{
 use crate::aggregate::clickhouse::{
     AnyFunction, AnyHeavyFunction, AnyLastFunction, ArgMaxFunction, ArgMinFunction,
     ArrayFilterFunction, ArrayFlattenFunction, ArrayMapFunction, ArrayReduceFunction,
-    AvgArrayFunction, AvgIfFunction, BitmapAndCardinalityFunction, BitmapCardinalityFunction,
+    AvgArrayFunction, AvgDistinctFunction, AvgIfFunction, AvgMapFunction, AvgMergeFunction,
+    AvgStateFunction, BitmapAndCardinalityFunction, BitmapCardinalityFunction,
     BitmapOrCardinalityFunction, BoundingRatioFunction, CategoricalInformationValueFunction,
-    ContingencyFunction, CountEqualFunction, CramersVFunction, DeltaSumFunction,
-    DeltaSumTimestampFunction, EntropyFunction, ExponentialMovingAverageFunction,
-    GroupArrayFunction, GroupArrayInsertAtFunction, GroupArrayMovingAvgFunction,
-    GroupArrayMovingSumFunction, GroupArraySampleFunction, GroupBitAndFunction, GroupBitOrFunction,
-    GroupBitXorFunction, GroupBitmapAndFunction, GroupBitmapFunction, GroupBitmapOrFunction,
-    GroupBitmapXorFunction, GroupConcatFunction, GroupUniqArrayFunction, IntervalLengthSumFunction,
-    MannWhitneyUTestFunction, MaxArrayFunction, MaxIfFunction, MaxMapFunction, MinArrayFunction,
-    MinIfFunction, MinMapFunction, QuantileBFloat16Function, QuantileDeterministicFunction,
-    QuantileExactFunction, QuantileExactWeightedFunction, QuantileFunction,
-    QuantileTDigestFunction, QuantileTDigestWeightedFunction, QuantileTimingFunction,
-    QuantileTimingWeightedFunction, QuantilesExactFunction, QuantilesFunction,
-    QuantilesTDigestFunction, QuantilesTimingFunction, RankCorrFunction, RetentionFunction,
-    SequenceCountFunction, SequenceMatchFunction, SimpleLinearRegressionFunction,
-    StudentTTestFunction, SumArrayFunction, SumIfFunction, SumMapFunction, SumWithOverflowFunction,
+    ContingencyFunction, CountEqualFunction, CountMergeFunction, CountStateFunction,
+    CramersVFunction, DeltaSumFunction, DeltaSumTimestampFunction, EntropyFunction,
+    ExponentialMovingAverageFunction, GroupArrayFunction, GroupArrayInsertAtFunction,
+    GroupArrayIntersectFunction, GroupArrayLastFunction, GroupArrayMovingAvgFunction,
+    GroupArrayMovingSumFunction, GroupArraySampleFunction, GroupArraySortedFunction,
+    GroupBitAndFunction, GroupBitOrFunction, GroupBitXorFunction, GroupBitmapAndFunction,
+    GroupBitmapFunction, GroupBitmapOrFunction, GroupBitmapXorFunction, GroupConcatFunction,
+    GroupUniqArrayFunction, HistogramFunction, IntervalLengthSumFunction, MannWhitneyUTestFunction,
+    MaxArrayFunction, MaxIfFunction, MaxMapFunction, MaxMergeFunction, MaxStateFunction,
+    MinArrayFunction, MinIfFunction, MinMapFunction, MinMergeFunction, MinStateFunction,
+    QuantileBFloat16Function, QuantileBFloat16WeightedFunction, QuantileDDFunction,
+    QuantileDeterministicFunction, QuantileExactFunction, QuantileExactHighFunction,
+    QuantileExactLowFunction, QuantileExactWeightedFunction, QuantileFunction, QuantileGKFunction,
+    QuantileInterpolatedWeightedFunction, QuantileTDigestFunction, QuantileTDigestWeightedFunction,
+    QuantileTimingFunction, QuantileTimingWeightedFunction, QuantilesExactFunction,
+    QuantilesFunction, QuantilesTDigestFunction, QuantilesTimingFunction, RankCorrFunction,
+    RetentionFunction, SequenceCountFunction, SequenceMatchFunction,
+    SimpleLinearRegressionFunction, StudentTTestFunction, SumArrayFunction, SumDistinctFunction,
+    SumIfFunction, SumMapFunction, SumMergeFunction, SumStateFunction, SumWithOverflowFunction,
     TheilUFunction, TopKFunction, TopKWeightedFunction, UniqCombined64Function,
-    UniqCombinedFunction, UniqExactFunction, UniqFunction, UniqHll12Function,
-    UniqThetaSketchFunction, UniqUpToFunction, WelchTTestFunction, WindowFunnelFunction,
+    UniqCombinedFunction, UniqExactFunction, UniqFunction, UniqHll12Function, UniqMergeFunction,
+    UniqStateFunction, UniqThetaSketchFunction, UniqUpToFunction, WelchTTestFunction,
+    WindowFunnelFunction,
 };
 use crate::aggregate::conditional::CountIfFunction;
 use crate::aggregate::json_agg::{
@@ -52,9 +59,10 @@ use crate::aggregate::postgresql::{
     RegrSxyFunction, RegrSyyFunction,
 };
 use crate::aggregate::statistical::{
-    AvgFunction, CorrFunction, CountFunction, CovarPopFunction, CovarSampFunction, MaxFunction,
-    MedianFunction, MinFunction, ModeFunction, RegrInterceptFunction, RegrR2Function,
-    RegrSlopeFunction, StddevFunction, StddevPopFunction, StddevSampFunction, SumFunction,
+    AvgFunction, AvgWeightedFunction, CorrFunction, CountFunction, CovarPopFunction,
+    CovarSampFunction, KurtPopFunction, KurtSampFunction, MaxFunction, MedianFunction, MinFunction,
+    ModeFunction, RegrInterceptFunction, RegrR2Function, RegrSlopeFunction, SkewPopFunction,
+    SkewSampFunction, StddevFunction, StddevPopFunction, StddevSampFunction, SumFunction,
     VarPopFunction, VarSampFunction, VarianceFunction,
 };
 use crate::aggregate::string_agg::{ListAggFunction, StringAggFunction};
@@ -91,11 +99,28 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
         Rc::new(RegrSlopeFunction),
         Rc::new(RegrInterceptFunction),
         Rc::new(RegrR2Function),
+        Rc::new(SkewPopFunction),
+        Rc::new(SkewSampFunction),
+        Rc::new(KurtPopFunction),
+        Rc::new(KurtSampFunction),
+        Rc::new(AvgWeightedFunction),
     ];
 
     for func in statistical_functions {
         registry.register_aggregate(func.name().to_string(), func);
     }
+
+    registry.register_aggregate("STDDEVPOP".to_string(), Rc::new(StddevPopFunction));
+    registry.register_aggregate("STDDEVSAMP".to_string(), Rc::new(StddevSampFunction));
+    registry.register_aggregate("VARPOP".to_string(), Rc::new(VarPopFunction));
+    registry.register_aggregate("VARSAMP".to_string(), Rc::new(VarSampFunction));
+    registry.register_aggregate("COVARPOP".to_string(), Rc::new(CovarPopFunction));
+    registry.register_aggregate("COVARSAMP".to_string(), Rc::new(CovarSampFunction));
+    registry.register_aggregate("SKEWPOP".to_string(), Rc::new(SkewPopFunction));
+    registry.register_aggregate("SKEWSAMP".to_string(), Rc::new(SkewSampFunction));
+    registry.register_aggregate("KURTPOP".to_string(), Rc::new(KurtPopFunction));
+    registry.register_aggregate("KURTSAMP".to_string(), Rc::new(KurtSampFunction));
+    registry.register_aggregate("AVGWEIGHTED".to_string(), Rc::new(AvgWeightedFunction));
 
     registry.register_aggregate("LISTAGG".to_string(), Rc::new(ListAggFunction::new()));
     registry.register_aggregate(
@@ -300,4 +325,183 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
     for func in window_functions {
         registry.register_aggregate(func.name().to_string(), func);
     }
+
+    registry.register_aggregate(
+        "GROUPARRAYSAMPLE".to_string(),
+        Rc::new(GroupArraySampleFunction::default()),
+    );
+    registry.register_aggregate(
+        "GROUPARRAYSORTED".to_string(),
+        Rc::new(GroupArraySortedFunction::default()),
+    );
+    registry.register_aggregate(
+        "GROUPARRAYINSERTAT".to_string(),
+        Rc::new(GroupArrayInsertAtFunction),
+    );
+    registry.register_aggregate(
+        "GROUPARRAYMOVINGAVG".to_string(),
+        Rc::new(GroupArrayMovingAvgFunction::default()),
+    );
+    registry.register_aggregate(
+        "GROUPARRAYMOVINGSUM".to_string(),
+        Rc::new(GroupArrayMovingSumFunction::default()),
+    );
+    registry.register_aggregate(
+        "GROUPUNIQARRAY".to_string(),
+        Rc::new(GroupUniqArrayFunction),
+    );
+    registry.register_aggregate(
+        "GROUPARRAYLAST".to_string(),
+        Rc::new(GroupArrayLastFunction::default()),
+    );
+    registry.register_aggregate("GROUPBITAND".to_string(), Rc::new(GroupBitAndFunction));
+    registry.register_aggregate("GROUPBITOR".to_string(), Rc::new(GroupBitOrFunction));
+    registry.register_aggregate("GROUPBITXOR".to_string(), Rc::new(GroupBitXorFunction));
+    registry.register_aggregate("SUMMAP".to_string(), Rc::new(SumMapFunction));
+    registry.register_aggregate("MINMAP".to_string(), Rc::new(MinMapFunction));
+    registry.register_aggregate("MAXMAP".to_string(), Rc::new(MaxMapFunction));
+    registry.register_aggregate("AVGMAP".to_string(), Rc::new(AvgMapFunction));
+    registry.register_aggregate(
+        "GROUPARRAYINTERSECT".to_string(),
+        Rc::new(GroupArrayIntersectFunction),
+    );
+    registry.register_aggregate(
+        "GROUPCONCAT".to_string(),
+        Rc::new(GroupConcatFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEEXACTLOW".to_string(),
+        Rc::new(QuantileExactLowFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEEXACTHIGH".to_string(),
+        Rc::new(QuantileExactHighFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEDD".to_string(),
+        Rc::new(QuantileDDFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEGK".to_string(),
+        Rc::new(QuantileGKFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEINTERPOLATEDWEIGHTED".to_string(),
+        Rc::new(QuantileInterpolatedWeightedFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEBFLOAT16WEIGHTED".to_string(),
+        Rc::new(QuantileBFloat16WeightedFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEEXACTWEIGHTED".to_string(),
+        Rc::new(QuantileExactWeightedFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILETIMINGWEIGHTED".to_string(),
+        Rc::new(QuantileTimingWeightedFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILETDIGESTWEIGHTED".to_string(),
+        Rc::new(QuantileTDigestWeightedFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEDETERMINISTIC".to_string(),
+        Rc::new(QuantileDeterministicFunction::default()),
+    );
+    registry.register_aggregate(
+        "QUANTILEBFLOAT16".to_string(),
+        Rc::new(QuantileBFloat16Function::default()),
+    );
+    registry.register_aggregate("UNIQUPTO".to_string(), Rc::new(UniqUpToFunction::default()));
+    registry.register_aggregate(
+        "TOPKWEIGHTED".to_string(),
+        Rc::new(TopKWeightedFunction::default()),
+    );
+    registry.register_aggregate("UNIQTHETA".to_string(), Rc::new(UniqThetaSketchFunction));
+    registry.register_aggregate(
+        "HISTOGRAM".to_string(),
+        Rc::new(HistogramFunction::default()),
+    );
+    registry.register_aggregate("SUMDISTINCT".to_string(), Rc::new(SumDistinctFunction));
+    registry.register_aggregate("AVGDISTINCT".to_string(), Rc::new(AvgDistinctFunction));
+
+    registry.register_aggregate("SUMIF".to_string(), Rc::new(SumIfFunction));
+    registry.register_aggregate("AVGIF".to_string(), Rc::new(AvgIfFunction));
+    registry.register_aggregate("MINIF".to_string(), Rc::new(MinIfFunction));
+    registry.register_aggregate("MAXIF".to_string(), Rc::new(MaxIfFunction));
+    registry.register_aggregate(
+        "DELTASUMTIMESTAMP".to_string(),
+        Rc::new(DeltaSumTimestampFunction),
+    );
+    registry.register_aggregate("DELTASUM".to_string(), Rc::new(DeltaSumFunction));
+    registry.register_aggregate(
+        "INTERVALLENGTHSUM".to_string(),
+        Rc::new(IntervalLengthSumFunction),
+    );
+    registry.register_aggregate(
+        "WINDOWFUNNEL".to_string(),
+        Rc::new(WindowFunnelFunction::default()),
+    );
+    registry.register_aggregate(
+        "SEQUENCEMATCH".to_string(),
+        Rc::new(SequenceMatchFunction::default()),
+    );
+    registry.register_aggregate(
+        "SEQUENCECOUNT".to_string(),
+        Rc::new(SequenceCountFunction::default()),
+    );
+    registry.register_aggregate("ARGMIN".to_string(), Rc::new(ArgMinFunction));
+    registry.register_aggregate("ARGMAX".to_string(), Rc::new(ArgMaxFunction));
+    registry.register_aggregate("RANKCORR".to_string(), Rc::new(RankCorrFunction));
+    registry.register_aggregate("ANYHEAVY".to_string(), Rc::new(AnyHeavyFunction));
+    registry.register_aggregate("ANYLAST".to_string(), Rc::new(AnyLastFunction));
+    registry.register_aggregate("RETENTION".to_string(), Rc::new(RetentionFunction));
+    registry.register_aggregate(
+        "EXPONENTIALMOVINGAVERAGE".to_string(),
+        Rc::new(ExponentialMovingAverageFunction::default()),
+    );
+    registry.register_aggregate(
+        "SIMPLELINEARREGRESSION".to_string(),
+        Rc::new(SimpleLinearRegressionFunction),
+    );
+    registry.register_aggregate(
+        "MANNWHITNEYUTEST".to_string(),
+        Rc::new(MannWhitneyUTestFunction),
+    );
+    registry.register_aggregate("STUDENTTTEST".to_string(), Rc::new(StudentTTestFunction));
+    registry.register_aggregate("WELCHTTEST".to_string(), Rc::new(WelchTTestFunction));
+    registry.register_aggregate("CRAMERSV".to_string(), Rc::new(CramersVFunction));
+    registry.register_aggregate("CONTINGENCY".to_string(), Rc::new(ContingencyFunction));
+    registry.register_aggregate("THEILSU".to_string(), Rc::new(TheilUFunction));
+    registry.register_aggregate(
+        "CATEGORICALINFORMATIONVALUE".to_string(),
+        Rc::new(CategoricalInformationValueFunction),
+    );
+    registry.register_aggregate(
+        "SUMWITHOVERFLOW".to_string(),
+        Rc::new(SumWithOverflowFunction),
+    );
+    registry.register_aggregate("SUMARRAY".to_string(), Rc::new(SumArrayFunction));
+    registry.register_aggregate("AVGARRAY".to_string(), Rc::new(AvgArrayFunction));
+    registry.register_aggregate("MINARRAY".to_string(), Rc::new(MinArrayFunction));
+    registry.register_aggregate("MAXARRAY".to_string(), Rc::new(MaxArrayFunction));
+    registry.register_aggregate("UNIQHLL12".to_string(), Rc::new(UniqHll12Function));
+    registry.register_aggregate("UNIQCOMBINED".to_string(), Rc::new(UniqCombinedFunction));
+    registry.register_aggregate(
+        "UNIQCOMBINED64".to_string(),
+        Rc::new(UniqCombined64Function),
+    );
+    registry.register_aggregate("SUMSTATE".to_string(), Rc::new(SumStateFunction));
+    registry.register_aggregate("SUMMERGE".to_string(), Rc::new(SumMergeFunction));
+    registry.register_aggregate("AVGSTATE".to_string(), Rc::new(AvgStateFunction));
+    registry.register_aggregate("AVGMERGE".to_string(), Rc::new(AvgMergeFunction));
+    registry.register_aggregate("COUNTSTATE".to_string(), Rc::new(CountStateFunction));
+    registry.register_aggregate("COUNTMERGE".to_string(), Rc::new(CountMergeFunction));
+    registry.register_aggregate("MINSTATE".to_string(), Rc::new(MinStateFunction));
+    registry.register_aggregate("MINMERGE".to_string(), Rc::new(MinMergeFunction));
+    registry.register_aggregate("MAXSTATE".to_string(), Rc::new(MaxStateFunction));
+    registry.register_aggregate("MAXMERGE".to_string(), Rc::new(MaxMergeFunction));
+    registry.register_aggregate("UNIQSTATE".to_string(), Rc::new(UniqStateFunction));
+    registry.register_aggregate("UNIQMERGE".to_string(), Rc::new(UniqMergeFunction));
 }

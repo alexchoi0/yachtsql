@@ -1,11 +1,16 @@
+mod aes_encrypt;
+mod blake3;
 mod crc32;
 mod farm_fingerprint;
 mod from_base64;
 mod from_hex;
 mod md5;
 mod net_functions;
+mod non_crypto_hash;
 mod sha1;
+mod sha224;
 mod sha256;
+mod sha384;
 mod sha512;
 mod to_base64;
 mod to_hex;
@@ -15,20 +20,24 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(super) fn evaluate_crypto_hash_network_function(
         name: &str,
         args: &[Expr],
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
+        dialect: crate::DialectType,
     ) -> Result<Value> {
         match name {
-            "MD5" => Self::eval_md5(args, batch, row_idx),
-            "SHA1" => Self::eval_sha1(args, batch, row_idx),
-            "SHA256" => Self::eval_sha256(args, batch, row_idx),
-            "SHA512" => Self::eval_sha512(args, batch, row_idx),
+            "MD5" => Self::eval_md5_with_dialect(args, batch, row_idx, dialect),
+            "SHA1" => Self::eval_sha1_with_dialect(args, batch, row_idx, dialect),
+            "SHA224" => Self::eval_sha224_with_dialect(args, batch, row_idx, dialect),
+            "SHA256" => Self::eval_sha256_with_dialect(args, batch, row_idx, dialect),
+            "SHA384" => Self::eval_sha384_with_dialect(args, batch, row_idx, dialect),
+            "SHA512" => Self::eval_sha512_with_dialect(args, batch, row_idx, dialect),
+            "BLAKE3" => Self::eval_blake3_with_dialect(args, batch, row_idx, dialect),
             "FARM_FINGERPRINT" => Self::eval_farm_fingerprint(args, batch, row_idx),
             "TO_HEX" => Self::eval_to_hex(args, batch, row_idx),
             "FROM_HEX" => Self::eval_from_hex(args, batch, row_idx),
@@ -40,6 +49,25 @@ impl ProjectionWithExprExec {
             "DECODE" => Self::eval_pgcrypto_decode(args, batch, row_idx),
             "CRC32" => Self::eval_crc32(args, batch, row_idx),
             "CRC32C" => Self::eval_crc32c(args, batch, row_idx),
+            "XXHASH32" => Self::eval_xxhash32(args, batch, row_idx),
+            "XXHASH64" => Self::eval_xxhash64(args, batch, row_idx),
+            "CITYHASH64" => Self::eval_cityhash64(args, batch, row_idx),
+            "SIPHASH64" => Self::eval_siphash64(args, batch, row_idx),
+            "MURMURHASH2_32" => Self::eval_murmurhash2_32(args, batch, row_idx),
+            "MURMURHASH2_64" => Self::eval_murmurhash2_64(args, batch, row_idx),
+            "MURMURHASH3_32" => Self::eval_murmurhash3_32(args, batch, row_idx),
+            "MURMURHASH3_64" => Self::eval_murmurhash3_64(args, batch, row_idx),
+            "MURMURHASH3_128" => Self::eval_murmurhash3_128(args, batch, row_idx),
+            "JAVAHASH" => Self::eval_javahash(args, batch, row_idx),
+            "HALFMD5" => Self::eval_halfmd5(args, batch, row_idx),
+            "FARMHASH64" => Self::eval_farmhash64(args, batch, row_idx),
+            "METROHASH64" => Self::eval_metrohash64(args, batch, row_idx),
+            "ENCRYPT" => Self::eval_encrypt(args, batch, row_idx),
+            "DECRYPT" => Self::eval_decrypt(args, batch, row_idx),
+            "AES_ENCRYPT_MYSQL" => Self::eval_aes_encrypt_mysql(args, batch, row_idx),
+            "AES_DECRYPT_MYSQL" => Self::eval_aes_decrypt_mysql(args, batch, row_idx),
+            "BASE64URLENCODE" => Self::eval_base64_url_encode(args, batch, row_idx),
+            "BASE64URLDECODE" => Self::eval_base64_url_decode(args, batch, row_idx),
             name if name.starts_with("NET.") => Self::eval_net_function(name, args, batch, row_idx),
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown crypto/hash/network function: {}",
@@ -48,7 +76,7 @@ impl ProjectionWithExprExec {
         }
     }
 
-    fn eval_gen_random_bytes(args: &[Expr], batch: &RecordBatch, row_idx: usize) -> Result<Value> {
+    fn eval_gen_random_bytes(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
         if args.len() != 1 {
             return Err(Error::invalid_query("GEN_RANDOM_BYTES requires 1 argument"));
         }
@@ -67,7 +95,7 @@ impl ProjectionWithExprExec {
         Ok(Value::bytes(bytes))
     }
 
-    fn eval_digest(args: &[Expr], batch: &RecordBatch, row_idx: usize) -> Result<Value> {
+    fn eval_digest(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
         if args.len() != 2 {
             return Err(Error::invalid_query("DIGEST requires 2 arguments"));
         }
@@ -90,7 +118,7 @@ impl ProjectionWithExprExec {
         }
     }
 
-    fn eval_pgcrypto_encode(args: &[Expr], batch: &RecordBatch, row_idx: usize) -> Result<Value> {
+    fn eval_pgcrypto_encode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
         if args.len() != 2 {
             return Err(Error::invalid_query("ENCODE requires 2 arguments"));
         }
@@ -121,7 +149,7 @@ impl ProjectionWithExprExec {
         Ok(Value::string(result))
     }
 
-    fn eval_pgcrypto_decode(args: &[Expr], batch: &RecordBatch, row_idx: usize) -> Result<Value> {
+    fn eval_pgcrypto_decode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
         if args.len() != 2 {
             return Err(Error::invalid_query("DECODE requires 2 arguments"));
         }
@@ -152,5 +180,45 @@ impl ProjectionWithExprExec {
             }
         };
         Ok(Value::bytes(result))
+    }
+
+    fn eval_base64_url_encode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::invalid_query("base64URLEncode requires 1 argument"));
+        }
+        let data_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if data_val.is_null() {
+            return Ok(Value::null());
+        }
+        let data = if let Some(s) = data_val.as_str() {
+            s.as_bytes().to_vec()
+        } else if let Some(b) = data_val.as_bytes() {
+            b.to_vec()
+        } else {
+            return Err(Error::invalid_query(
+                "base64URLEncode: argument must be a string or bytes",
+            ));
+        };
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE, &data);
+        Ok(Value::string(encoded))
+    }
+
+    fn eval_base64_url_decode(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::invalid_query("base64URLDecode requires 1 argument"));
+        }
+        let encoded_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if encoded_val.is_null() {
+            return Ok(Value::null());
+        }
+        let encoded = encoded_val
+            .as_str()
+            .ok_or_else(|| Error::invalid_query("base64URLDecode: argument must be a string"))?;
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, encoded)
+            .map_err(|e| Error::invalid_query(format!("base64URLDecode: {}", e)))?;
+        match String::from_utf8(decoded.clone()) {
+            Ok(s) => Ok(Value::string(s)),
+            Err(_) => Ok(Value::bytes(decoded)),
+        }
     }
 }

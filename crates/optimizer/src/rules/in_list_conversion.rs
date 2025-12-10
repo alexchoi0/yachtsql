@@ -122,6 +122,7 @@ impl InListConversion {
                             asc: o.asc,
                             nulls_first: o.nulls_first,
                             collation: o.collation.clone(),
+                            with_fill: o.with_fill.clone(),
                         })
                         .collect()
                 });
@@ -214,6 +215,28 @@ impl InListConversion {
                         right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
                         on: on.clone(),
                         join_type: *join_type,
+                    })
+                } else {
+                    None
+                }
+            }
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
                     })
                 } else {
                     None
@@ -362,6 +385,7 @@ impl InListConversion {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -374,6 +398,7 @@ impl InListConversion {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -434,6 +459,7 @@ impl InListConversion {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -536,6 +562,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {

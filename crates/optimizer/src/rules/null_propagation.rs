@@ -104,7 +104,10 @@ impl NullPropagation {
                         | BinaryOp::BitwiseAnd
                         | BinaryOp::BitwiseOr
                         | BinaryOp::BitwiseXor
-                        | BinaryOp::Concat => return Expr::Literal(LiteralValue::Null),
+                        | BinaryOp::ShiftLeft
+                        | BinaryOp::ShiftRight
+                        | BinaryOp::Concat
+                        | BinaryOp::HashMinus => return Expr::Literal(LiteralValue::Null),
 
                         BinaryOp::Equal
                         | BinaryOp::NotEqual
@@ -131,7 +134,15 @@ impl NullPropagation {
                         | BinaryOp::GeometricDistance
                         | BinaryOp::GeometricContains
                         | BinaryOp::GeometricContainedBy
-                        | BinaryOp::GeometricOverlap => return Expr::Literal(LiteralValue::Null),
+                        | BinaryOp::GeometricOverlap
+                        | BinaryOp::RangeAdjacent
+                        | BinaryOp::RangeStrictlyLeft
+                        | BinaryOp::RangeStrictlyRight
+                        | BinaryOp::InetContains
+                        | BinaryOp::InetContainedBy
+                        | BinaryOp::InetContainsOrEqual
+                        | BinaryOp::InetContainedByOrEqual
+                        | BinaryOp::InetOverlap => return Expr::Literal(LiteralValue::Null),
 
                         BinaryOp::In | BinaryOp::NotIn => return Expr::Literal(LiteralValue::Null),
 
@@ -162,6 +173,7 @@ impl NullPropagation {
                         UnaryOp::Not => return Expr::Literal(LiteralValue::Null),
                         UnaryOp::Negate => return Expr::Literal(LiteralValue::Null),
                         UnaryOp::Plus => return Expr::Literal(LiteralValue::Null),
+                        UnaryOp::BitwiseNot => return Expr::Literal(LiteralValue::Null),
                         UnaryOp::IsNull => {
                             return Expr::Literal(LiteralValue::Boolean(true));
                         }
@@ -260,6 +272,7 @@ impl NullPropagation {
                             asc: o.asc,
                             nulls_first: o.nulls_first,
                             collation: o.collation.clone(),
+                            with_fill: o.with_fill.clone(),
                         })
                         .collect()
                 });
@@ -360,6 +373,28 @@ impl NullPropagation {
                         right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
                         on: on.clone(),
                         join_type: *join_type,
+                    })
+                } else {
+                    None
+                }
+            }
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
                     })
                 } else {
                     None
@@ -508,6 +543,7 @@ impl NullPropagation {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -520,6 +556,7 @@ impl NullPropagation {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -588,6 +625,7 @@ impl NullPropagation {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -767,6 +805,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {

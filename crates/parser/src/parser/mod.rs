@@ -1,12 +1,17 @@
+mod clickhouse_extensions;
 mod custom_statements;
 mod helpers;
 mod types;
 
+pub use clickhouse_extensions::ClickHouseIndexType;
+use clickhouse_extensions::ClickHouseParser;
 pub use custom_statements::CustomStatementParser;
 use debug_print::debug_eprintln;
 pub use helpers::ParserHelpers;
 use sqlparser::ast::Statement as SqlStatement;
-use sqlparser::dialect::{BigQueryDialect, Dialect, GenericDialect, PostgreSqlDialect};
+use sqlparser::dialect::{
+    BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, PostgreSqlDialect,
+};
 use sqlparser::parser::Parser as SqlParser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 use types::JsonValueRewriteResult;
@@ -15,7 +20,7 @@ pub use types::{
 };
 use yachtsql_core::error::{Error, Result};
 
-use crate::sql_context::SqlWalker;
+use crate::sql_context::{SqlContext, SqlWalker};
 use crate::validator::StatementValidator;
 
 pub struct Parser {
@@ -31,7 +36,7 @@ impl Parser {
     pub fn with_dialect(dialect_type: DialectType) -> Self {
         let dialect: Box<dyn Dialect> = match dialect_type {
             DialectType::BigQuery => Box::new(BigQueryDialect),
-            DialectType::ClickHouse => Box::new(GenericDialect {}),
+            DialectType::ClickHouse => Box::new(ClickHouseDialect {}),
             DialectType::PostgreSQL => Box::new(PostgreSqlDialect {}),
         };
 
@@ -61,7 +66,61 @@ impl Parser {
 
         let sql_without_exclude = Self::strip_exclude_from_window_frames(&sql_without_returning);
 
-        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_exclude)?;
+        let sql_without_codec = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_codec_clauses(&sql_without_exclude)
+        } else {
+            sql_without_exclude
+        };
+
+        let sql_without_ttl = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_ttl_clauses(&sql_without_codec)
+        } else {
+            sql_without_codec
+        };
+
+        let sql_with_paste_join = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_paste_join(&sql_without_ttl)
+        } else {
+            sql_without_ttl
+        };
+
+        let sql_with_asof_left = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_asof_left_to_left_asof(&sql_with_paste_join)
+        } else {
+            sql_with_paste_join
+        };
+
+        let sql_with_asof_join = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_asof_join(&sql_with_asof_left)
+        } else {
+            sql_with_asof_left
+        };
+
+        let sql_with_array_join = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_array_join(&sql_with_asof_join)
+        } else {
+            sql_with_asof_join
+        };
+
+        let sql_without_final = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_final_modifier(&sql_with_array_join)
+        } else {
+            sql_with_array_join
+        };
+
+        let sql_without_settings = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_settings_clause(&sql_without_final)
+        } else {
+            sql_without_final
+        };
+
+        let sql_without_global = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::strip_global_keyword(&sql_without_settings)
+        } else {
+            sql_without_settings
+        };
+
+        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_global)?;
         let parse_result = SqlParser::parse_sql(&*self.dialect, &rewritten_sql);
 
         let sql_statements = match parse_result {
@@ -219,7 +278,51 @@ impl Parser {
             return Ok(Some(Statement::Custom(custom_stmt)));
         }
 
+        if self.is_set_constraints(&meaningful_tokens)
+            && let Some(custom_stmt) =
+                CustomStatementParser::parse_set_constraints(&meaningful_tokens)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.is_exists_table(&meaningful_tokens)
+            && let Some(custom_stmt) =
+                CustomStatementParser::parse_exists_table(&meaningful_tokens)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.is_exists_database(&meaningful_tokens)
+            && let Some(custom_stmt) =
+                CustomStatementParser::parse_exists_database(&meaningful_tokens)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.is_abort(&meaningful_tokens)
+            && let Some(custom_stmt) = CustomStatementParser::parse_abort(&meaningful_tokens)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.is_begin(&meaningful_tokens)
+            && let Some(custom_stmt) =
+                CustomStatementParser::parse_begin_transaction_with_deferrable(&meaningful_tokens)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.dialect_type == DialectType::ClickHouse
+            && let Some(custom_stmt) = ClickHouseParser::try_parse(&meaningful_tokens, sql)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
         Ok(None)
+    }
+
+    fn is_set_constraints(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["SET", "CONSTRAINTS"])
     }
 
     fn strip_merge_returning_clauses(sql: &str) -> (String, Vec<Option<String>>) {
@@ -271,6 +374,556 @@ impl Parser {
         }
 
         result
+    }
+
+    fn strip_codec_clauses(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+
+        while idx < sql.len() {
+            if Self::is_codec_at(sql, idx) {
+                let keyword_end = idx + 5;
+                let mut cursor = keyword_end;
+
+                while cursor < sql.len() {
+                    let Some(ch) = Self::next_char(sql, cursor) else {
+                        break;
+                    };
+                    if ch.is_whitespace() {
+                        cursor += ch.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+
+                if cursor < sql.len()
+                    && sql[cursor..].starts_with('(')
+                    && let Ok(close_idx) = SqlWalker::new(sql).find_matching_paren(cursor)
+                {
+                    idx = close_idx + 1;
+                    continue;
+                }
+
+                result.push_str(&sql[idx..keyword_end]);
+                idx = keyword_end;
+            } else {
+                let Some(ch) = Self::next_char(sql, idx) else {
+                    break;
+                };
+                result.push(ch);
+                idx += ch.len_utf8();
+            }
+        }
+
+        result
+    }
+
+    fn strip_ttl_clauses(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+        let mut context = SqlContext::new();
+
+        while idx < sql.len() {
+            let ch = match Self::next_char(sql, idx) {
+                Some(c) => c,
+                None => break,
+            };
+            let peek = Self::next_char(sql, idx + ch.len_utf8());
+
+            if context.process_char(ch, peek) {
+                result.push(ch);
+                idx += ch.len_utf8();
+                continue;
+            }
+
+            if context.is_in_code() && Self::is_ttl_at(sql, idx) {
+                let ttl_end = Self::find_ttl_clause_end(sql, idx);
+                idx = ttl_end;
+                continue;
+            }
+
+            result.push(ch);
+            idx += ch.len_utf8();
+        }
+
+        result
+    }
+
+    fn strip_final_modifier(sql: &str) -> String {
+        let re = regex::Regex::new(r"(?i)\bFINAL\b").unwrap();
+        re.replace_all(sql, "").to_string()
+    }
+
+    fn strip_settings_clause(sql: &str) -> String {
+        let re =
+            regex::Regex::new(r"(?i)\bSETTINGS\s+\w+\s*=\s*'?[^']*'?(\s*,\s*\w+\s*=\s*'?[^']*'?)*")
+                .unwrap();
+        re.replace_all(sql, "").to_string()
+    }
+
+    fn strip_global_keyword(sql: &str) -> String {
+        let re = regex::Regex::new(r"(?i)\bGLOBAL\s+IN\b").unwrap();
+        re.replace_all(sql, "IN").to_string()
+    }
+
+    fn rewrite_asof_join(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let upper = sql.to_uppercase();
+        let mut idx = 0;
+
+        while idx < sql.len() {
+            if let Some((asof_match, is_left)) = Self::match_asof_join_at(&upper, idx) {
+                idx += asof_match;
+
+                while idx < sql.len() && sql[idx..].starts_with(char::is_whitespace) {
+                    idx += sql[idx..].chars().next().unwrap().len_utf8();
+                }
+
+                let table_start = idx;
+                while idx < sql.len() {
+                    let ch = sql[idx..].chars().next().unwrap();
+                    if ch.is_whitespace() || ch == '(' {
+                        break;
+                    }
+                    idx += ch.len_utf8();
+                }
+                let table_name = &sql[table_start..idx];
+
+                if is_left {
+                    result.push_str(&format!("LEFT OUTER JOIN __ASOF_LEFT__{} ", table_name));
+                } else {
+                    result.push_str(&format!("INNER JOIN __ASOF__{} ", table_name));
+                }
+            } else {
+                let ch = sql[idx..].chars().next().unwrap();
+                result.push(ch);
+                idx += ch.len_utf8();
+            }
+        }
+
+        result
+    }
+
+    fn match_asof_join_at(upper_sql: &str, start: usize) -> Option<(usize, bool)> {
+        let rest = &upper_sql[start..];
+
+        if rest.starts_with("ASOF JOIN ") {
+            return Some(("ASOF JOIN ".len(), false));
+        }
+        if rest.starts_with("LEFT ASOF JOIN ") {
+            return Some(("LEFT ASOF JOIN ".len(), true));
+        }
+        None
+    }
+
+    fn rewrite_asof_left_to_left_asof(sql: &str) -> String {
+        let upper = sql.to_uppercase();
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+
+        while idx < sql.len() {
+            if upper[idx..].starts_with("ASOF LEFT JOIN ") {
+                result.push_str("LEFT ASOF JOIN ");
+                idx += "ASOF LEFT JOIN ".len();
+            } else {
+                let ch = sql[idx..].chars().next().unwrap();
+                result.push(ch);
+                idx += ch.len_utf8();
+            }
+        }
+
+        result
+    }
+
+    fn rewrite_paste_join(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+        let upper = sql.to_uppercase();
+        let mut paste_count = 0;
+
+        while idx < sql.len() {
+            if let Some(paste_match) = Self::match_paste_join_at(&upper, idx) {
+                idx += paste_match;
+
+                while idx < sql.len() && sql[idx..].starts_with(char::is_whitespace) {
+                    idx += sql[idx..].chars().next().unwrap().len_utf8();
+                }
+
+                if idx < sql.len() && sql[idx..].starts_with('(') {
+                    if let Some(close_paren) = Self::find_matching_paren_at(sql, idx) {
+                        let subquery = &sql[idx..=close_paren];
+                        result.push_str(&format!(
+                            "CROSS JOIN {} AS __PASTE_SUBQUERY_{}__",
+                            subquery, paste_count
+                        ));
+                        idx = close_paren + 1;
+                        paste_count += 1;
+                    } else {
+                        result.push_str("CROSS JOIN __PASTE__ ");
+                    }
+                } else {
+                    result.push_str("CROSS JOIN __PASTE__ ");
+                }
+            } else {
+                let ch = sql[idx..].chars().next().unwrap();
+                result.push(ch);
+                idx += ch.len_utf8();
+            }
+        }
+
+        result
+    }
+
+    fn find_matching_paren_at(sql: &str, start: usize) -> Option<usize> {
+        if !sql[start..].starts_with('(') {
+            return None;
+        }
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut string_char = ' ';
+
+        for (i, ch) in sql[start..].char_indices() {
+            if in_string {
+                if ch == string_char {
+                    in_string = false;
+                }
+            } else {
+                match ch {
+                    '\'' | '"' => {
+                        in_string = true;
+                        string_char = ch;
+                    }
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(start + i);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    fn match_paste_join_at(upper_sql: &str, start: usize) -> Option<usize> {
+        let rest = &upper_sql[start..];
+        if !rest.starts_with("PASTE") {
+            return None;
+        }
+
+        if start > 0 {
+            let prev_char = upper_sql[..start].chars().next_back()?;
+            if prev_char.is_ascii_alphanumeric() || prev_char == '_' {
+                return None;
+            }
+        }
+
+        let mut pos = 5;
+        while pos < rest.len() && rest[pos..].starts_with(char::is_whitespace) {
+            pos += rest[pos..].chars().next()?.len_utf8();
+        }
+
+        if !rest[pos..].starts_with("JOIN") {
+            return None;
+        }
+        pos += 4;
+
+        if pos < rest.len() {
+            let next_char = rest[pos..].chars().next()?;
+            if next_char.is_ascii_alphanumeric() || next_char == '_' {
+                return None;
+            }
+        }
+
+        Some(pos)
+    }
+
+    fn rewrite_array_join(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let upper = sql.to_uppercase();
+        let mut idx = 0;
+
+        while idx < sql.len() {
+            if let Some((len, is_left)) = Self::match_array_join_at(&upper, idx) {
+                idx += len;
+
+                while idx < sql.len() && sql[idx..].starts_with(char::is_whitespace) {
+                    idx += sql[idx..].chars().next().unwrap().len_utf8();
+                }
+
+                let mut paren_depth = 0;
+                let start_of_columns = idx;
+
+                while idx < sql.len() {
+                    let ch = sql[idx..].chars().next().unwrap();
+                    match ch {
+                        '(' => {
+                            paren_depth += 1;
+                            idx += 1;
+                        }
+                        ')' => {
+                            if paren_depth == 0 {
+                                break;
+                            }
+                            paren_depth -= 1;
+                            idx += 1;
+                        }
+                        _ => {
+                            if paren_depth == 0 && Self::is_keyword_boundary(&upper, idx) {
+                                break;
+                            }
+                            idx += ch.len_utf8();
+                        }
+                    }
+                }
+
+                let columns = sql[start_of_columns..idx].trim().to_string();
+                let encoded_columns = Self::encode_array_join_columns(&columns);
+
+                if is_left {
+                    result.push_str(&format!(
+                        "LEFT OUTER JOIN __LEFT_ARRAY_JOIN__{}__ ",
+                        encoded_columns
+                    ));
+                } else {
+                    result.push_str(&format!("INNER JOIN __ARRAY_JOIN__{}__ ", encoded_columns));
+                }
+            } else {
+                let ch = sql[idx..].chars().next().unwrap();
+                result.push(ch);
+                idx += ch.len_utf8();
+            }
+        }
+
+        result
+    }
+
+    fn encode_array_join_columns(columns: &str) -> String {
+        columns
+            .replace(' ', "_SP_")
+            .replace(',', "_CM_")
+            .replace('(', "_LP_")
+            .replace(')', "_RP_")
+    }
+
+    #[allow(dead_code)]
+    fn decode_array_join_columns(encoded: &str) -> String {
+        encoded
+            .replace("_SP_", " ")
+            .replace("_CM_", ",")
+            .replace("_LP_", "(")
+            .replace("_RP_", ")")
+    }
+
+    fn match_array_join_at(upper_sql: &str, start: usize) -> Option<(usize, bool)> {
+        let rest = &upper_sql[start..];
+
+        if start > 0 {
+            let prev_char = upper_sql[..start].chars().next_back()?;
+            if prev_char.is_ascii_alphanumeric() || prev_char == '_' {
+                return None;
+            }
+        }
+
+        if rest.starts_with("LEFT ARRAY JOIN") {
+            let len = "LEFT ARRAY JOIN".len();
+            if len >= rest.len() || !rest[len..].starts_with(|c: char| c.is_whitespace()) {
+                return None;
+            }
+            return Some((len, true));
+        }
+
+        if rest.starts_with("ARRAY JOIN") {
+            let len = "ARRAY JOIN".len();
+            if len >= rest.len() || !rest[len..].starts_with(|c: char| c.is_whitespace()) {
+                return None;
+            }
+            return Some((len, false));
+        }
+
+        None
+    }
+
+    fn is_keyword_boundary(upper_sql: &str, start: usize) -> bool {
+        let keywords = [
+            "WHERE",
+            "ORDER",
+            "GROUP",
+            "HAVING",
+            "LIMIT",
+            "UNION",
+            "INTERSECT",
+            "EXCEPT",
+            "INNER",
+            "LEFT",
+            "RIGHT",
+            "FULL",
+            "CROSS",
+            "JOIN",
+            "ON",
+            "ARRAY",
+            "PREWHERE",
+            "SAMPLE",
+            "FINAL",
+            "FORMAT",
+            "SETTINGS",
+            "INTO",
+            "WITH",
+        ];
+
+        for kw in keywords {
+            if upper_sql[start..].starts_with(kw) {
+                let after_kw = start + kw.len();
+                if after_kw >= upper_sql.len()
+                    || !upper_sql[after_kw..]
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    if start == 0 {
+                        return true;
+                    }
+                    if let Some(prev_char) = upper_sql[..start].chars().next_back() {
+                        return !prev_char.is_ascii_alphanumeric() && prev_char != '_';
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn is_ttl_at(sql: &str, start: usize) -> bool {
+        let keyword = "TTL";
+        let keyword_len = keyword.len();
+
+        let Some(substr) = sql.get(start..start + keyword_len) else {
+            return false;
+        };
+
+        if !substr.eq_ignore_ascii_case(keyword) {
+            return false;
+        }
+
+        if start > 0
+            && let Some(prev) = sql[..start].chars().next_back()
+            && (prev.is_ascii_alphanumeric() || prev == '_')
+        {
+            return false;
+        }
+
+        if start + keyword_len < sql.len()
+            && let Some(next) = sql[start + keyword_len..].chars().next()
+            && (next.is_ascii_alphanumeric() || next == '_')
+        {
+            return false;
+        }
+
+        true
+    }
+
+    fn find_ttl_clause_end(sql: &str, start: usize) -> usize {
+        let stop_keywords = ["SETTINGS", "PRIMARY", "SAMPLE", "AS", "COMMENT"];
+
+        let mut idx = start + 3;
+        let mut paren_depth = 0;
+        let mut context = SqlContext::new();
+
+        while idx < sql.len() {
+            let ch = match Self::next_char(sql, idx) {
+                Some(c) => c,
+                None => break,
+            };
+            let peek = Self::next_char(sql, idx + ch.len_utf8());
+
+            if context.process_char(ch, peek) {
+                idx += ch.len_utf8();
+                continue;
+            }
+
+            if context.is_in_code() {
+                match ch {
+                    '(' => {
+                        paren_depth += 1;
+                        idx += ch.len_utf8();
+                        continue;
+                    }
+                    ')' => {
+                        if paren_depth > 0 {
+                            paren_depth -= 1;
+                        }
+                        idx += ch.len_utf8();
+                        continue;
+                    }
+                    ',' if paren_depth == 0 => {
+                        let rest = sql[idx + 1..].trim_start();
+                        let is_next_ttl_rule = rest
+                            .split_whitespace()
+                            .next()
+                            .map(|w| {
+                                let after_word = rest[w.len()..].trim_start();
+                                !w.eq_ignore_ascii_case("SETTINGS")
+                                    && !w.eq_ignore_ascii_case("PARTITION")
+                                    && !w.eq_ignore_ascii_case("PRIMARY")
+                                    && (after_word.starts_with('+')
+                                        || w.contains('+')
+                                        || after_word.chars().next().is_some_and(|c| c == '+'))
+                            })
+                            .unwrap_or(false);
+
+                        if is_next_ttl_rule {
+                            idx += ch.len_utf8();
+                            continue;
+                        }
+                        return idx;
+                    }
+                    _ => {}
+                }
+
+                if paren_depth == 0 {
+                    for kw in &stop_keywords {
+                        if Self::keyword_at(sql, idx, kw) {
+                            return idx;
+                        }
+                    }
+                }
+            }
+
+            idx += ch.len_utf8();
+        }
+
+        idx
+    }
+
+    fn is_codec_at(sql: &str, start: usize) -> bool {
+        let keyword = "CODEC";
+        let keyword_len = keyword.len();
+
+        let Some(substr) = sql.get(start..start + keyword_len) else {
+            return false;
+        };
+
+        if !substr.eq_ignore_ascii_case(keyword) {
+            return false;
+        }
+
+        if start > 0
+            && let Some(prev) = sql[..start].chars().next_back()
+            && (prev.is_ascii_alphanumeric() || prev == '_')
+        {
+            return false;
+        }
+
+        if start + keyword_len < sql.len()
+            && let Some(next) = sql[start + keyword_len..].chars().next()
+            && (next.is_ascii_alphanumeric() || next == '_')
+        {
+            return false;
+        }
+
+        true
     }
 
     fn strip_returning_from_statement(statement: &str) -> (String, Option<String>) {
@@ -352,6 +1005,22 @@ impl Parser {
 
     fn is_drop_type(&self, tokens: &[&Token]) -> bool {
         self.matches_keyword_sequence(tokens, &["DROP", "TYPE"])
+    }
+
+    fn is_exists_table(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["EXISTS", "TABLE"])
+    }
+
+    fn is_exists_database(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["EXISTS", "DATABASE"])
+    }
+
+    fn is_abort(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["ABORT"])
+    }
+
+    fn is_begin(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["BEGIN"])
     }
 
     fn rewrite_json_item_methods(&self, sql: &str) -> Result<String> {

@@ -103,7 +103,7 @@ impl CostModel {
                 let input_cost = self.estimate_node_cost(input);
                 self.estimate_projection_cost(&input_cost, expressions.len())
             }
-            PlanNode::Join { left, right, .. } => {
+            PlanNode::Join { left, right, .. } | PlanNode::AsOfJoin { left, right, .. } => {
                 let left_cost = self.estimate_node_cost(left);
                 let right_cost = self.estimate_node_cost(right);
                 self.estimate_join_cost(&left_cost, &right_cost)
@@ -218,6 +218,7 @@ impl CostModel {
             }
             PlanNode::AlterTable { .. } => Cost::new(0, 10.0, 100.0, 0),
             PlanNode::EmptyRelation => Cost::new(1, 1.0, 0.0, 0),
+            PlanNode::Values { rows } => Cost::new(rows.len(), 1.0, 0.0, rows.len() * 50),
             PlanNode::DistinctOn { input, .. } => {
                 let input_cost = self.estimate_node_cost(input);
                 self.estimate_distinct_cost(&input_cost)

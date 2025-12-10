@@ -46,6 +46,8 @@ pub enum PlanNode {
         table_name: String,
         alias: Option<String>,
         projection: Option<Vec<String>>,
+        only: bool,
+        final_modifier: bool,
     },
 
     IndexScan {
@@ -78,6 +80,14 @@ pub enum PlanNode {
         right: Box<PlanNode>,
         on: Expr,
         join_type: JoinType,
+    },
+
+    AsOfJoin {
+        left: Box<PlanNode>,
+        right: Box<PlanNode>,
+        equality_condition: Expr,
+        match_condition: Expr,
+        is_left_join: bool,
     },
 
     Aggregate {
@@ -137,6 +147,7 @@ pub enum PlanNode {
         recursive: bool,
         use_union_all: bool,
         materialization_hint: Option<CteAsMaterialized>,
+        column_aliases: Option<Vec<String>>,
     },
 
     Update {
@@ -164,6 +175,7 @@ pub enum PlanNode {
     Unnest {
         array_expr: Expr,
         alias: Option<String>,
+        column_alias: Option<String>,
         with_offset: bool,
         offset_alias: Option<String>,
     },
@@ -193,6 +205,10 @@ pub enum PlanNode {
     },
 
     EmptyRelation,
+
+    Values {
+        rows: Vec<Vec<Expr>>,
+    },
 
     InsertOnConflict {
         table_name: String,
@@ -383,6 +399,8 @@ pub enum JoinType {
     Cross,
     Semi,
     Anti,
+    Paste,
+    AsOf,
 }
 
 impl PlanNode {
@@ -406,7 +424,8 @@ impl PlanNode {
             | PlanNode::TableValuedFunction { .. }
             | PlanNode::AlterTable { .. }
             | PlanNode::InsertOnConflict { .. }
-            | PlanNode::EmptyRelation => vec![],
+            | PlanNode::EmptyRelation
+            | PlanNode::Values { .. } => vec![],
             PlanNode::Insert { source, .. } => {
                 if let Some(source_plan) = source {
                     vec![source_plan.as_ref()]
@@ -425,6 +444,7 @@ impl PlanNode {
             | PlanNode::Window { input, .. } => vec![input],
             PlanNode::Join { left, right, .. }
             | PlanNode::LateralJoin { left, right, .. }
+            | PlanNode::AsOfJoin { left, right, .. }
             | PlanNode::Union { left, right, .. }
             | PlanNode::Intersect { left, right, .. }
             | PlanNode::Except { left, right, .. } => vec![left, right],

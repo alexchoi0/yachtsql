@@ -58,7 +58,9 @@ pub(crate) mod pattern_matching;
 pub mod temporal_queries;
 pub mod temporal_tables;
 
+pub mod information_schema;
 pub mod query_executor;
+pub mod system_schema;
 pub mod trigger_execution;
 
 pub(crate) mod sql {}
@@ -89,7 +91,7 @@ pub use match_recognize::{
 pub use materialized_view_registry::{MaterializedViewMetadata, MaterializedViewRegistry};
 pub use multiset_operations::Multiset;
 pub use query_executor::{ExecutionContext, QueryExecutor};
-pub use record_batch::RecordBatch;
+pub use record_batch::Table;
 pub use resource_limits::{
     CancellationToken, ResourceLimitsConfig, ResourceStats, ResourceTracker,
 };

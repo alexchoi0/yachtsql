@@ -8,14 +8,41 @@ mod subqueries;
 
 use sqlparser::ast;
 use yachtsql_core::error::{Error, Result};
-use yachtsql_ir::expr::{BinaryOp, Expr, LiteralValue, UnaryOp};
+use yachtsql_ir::expr::{BinaryOp, CastDataType, Expr, LiteralValue, UnaryOp};
 
 use super::LogicalPlanBuilder;
 
 impl LogicalPlanBuilder {
+    pub(super) fn sql_expr_to_expr_for_cast(
+        &self,
+        expr: &ast::Expr,
+        target_type: &CastDataType,
+    ) -> Result<Expr> {
+        if matches!(target_type, CastDataType::Json)
+            && let ast::Expr::Value(value) = expr
+            && let ast::Value::SingleQuotedString(s) | ast::Value::DoubleQuotedString(s) =
+                &value.value
+        {
+            return Ok(Expr::Literal(LiteralValue::String(s.clone())));
+        }
+        self.sql_expr_to_expr(expr)
+    }
+
     pub(super) fn sql_expr_to_expr(&self, expr: &ast::Expr) -> Result<Expr> {
         match expr {
-            ast::Expr::Identifier(ident) => Ok(Expr::column(ident.value.clone())),
+            ast::Expr::Identifier(ident) => {
+                if let Some(var) = self.get_session_variable(&ident.value) {
+                    match &var.value {
+                        Some(v) => Ok(Expr::Literal(self.value_to_literal(v)?)),
+                        None => Err(Error::invalid_query(format!(
+                            "Variable '{}' has not been assigned a value",
+                            ident.value
+                        ))),
+                    }
+                } else {
+                    Ok(Expr::column(ident.value.clone()))
+                }
+            }
 
             ast::Expr::CompoundIdentifier(idents) => self.convert_compound_identifier_expr(idents),
 
@@ -179,6 +206,7 @@ impl LogicalPlanBuilder {
                                             asc: order_expr.options.asc,
                                             nulls_first: order_expr.options.nulls_first,
                                             collation: None,
+                                            with_fill: None,
                                         });
                                     }
                                 }
@@ -195,6 +223,10 @@ impl LogicalPlanBuilder {
                         (args, distinct, order_by)
                     }
                 };
+
+                if let Some(udf_expanded) = self.expand_udf_call(&name_str, &args, function)? {
+                    return Ok(udf_expanded);
+                }
 
                 if let Some(normalized) = self.normalize_dialect_function(&name_str, &args)? {
                     return Ok(normalized);
@@ -220,6 +252,7 @@ impl LogicalPlanBuilder {
                             asc: order_expr.options.asc,
                             nulls_first: order_expr.options.nulls_first,
                             collation: None,
+                            with_fill: None,
                         });
                     }
                     Some(order_exprs)
@@ -272,6 +305,7 @@ impl LogicalPlanBuilder {
                                 asc: order_expr.options.asc,
                                 nulls_first: order_expr.options.nulls_first,
                                 collation: None,
+                                with_fill: None,
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -346,6 +380,27 @@ impl LogicalPlanBuilder {
                     });
                 }
 
+                if name_str.eq_ignore_ascii_case("GROUPING_ID") {
+                    if args.is_empty() {
+                        return Err(Error::invalid_query(
+                            "GROUPING_ID() requires at least 1 argument".to_string(),
+                        ));
+                    }
+
+                    let mut columns = Vec::with_capacity(args.len());
+                    for arg in &args {
+                        match arg {
+                            Expr::Column { name, .. } => columns.push(name.clone()),
+                            _ => {
+                                return Err(Error::invalid_query(
+                                    "GROUPING_ID() arguments must be column references".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    return Ok(Expr::GroupingId { columns });
+                }
+
                 if name.is_aggregate() && has_distinct {
                     Ok(Expr::Aggregate {
                         name,
@@ -404,17 +459,131 @@ impl LogicalPlanBuilder {
                 expr,
                 pattern,
                 escape_char: _,
-                any: _,
-            } => self.convert_like_expr(expr, pattern, *negated, BinaryOp::Like, BinaryOp::NotLike),
+                any,
+            } => {
+                if *any {
+                    self.convert_like_any_all_expr(expr, pattern, *negated, BinaryOp::Like, true)
+                } else if let ast::Expr::Function(func) = pattern.as_ref() {
+                    let is_all = func.name.0.len() == 1
+                        && matches!(&func.name.0[0], ast::ObjectNamePart::Identifier(ident) if ident.value.eq_ignore_ascii_case("ALL"));
+                    if is_all {
+                        let all_args = &func.args;
+                        if let ast::FunctionArguments::List(arg_list) = all_args {
+                            let patterns: Vec<ast::Expr> = arg_list
+                                .args
+                                .iter()
+                                .filter_map(|arg| {
+                                    if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                        e,
+                                    )) = arg
+                                    {
+                                        Some(e.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let tuple_expr = ast::Expr::Tuple(patterns);
+                            self.convert_like_any_all_expr(
+                                expr,
+                                &tuple_expr,
+                                *negated,
+                                BinaryOp::Like,
+                                false,
+                            )
+                        } else {
+                            self.convert_like_expr(
+                                expr,
+                                pattern,
+                                *negated,
+                                BinaryOp::Like,
+                                BinaryOp::NotLike,
+                            )
+                        }
+                    } else {
+                        self.convert_like_expr(
+                            expr,
+                            pattern,
+                            *negated,
+                            BinaryOp::Like,
+                            BinaryOp::NotLike,
+                        )
+                    }
+                } else {
+                    self.convert_like_expr(
+                        expr,
+                        pattern,
+                        *negated,
+                        BinaryOp::Like,
+                        BinaryOp::NotLike,
+                    )
+                }
+            }
 
             ast::Expr::ILike {
                 negated,
                 expr,
                 pattern,
                 escape_char: _,
-                any: _,
+                any,
             } => {
-                self.convert_like_expr(expr, pattern, *negated, BinaryOp::ILike, BinaryOp::NotILike)
+                if *any {
+                    self.convert_like_any_all_expr(expr, pattern, *negated, BinaryOp::ILike, true)
+                } else if let ast::Expr::Function(func) = pattern.as_ref() {
+                    let is_all = func.name.0.len() == 1
+                        && matches!(&func.name.0[0], ast::ObjectNamePart::Identifier(ident) if ident.value.eq_ignore_ascii_case("ALL"));
+                    if is_all {
+                        let all_args = &func.args;
+                        if let ast::FunctionArguments::List(arg_list) = all_args {
+                            let patterns: Vec<ast::Expr> = arg_list
+                                .args
+                                .iter()
+                                .filter_map(|arg| {
+                                    if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                        e,
+                                    )) = arg
+                                    {
+                                        Some(e.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let tuple_expr = ast::Expr::Tuple(patterns);
+                            self.convert_like_any_all_expr(
+                                expr,
+                                &tuple_expr,
+                                *negated,
+                                BinaryOp::ILike,
+                                false,
+                            )
+                        } else {
+                            self.convert_like_expr(
+                                expr,
+                                pattern,
+                                *negated,
+                                BinaryOp::ILike,
+                                BinaryOp::NotILike,
+                            )
+                        }
+                    } else {
+                        self.convert_like_expr(
+                            expr,
+                            pattern,
+                            *negated,
+                            BinaryOp::ILike,
+                            BinaryOp::NotILike,
+                        )
+                    }
+                } else {
+                    self.convert_like_expr(
+                        expr,
+                        pattern,
+                        *negated,
+                        BinaryOp::ILike,
+                        BinaryOp::NotILike,
+                    )
+                }
             }
 
             ast::Expr::SimilarTo {
@@ -471,11 +640,21 @@ impl LogicalPlanBuilder {
                 })
             }
 
-            ast::Expr::Floor { expr, .. } => {
+            ast::Expr::Floor { expr, field } => {
                 let arg_expr = self.sql_expr_to_expr(expr)?;
+                let args = match field {
+                    ast::CeilFloorKind::Scale(ast::Value::Number(n, _)) => {
+                        let scale_val = n.parse::<i64>().unwrap_or(0);
+                        vec![
+                            arg_expr,
+                            Expr::Literal(yachtsql_ir::expr::LiteralValue::Int64(scale_val)),
+                        ]
+                    }
+                    _ => vec![arg_expr],
+                };
                 Ok(Expr::Function {
                     name: yachtsql_ir::FunctionName::Floor,
-                    args: vec![arg_expr],
+                    args,
                 })
             }
 
@@ -560,6 +739,20 @@ impl LogicalPlanBuilder {
                 })
             }
 
+            ast::Expr::Lambda(lambda) => {
+                let params: Vec<String> = match &lambda.params {
+                    ast::OneOrManyWithParens::One(ident) => vec![ident.value.clone()],
+                    ast::OneOrManyWithParens::Many(idents) => {
+                        idents.iter().map(|i| i.value.clone()).collect()
+                    }
+                };
+                let body = self.sql_expr_to_expr(&lambda.body)?;
+                Ok(Expr::Lambda {
+                    params,
+                    body: Box::new(body),
+                })
+            }
+
             _ => Err(Error::unsupported_feature(format!(
                 "Expression type not supported: {:?}",
                 expr
@@ -601,6 +794,8 @@ impl LogicalPlanBuilder {
                 LiteralValue::String(_) => Some("string"),
                 LiteralValue::Boolean(_) => Some("boolean"),
                 LiteralValue::Date(_) => Some("date"),
+                LiteralValue::Time(_) => Some("time"),
+                LiteralValue::DateTime(_) => Some("datetime"),
                 LiteralValue::Timestamp(_) => Some("timestamp"),
                 LiteralValue::Interval(_) => Some("interval"),
                 LiteralValue::Array(_) => Some("array"),
@@ -618,6 +813,126 @@ impl LogicalPlanBuilder {
 
             _ => None,
         }
+    }
+
+    fn convert_date_part_column_to_string(expr: &Expr) -> Expr {
+        if let Expr::Column { name, table: None } = expr {
+            let upper = name.to_uppercase();
+            let date_parts = [
+                "YEAR",
+                "MONTH",
+                "DAY",
+                "HOUR",
+                "MINUTE",
+                "SECOND",
+                "WEEK",
+                "QUARTER",
+                "DAYOFWEEK",
+                "DAYOFYEAR",
+                "MILLISECOND",
+                "MICROSECOND",
+                "NANOSECOND",
+                "ISOWEEK",
+                "ISOYEAR",
+            ];
+            if date_parts.contains(&upper.as_str()) {
+                return Expr::Literal(LiteralValue::String(upper));
+            }
+        }
+        expr.clone()
+    }
+
+    fn expand_udf_call(
+        &self,
+        name_str: &str,
+        args: &[Expr],
+        _func: &sqlparser::ast::Function,
+    ) -> Result<Option<Expr>> {
+        let udf = match self.get_udf(name_str) {
+            Some(udf) => udf.clone(),
+            None => return Ok(None),
+        };
+
+        if args.len() != udf.parameters.len() {
+            return Err(Error::invalid_query(format!(
+                "UDF {} expects {} arguments, got {}",
+                name_str,
+                udf.parameters.len(),
+                args.len()
+            )));
+        }
+
+        let param_map: std::collections::HashMap<String, Expr> = udf
+            .parameters
+            .iter()
+            .zip(args.iter())
+            .map(|(param, arg)| (param.to_uppercase(), arg.clone()))
+            .collect();
+
+        let body_expr = self.sql_expr_to_expr(&udf.body)?;
+
+        let expanded = Self::substitute_udf_params(body_expr, &param_map);
+        Ok(Some(expanded))
+    }
+
+    fn substitute_udf_params(expr: Expr, params: &std::collections::HashMap<String, Expr>) -> Expr {
+        match expr {
+            Expr::Column {
+                ref name,
+                table: None,
+            } => {
+                let name_upper = name.to_uppercase();
+                if let Some(replacement) = params.get(&name_upper) {
+                    return replacement.clone();
+                }
+                expr
+            }
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(Self::substitute_udf_params(*left, params)),
+                op,
+                right: Box::new(Self::substitute_udf_params(*right, params)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op,
+                expr: Box::new(Self::substitute_udf_params(*inner, params)),
+            },
+            Expr::Function { name, args } => Expr::Function {
+                name,
+                args: args
+                    .into_iter()
+                    .map(|a| Self::substitute_udf_params(a, params))
+                    .collect(),
+            },
+            Expr::Cast {
+                expr: inner,
+                data_type,
+            } => Expr::Cast {
+                expr: Box::new(Self::substitute_udf_params(*inner, params)),
+                data_type,
+            },
+            Expr::Case {
+                operand,
+                when_then,
+                else_expr,
+            } => Expr::Case {
+                operand: operand.map(|o| Box::new(Self::substitute_udf_params(*o, params))),
+                when_then: when_then
+                    .into_iter()
+                    .map(|(w, t)| {
+                        (
+                            Self::substitute_udf_params(w, params),
+                            Self::substitute_udf_params(t, params),
+                        )
+                    })
+                    .collect(),
+                else_expr: else_expr.map(|e| Box::new(Self::substitute_udf_params(*e, params))),
+            },
+            _ => expr,
+        }
+    }
+
+    fn normalize_interval_arg(expr: &Expr) -> Expr {
+        expr.clone()
     }
 
     fn normalize_dialect_function(&self, name_str: &str, args: &[Expr]) -> Result<Option<Expr>> {
@@ -641,6 +956,202 @@ impl LogicalPlanBuilder {
 
         let normalized = match self.dialect {
             DialectType::BigQuery => match name_str.to_uppercase().as_str() {
+                "DATE_TRUNC" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "DATE_TRUNC requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let date_expr = args[0].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DateTrunc,
+                        args: vec![unit_expr, date_expr],
+                    })
+                }
+                "TIMESTAMP_TRUNC" => {
+                    if args.len() < 2 {
+                        return Err(Error::invalid_query(format!(
+                            "TIMESTAMP_TRUNC requires at least 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let ts_expr = args[0].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[1]);
+                    let mut new_args = vec![ts_expr, unit_expr];
+                    if args.len() > 2 {
+                        new_args.extend(args[2..].iter().cloned());
+                    }
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimestampTrunc,
+                        args: new_args,
+                    })
+                }
+                "DATE_ADD" | "DATE_SUB" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "{} requires exactly 2 arguments, got {}",
+                            name_str.to_uppercase(),
+                            args.len()
+                        )));
+                    }
+                    let date_expr = args[0].clone();
+                    let interval_expr = Self::normalize_interval_arg(&args[1]);
+                    let name = if name_str.to_uppercase() == "DATE_ADD" {
+                        yachtsql_ir::FunctionName::DateAdd
+                    } else {
+                        yachtsql_ir::FunctionName::DateSub
+                    };
+                    Some(Expr::Function {
+                        name,
+                        args: vec![date_expr, interval_expr],
+                    })
+                }
+                "DATE_DIFF" => {
+                    if args.len() != 3 {
+                        return Err(Error::invalid_query(format!(
+                            "DATE_DIFF requires exactly 3 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let date1 = args[0].clone();
+                    let date2 = args[1].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[2]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DateDiff,
+                        args: vec![date1, date2, unit_expr],
+                    })
+                }
+                "TIMESTAMP_DIFF" => {
+                    if args.len() != 3 {
+                        return Err(Error::invalid_query(format!(
+                            "TIMESTAMP_DIFF requires exactly 3 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let ts1 = args[0].clone();
+                    let ts2 = args[1].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[2]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimestampDiff,
+                        args: vec![ts1, ts2, unit_expr],
+                    })
+                }
+                "DATETIME_ADD" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "DATETIME_ADD requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let dt_expr = args[0].clone();
+                    let interval_expr = Self::normalize_interval_arg(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DatetimeAdd,
+                        args: vec![dt_expr, interval_expr],
+                    })
+                }
+                "DATETIME_SUB" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "DATETIME_SUB requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let dt_expr = args[0].clone();
+                    let interval_expr = Self::normalize_interval_arg(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DatetimeSub,
+                        args: vec![dt_expr, interval_expr],
+                    })
+                }
+                "DATETIME_DIFF" => {
+                    if args.len() != 3 {
+                        return Err(Error::invalid_query(format!(
+                            "DATETIME_DIFF requires exactly 3 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let dt1 = args[0].clone();
+                    let dt2 = args[1].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[2]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DatetimeDiff,
+                        args: vec![dt1, dt2, unit_expr],
+                    })
+                }
+                "DATETIME_TRUNC" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "DATETIME_TRUNC requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let dt_expr = args[0].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::DatetimeTrunc,
+                        args: vec![dt_expr, unit_expr],
+                    })
+                }
+                "TIME_ADD" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "TIME_ADD requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let time_expr = args[0].clone();
+                    let interval_expr = Self::normalize_interval_arg(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimeAdd,
+                        args: vec![time_expr, interval_expr],
+                    })
+                }
+                "TIME_SUB" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "TIME_SUB requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let time_expr = args[0].clone();
+                    let interval_expr = Self::normalize_interval_arg(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimeSub,
+                        args: vec![time_expr, interval_expr],
+                    })
+                }
+                "TIME_DIFF" => {
+                    if args.len() != 3 {
+                        return Err(Error::invalid_query(format!(
+                            "TIME_DIFF requires exactly 3 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let time1 = args[0].clone();
+                    let time2 = args[1].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[2]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimeDiff,
+                        args: vec![time1, time2, unit_expr],
+                    })
+                }
+                "TIME_TRUNC" => {
+                    if args.len() != 2 {
+                        return Err(Error::invalid_query(format!(
+                            "TIME_TRUNC requires exactly 2 arguments, got {}",
+                            args.len()
+                        )));
+                    }
+                    let time_expr = args[0].clone();
+                    let unit_expr = Self::convert_date_part_column_to_string(&args[1]);
+                    Some(Expr::Function {
+                        name: yachtsql_ir::FunctionName::TimeTrunc,
+                        args: vec![time_expr, unit_expr],
+                    })
+                }
                 "SAFE_DIVIDE" => {
                     if args.len() != 2 {
                         return Err(Error::invalid_query(format!(

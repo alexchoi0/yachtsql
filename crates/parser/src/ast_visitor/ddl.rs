@@ -84,6 +84,7 @@ impl LogicalPlanBuilder {
             }
             ast::DataType::String(_) | ast::DataType::Text => Ok(DataType::String),
             ast::DataType::Varchar(_) | ast::DataType::Char(_) => Ok(DataType::String),
+            ast::DataType::Bit(_) | ast::DataType::BitVarying(_) => Ok(DataType::Bytes),
             ast::DataType::Boolean => Ok(DataType::Bool),
             ast::DataType::Date => Ok(DataType::Date),
             ast::DataType::Timestamp(_, _) => Ok(DataType::Timestamp),
@@ -102,7 +103,7 @@ impl LogicalPlanBuilder {
                 };
                 Ok(DataType::Array(Box::new(inner_type)))
             }
-            ast::DataType::Custom(name, _) => {
+            ast::DataType::Custom(name, modifiers) => {
                 let type_name = name
                     .0
                     .last()
@@ -115,6 +116,40 @@ impl LogicalPlanBuilder {
                 match type_upper.as_str() {
                     "MACADDR" => return Ok(DataType::MacAddr),
                     "MACADDR8" => return Ok(DataType::MacAddr8),
+                    "VECTOR" => {
+                        let dims = modifiers
+                            .first()
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(0);
+                        return Ok(DataType::Vector(dims));
+                    }
+                    "DECIMAL32" => {
+                        let scale = modifiers
+                            .first()
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .unwrap_or(0);
+                        return Ok(DataType::Numeric(Some((9, scale))));
+                    }
+                    "DECIMAL64" => {
+                        let scale = modifiers
+                            .first()
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .unwrap_or(0);
+                        return Ok(DataType::Numeric(Some((18, scale))));
+                    }
+                    "DECIMAL128" => {
+                        let scale = modifiers
+                            .first()
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .unwrap_or(0);
+                        return Ok(DataType::Numeric(Some((38, scale))));
+                    }
+                    "DATETIME64" => {
+                        return Ok(DataType::Timestamp);
+                    }
+                    "FIXEDSTRING" => {
+                        return Ok(DataType::String);
+                    }
                     _ => {}
                 }
 

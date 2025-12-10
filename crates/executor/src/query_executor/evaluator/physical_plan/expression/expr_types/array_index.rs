@@ -3,21 +3,35 @@ use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
 use super::super::super::ProjectionWithExprExec;
-use crate::RecordBatch;
+use crate::Table;
 
 impl ProjectionWithExprExec {
     pub(in crate::query_executor::evaluator::physical_plan) fn evaluate_array_index(
         array: &Expr,
         index: &Expr,
-        batch: &RecordBatch,
+        batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
         let array_value = Self::evaluate_expr(array, batch, row_idx)?;
         let index_value = Self::evaluate_expr(index, batch, row_idx)?;
 
-        let arr = if array_value.is_null() {
+        if array_value.is_null() {
             return Ok(Value::null());
-        } else if let Some(elements) = array_value.as_array() {
+        }
+
+        if let Some(map_entries) = array_value.as_map() {
+            if index_value.is_null() {
+                return Ok(Value::null());
+            }
+            for (k, v) in map_entries {
+                if Self::values_equal(k, &index_value) {
+                    return Ok(v.clone());
+                }
+            }
+            return Ok(Value::null());
+        }
+
+        let arr = if let Some(elements) = array_value.as_array() {
             elements
         } else {
             return Err(Error::TypeMismatch {
@@ -37,11 +51,14 @@ impl ProjectionWithExprExec {
             });
         };
 
-        if idx < 1 || idx > arr.len() as i64 {
+        let len = arr.len() as i64;
+        let actual_idx = if idx < 0 { len + idx } else { idx - 1 };
+
+        if actual_idx < 0 || actual_idx >= len {
             return Ok(Value::null());
         }
 
-        Ok(arr[(idx - 1) as usize].clone())
+        Ok(arr[actual_idx as usize].clone())
     }
 }
 
@@ -53,7 +70,7 @@ mod tests {
     use super::*;
     use crate::query_executor::evaluator::physical_plan::expression::test_utils::*;
 
-    fn create_test_batch() -> RecordBatch {
+    fn create_test_batch() -> Table {
         create_batch(
             vec![("arr_col", DataType::Array(Box::new(DataType::Int64)))],
             vec![
@@ -154,7 +171,7 @@ mod tests {
         let result =
             ProjectionWithExprExec::evaluate_array_index(&array_expr, &index_expr, &batch, 0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::null());
+        assert_eq!(result.unwrap(), Value::int64(30));
     }
 
     #[test]

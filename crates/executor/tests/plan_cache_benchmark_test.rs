@@ -22,6 +22,8 @@ fn bench_cache_insert() {
             table_name: format!("table_{}", i),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         cache.insert(key, CachedPlan::new(plan, sql));
@@ -64,6 +66,8 @@ fn bench_cache_lookup() {
                 table_name: format!("lookup_bench_{}", i),
                 alias: None,
                 projection: None,
+                only: false,
+                final_modifier: false,
             };
 
             cache.insert(key, CachedPlan::new(plan, sql));
@@ -132,6 +136,8 @@ fn bench_hit_rate_impact() {
             table_name: format!("table_{}", i),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         cache.insert(key, CachedPlan::new(plan, sql));
@@ -189,6 +195,8 @@ fn bench_lru_eviction() {
             table_name: format!("evict_test_{}", i),
             alias: None,
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         cache.insert(key, CachedPlan::new(plan, sql));

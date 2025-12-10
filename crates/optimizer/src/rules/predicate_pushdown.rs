@@ -124,9 +124,8 @@ impl PredicatePushdown {
                 refs.extend(Self::get_column_references(high));
                 refs
             }
-            Expr::Wildcard | Expr::QualifiedWildcard { .. } | Expr::Excluded { .. } => vec![],
+            Expr::Wildcard | Expr::QualifiedWildcard { .. } => vec![],
             Expr::Tuple(exprs) => exprs.iter().flat_map(Self::get_column_references).collect(),
-            Expr::Grouping { column } => vec![column.clone()],
             Expr::Cast { expr, .. } => Self::get_column_references(expr),
             Expr::TryCast { expr, .. } => Self::get_column_references(expr),
             Expr::Subquery { .. } => vec![],
@@ -182,6 +181,10 @@ impl PredicatePushdown {
                 refs.extend(Self::get_column_references(right));
                 refs
             }
+            Expr::Lambda { body, .. } => Self::get_column_references(body),
+            Expr::Grouping { column } => vec![column.clone()],
+            Expr::GroupingId { columns } => columns.clone(),
+            Expr::Excluded { column } => vec![column.clone()],
         }
     }
 
@@ -322,6 +325,29 @@ impl PredicatePushdown {
                 }
             }
 
+            PlanNode::AsOfJoin {
+                left,
+                right,
+                equality_condition,
+                match_condition,
+                is_left_join,
+            } => {
+                let left_opt = self.optimize_node(left);
+                let right_opt = self.optimize_node(right);
+
+                if left_opt.is_some() || right_opt.is_some() {
+                    Some(PlanNode::AsOfJoin {
+                        left: Box::new(left_opt.unwrap_or_else(|| left.as_ref().clone())),
+                        right: Box::new(right_opt.unwrap_or_else(|| right.as_ref().clone())),
+                        equality_condition: equality_condition.clone(),
+                        match_condition: match_condition.clone(),
+                        is_left_join: *is_left_join,
+                    })
+                } else {
+                    None
+                }
+            }
+
             PlanNode::LateralJoin {
                 left,
                 right,
@@ -435,6 +461,7 @@ impl PredicatePushdown {
                 recursive,
                 use_union_all,
                 materialization_hint,
+                column_aliases,
             } => {
                 let cte_opt = self.optimize_node(cte_plan);
                 let input_opt = self.optimize_node(input);
@@ -447,6 +474,7 @@ impl PredicatePushdown {
                         recursive: *recursive,
                         use_union_all: *use_union_all,
                         materialization_hint: materialization_hint.clone(),
+                        column_aliases: column_aliases.clone(),
                     })
                 } else {
                     None
@@ -506,6 +534,7 @@ impl PredicatePushdown {
             | PlanNode::DistinctOn { .. }
             | PlanNode::ArrayJoin { .. } => None,
             PlanNode::EmptyRelation
+            | PlanNode::Values { .. }
             | PlanNode::InsertOnConflict { .. }
             | PlanNode::Insert { .. }
             | PlanNode::Merge { .. } => None,
@@ -551,6 +580,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let projection = PlanNode::Projection {
@@ -669,6 +700,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let filter = PlanNode::Filter {
@@ -695,6 +728,8 @@ mod tests {
             alias: None,
             table_name: "test_table".to_string(),
             projection: None,
+            only: false,
+            final_modifier: false,
         };
 
         let proj1 = PlanNode::Projection {

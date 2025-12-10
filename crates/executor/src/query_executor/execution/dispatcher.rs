@@ -1,5 +1,5 @@
 use sqlparser::ast::{
-    Expr, ObjectName, Statement as SqlStatement, Value as SqlValue,
+    DataType as SqlDataType, Expr, ObjectName, Statement as SqlStatement, Value as SqlValue,
     ValueWithSpan as SqlValueWithSpan,
 };
 use yachtsql_capability::CapabilitySnapshot;
@@ -17,6 +17,11 @@ pub enum StatementJob {
     },
 
     DML {
+        operation: DmlOperation,
+        stmt: Box<SqlStatement>,
+    },
+
+    CteDml {
         operation: DmlOperation,
         stmt: Box<SqlStatement>,
     },
@@ -44,6 +49,10 @@ pub enum StatementJob {
 
     Copy {
         operation: CopyOperation,
+    },
+
+    Scripting {
+        operation: ScriptingOperation,
     },
 }
 
@@ -74,6 +83,28 @@ pub enum DdlOperation {
     DropSchema,
 
     CreateFunction,
+    DropFunction,
+
+    CreateDatabase {
+        name: ObjectName,
+        if_not_exists: bool,
+    },
+
+    DropDatabase,
+
+    CreateUser,
+    DropUser,
+    AlterUser,
+
+    CreateRole,
+    DropRole,
+    AlterRole,
+
+    Grant,
+    Revoke,
+
+    SetRole,
+    SetDefaultRole,
 }
 
 #[derive(Debug, Clone)]
@@ -92,19 +123,45 @@ pub struct CopyOperation {
 #[derive(Debug, Clone)]
 pub enum TxOperation {
     Begin,
-    Commit,
-    Rollback,
+    Commit { chain: bool },
+    Rollback { chain: bool },
     Savepoint { name: String },
     ReleaseSavepoint { name: String },
     RollbackToSavepoint { name: String },
     SetAutocommit { enabled: bool },
     SetTransactionIsolation { level: String },
+    SetTransaction { modes: Vec<TransactionModeInfo> },
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionModeInfo {
+    IsolationLevel(String),
+    AccessMode(TransactionAccessModeInfo),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionAccessModeInfo {
+    ReadOnly,
+    ReadWrite,
 }
 
 #[derive(Debug, Clone)]
 pub struct MergeOperation {
     pub stmt: Box<SqlStatement>,
     pub merge_returning: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ScriptingOperation {
+    Declare {
+        names: Vec<String>,
+        data_type: Option<SqlDataType>,
+        default_expr: Option<Box<Expr>>,
+    },
+    SetVariable {
+        name: String,
+        value: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +180,32 @@ pub enum UtilityOperation {
     },
     SetSearchPath {
         schemas: Vec<String>,
+    },
+    DescribeTable {
+        table_name: ObjectName,
+    },
+    ShowCreateTable {
+        table_name: ObjectName,
+    },
+    ShowTables {
+        filter: Option<String>,
+    },
+    ShowColumns {
+        table_name: ObjectName,
+    },
+    ExistsTable {
+        table_name: ObjectName,
+    },
+    ExistsDatabase {
+        db_name: ObjectName,
+    },
+    ShowUsers,
+    ShowRoles,
+    ShowGrants {
+        user_name: Option<String>,
+    },
+    OptimizeTable {
+        table_name: ObjectName,
     },
 }
 
@@ -183,13 +266,22 @@ impl Dispatcher {
                         operation: TxOperation::Begin,
                     }),
 
-                    SqlStatement::Commit { .. } => Ok(StatementJob::Transaction {
-                        operation: TxOperation::Commit,
+                    SqlStatement::Commit { chain, .. } => Ok(StatementJob::Transaction {
+                        operation: TxOperation::Commit { chain: *chain },
                     }),
 
-                    SqlStatement::Rollback { .. } => Ok(StatementJob::Transaction {
-                        operation: TxOperation::Rollback,
-                    }),
+                    SqlStatement::Rollback {
+                        chain, savepoint, ..
+                    } => match savepoint {
+                        Some(name) => Ok(StatementJob::Transaction {
+                            operation: TxOperation::RollbackToSavepoint {
+                                name: name.to_string(),
+                            },
+                        }),
+                        None => Ok(StatementJob::Transaction {
+                            operation: TxOperation::Rollback { chain: *chain },
+                        }),
+                    },
 
                     SqlStatement::Savepoint { name } => Ok(StatementJob::Transaction {
                         operation: TxOperation::Savepoint {
@@ -240,10 +332,13 @@ impl Dispatcher {
                         stmt: Box::new(ast.clone()),
                     }),
 
-                    SqlStatement::CreateFunction { .. } => Ok(StatementJob::DDL {
-                        operation: DdlOperation::CreateFunction,
-                        stmt: Box::new(ast.clone()),
-                    }),
+                    SqlStatement::CreateFunction(_) => {
+                        debug_print::debug_eprintln!("[dispatcher] Matched CreateFunction");
+                        Ok(StatementJob::DDL {
+                            operation: DdlOperation::CreateFunction,
+                            stmt: Box::new(ast.clone()),
+                        })
+                    }
 
                     SqlStatement::CreateSchema { .. } => Ok(StatementJob::DDL {
                         operation: DdlOperation::CreateSchema,
@@ -264,6 +359,9 @@ impl Dispatcher {
                             ObjectType::Sequence => DdlOperation::DropSequence,
                             ObjectType::Schema => DdlOperation::DropSchema,
                             ObjectType::Type => DdlOperation::DropType,
+                            ObjectType::Role => DdlOperation::DropRole,
+                            ObjectType::User => DdlOperation::DropUser,
+                            ObjectType::Database => DdlOperation::DropDatabase,
                             _ => {
                                 return Err(Error::unsupported_feature(format!(
                                     "DROP {} is not yet supported",
@@ -284,6 +382,11 @@ impl Dispatcher {
 
                     SqlStatement::DropTrigger { .. } => Ok(StatementJob::DDL {
                         operation: DdlOperation::DropTrigger,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::DropFunction { .. } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::DropFunction,
                         stmt: Box::new(ast.clone()),
                     }),
 
@@ -319,9 +422,27 @@ impl Dispatcher {
                         },
                     }),
 
-                    SqlStatement::Query(_) => Ok(StatementJob::Query {
-                        stmt: Box::new(ast.clone()),
-                    }),
+                    SqlStatement::Query(query) => {
+                        use sqlparser::ast::SetExpr;
+
+                        match query.body.as_ref() {
+                            SetExpr::Insert(_) => Ok(StatementJob::CteDml {
+                                operation: DmlOperation::Insert,
+                                stmt: Box::new(ast.clone()),
+                            }),
+                            SetExpr::Update(_) => Ok(StatementJob::CteDml {
+                                operation: DmlOperation::Update,
+                                stmt: Box::new(ast.clone()),
+                            }),
+                            SetExpr::Delete(_) => Ok(StatementJob::CteDml {
+                                operation: DmlOperation::Delete,
+                                stmt: Box::new(ast.clone()),
+                            }),
+                            _ => Ok(StatementJob::Query {
+                                stmt: Box::new(ast.clone()),
+                            }),
+                        }
+                    }
 
                     SqlStatement::Set(set_stmt) => self.handle_set_statement(set_stmt),
 
@@ -378,6 +499,129 @@ impl Dispatcher {
                         },
                     }),
 
+                    SqlStatement::ExplainTable { table_name, .. } => Ok(StatementJob::Utility {
+                        operation: UtilityOperation::DescribeTable {
+                            table_name: table_name.clone(),
+                        },
+                    }),
+
+                    SqlStatement::ShowCreate {
+                        obj_type: sqlparser::ast::ShowCreateObject::Table,
+                        obj_name,
+                    } => Ok(StatementJob::Utility {
+                        operation: UtilityOperation::ShowCreateTable {
+                            table_name: obj_name.clone(),
+                        },
+                    }),
+
+                    SqlStatement::ShowTables { show_options, .. } => {
+                        let filter_str =
+                            show_options
+                                .filter_position
+                                .as_ref()
+                                .and_then(|fp| match fp {
+                                    sqlparser::ast::ShowStatementFilterPosition::Infix(f)
+                                    | sqlparser::ast::ShowStatementFilterPosition::Suffix(f) => {
+                                        match f {
+                                            sqlparser::ast::ShowStatementFilter::Like(s)
+                                            | sqlparser::ast::ShowStatementFilter::ILike(s) => {
+                                                Some(s.clone())
+                                            }
+                                            _ => None,
+                                        }
+                                    }
+                                });
+                        Ok(StatementJob::Utility {
+                            operation: UtilityOperation::ShowTables { filter: filter_str },
+                        })
+                    }
+
+                    SqlStatement::ShowColumns { show_options, .. } => {
+                        let table_name = show_options
+                            .show_in
+                            .as_ref()
+                            .and_then(|si| si.parent_name.clone())
+                            .unwrap_or_else(|| ObjectName(vec![]));
+                        Ok(StatementJob::Utility {
+                            operation: UtilityOperation::ShowColumns { table_name },
+                        })
+                    }
+
+                    SqlStatement::CreateDatabase {
+                        db_name,
+                        if_not_exists,
+                        ..
+                    } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::CreateDatabase {
+                            name: db_name.clone(),
+                            if_not_exists: *if_not_exists,
+                        },
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::CreateUser(_) => Ok(StatementJob::DDL {
+                        operation: DdlOperation::CreateUser,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::CreateRole { .. } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::CreateRole,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::AlterRole { .. } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::AlterRole,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::Grant { .. } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::Grant,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::Revoke { .. } => Ok(StatementJob::DDL {
+                        operation: DdlOperation::Revoke,
+                        stmt: Box::new(ast.clone()),
+                    }),
+
+                    SqlStatement::Declare { stmts } => {
+                        if stmts.is_empty() {
+                            return Err(Error::invalid_query(
+                                "DECLARE statement requires at least one variable".to_string(),
+                            ));
+                        }
+                        let first = &stmts[0];
+                        let names: Vec<String> = first
+                            .names
+                            .iter()
+                            .map(|ident| ident.value.clone())
+                            .collect();
+                        let data_type = first.data_type.clone();
+                        let default_expr = first.assignment.as_ref().map(|a| {
+                            use sqlparser::ast::DeclareAssignment;
+                            match a {
+                                DeclareAssignment::Expr(e)
+                                | DeclareAssignment::Default(e)
+                                | DeclareAssignment::DuckAssignment(e)
+                                | DeclareAssignment::MsSqlAssignment(e)
+                                | DeclareAssignment::For(e) => e.clone(),
+                            }
+                        });
+                        Ok(StatementJob::Scripting {
+                            operation: ScriptingOperation::Declare {
+                                names,
+                                data_type,
+                                default_expr,
+                            },
+                        })
+                    }
+
+                    SqlStatement::OptimizeTable { name, .. } => Ok(StatementJob::Utility {
+                        operation: UtilityOperation::OptimizeTable {
+                            table_name: name.clone(),
+                        },
+                    }),
+
                     _ => Err(Error::unsupported_feature(format!(
                         "Statement type {:?} is not yet supported",
                         ast
@@ -394,7 +638,7 @@ impl Dispatcher {
 
 impl Dispatcher {
     fn handle_set_statement(&self, set_stmt: &sqlparser::ast::Set) -> Result<StatementJob> {
-        use sqlparser::ast::Set;
+        use sqlparser::ast::{Set, TransactionAccessMode, TransactionMode};
 
         match set_stmt {
             Set::SingleAssignment {
@@ -412,6 +656,34 @@ impl Dispatcher {
                 let variable_name = Self::resolve_set_variable_name(variable)?;
                 self.dispatch_single_assignment(variable_name, values)
             }
+            Set::SetTransaction { modes, .. } => {
+                let mode_infos: Vec<TransactionModeInfo> = modes
+                    .iter()
+                    .map(|m| match m {
+                        TransactionMode::IsolationLevel(level) => {
+                            TransactionModeInfo::IsolationLevel(level.to_string())
+                        }
+                        TransactionMode::AccessMode(access) => {
+                            TransactionModeInfo::AccessMode(match access {
+                                TransactionAccessMode::ReadOnly => {
+                                    TransactionAccessModeInfo::ReadOnly
+                                }
+                                TransactionAccessMode::ReadWrite => {
+                                    TransactionAccessModeInfo::ReadWrite
+                                }
+                            })
+                        }
+                    })
+                    .collect();
+
+                Ok(StatementJob::Transaction {
+                    operation: TxOperation::SetTransaction { modes: mode_infos },
+                })
+            }
+            Set::SetRole { .. } => Ok(StatementJob::DDL {
+                operation: DdlOperation::SetRole,
+                stmt: Box::new(SqlStatement::Set(set_stmt.clone())),
+            }),
             _ => Err(Error::unsupported_feature(
                 "Only simple SET assignments are supported".to_string(),
             )),
@@ -443,6 +715,15 @@ impl Dispatcher {
             let schemas = Self::parse_search_path_value(value)?;
             return Ok(StatementJob::Utility {
                 operation: UtilityOperation::SetSearchPath { schemas },
+            });
+        }
+
+        if value.len() == 1 {
+            return Ok(StatementJob::Scripting {
+                operation: ScriptingOperation::SetVariable {
+                    name: variable_name,
+                    value: Box::new(value[0].clone()),
+                },
             });
         }
 
@@ -652,7 +933,7 @@ mod tests {
 
         match result.unwrap() {
             StatementJob::Transaction {
-                operation: TxOperation::Commit,
+                operation: TxOperation::Commit { chain: false },
             } => {}
             other => panic!("Expected Commit transaction, got {:?}", other),
         }
@@ -666,7 +947,7 @@ mod tests {
 
         match result.unwrap() {
             StatementJob::Transaction {
-                operation: TxOperation::Rollback,
+                operation: TxOperation::Rollback { chain: false },
             } => {}
             other => panic!("Expected Rollback transaction, got {:?}", other),
         }
@@ -685,6 +966,38 @@ mod tests {
                 assert_eq!(name, "sp1");
             }
             other => panic!("Expected Savepoint, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_rollback_to_savepoint() {
+        let mut dispatcher = Dispatcher::new();
+        let result = dispatcher.dispatch("ROLLBACK TO SAVEPOINT sp1");
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            StatementJob::Transaction {
+                operation: TxOperation::RollbackToSavepoint { name },
+            } => {
+                assert_eq!(name, "sp1");
+            }
+            other => panic!("Expected RollbackToSavepoint, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dispatch_rollback_to_savepoint_short_form() {
+        let mut dispatcher = Dispatcher::new();
+        let result = dispatcher.dispatch("ROLLBACK TO sp1");
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            StatementJob::Transaction {
+                operation: TxOperation::RollbackToSavepoint { name },
+            } => {
+                assert_eq!(name, "sp1");
+            }
+            other => panic!("Expected RollbackToSavepoint, got {:?}", other),
         }
     }
 
