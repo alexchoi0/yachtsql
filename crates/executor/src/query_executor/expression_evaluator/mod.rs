@@ -880,6 +880,23 @@ impl<'a> ExpressionEvaluator<'a> {
 
                     if let Some(field) = self.schema.field(first_part) {
                         match &field.data_type {
+                            DataType::Json => {
+                                let json_value = self.get_column_value(row, first_part)?;
+                                if json_value.is_null() {
+                                    return Ok(Value::null());
+                                }
+                                if let Some(json_val) = json_value.as_json() {
+                                    return Ok(match json_val.get(second_part) {
+                                        Some(v) => Value::json(v.clone()),
+                                        None => Value::null(),
+                                    });
+                                } else {
+                                    return Err(Error::TypeMismatch {
+                                        expected: "JSON".to_string(),
+                                        actual: json_value.data_type().to_string(),
+                                    });
+                                }
+                            }
                             DataType::Struct(_) | DataType::Custom(_) => {
                                 let struct_value = self.get_column_value(row, first_part)?;
                                 if struct_value.is_null() {
@@ -923,7 +940,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     let first_part = &parts[0].value;
                     let mut current_value = if let Some(field) = self.schema.field(first_part) {
                         match &field.data_type {
-                            DataType::Struct(_) | DataType::Custom(_) => {
+                            DataType::Json | DataType::Struct(_) | DataType::Custom(_) => {
                                 self.get_column_value(row, first_part)?
                             }
                             _ => {
@@ -936,7 +953,11 @@ impl<'a> ExpressionEvaluator<'a> {
                         self.get_qualified_column_value(row, first_part, second_part)?
                     };
 
-                    let start_idx = if self.schema.field(first_part).is_some() {
+                    let start_idx = if self.schema.field(first_part).is_some()
+                        && matches!(
+                            self.schema.field(first_part).map(|f| &f.data_type),
+                            Some(DataType::Json | DataType::Struct(_) | DataType::Custom(_))
+                        ) {
                         1
                     } else {
                         2
@@ -946,7 +967,12 @@ impl<'a> ExpressionEvaluator<'a> {
                         if current_value.is_null() {
                             return Ok(Value::null());
                         }
-                        if let Some(map) = current_value.as_struct() {
+                        if let Some(json_val) = current_value.as_json() {
+                            current_value = match json_val.get(&part.value) {
+                                Some(v) => Value::json(v.clone()),
+                                None => Value::null(),
+                            };
+                        } else if let Some(map) = current_value.as_struct() {
                             current_value = if let Some(v) = map.get(&part.value) {
                                 v.clone()
                             } else {
@@ -966,7 +992,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             };
                         } else {
                             return Err(Error::TypeMismatch {
-                                expected: "STRUCT".to_string(),
+                                expected: "STRUCT or JSON".to_string(),
                                 actual: current_value.data_type().to_string(),
                             });
                         }
@@ -1433,10 +1459,29 @@ impl<'a> ExpressionEvaluator<'a> {
                         AccessExpr::Subscript(subscript) => match subscript {
                             Subscript::Index { index } => {
                                 let index_value = self.evaluate_expr(index, row)?;
-                                value = yachtsql_functions::array::array_subscript(
-                                    &value,
-                                    &index_value,
-                                )?;
+                                if let Some(json_val) = value.as_json() {
+                                    if let Some(idx) = index_value.as_i64() {
+                                        value = match json_val.get(idx as usize) {
+                                            Some(v) => Value::json(v.clone()),
+                                            None => Value::null(),
+                                        };
+                                    } else if let Some(key) = index_value.as_str() {
+                                        value = match json_val.get(key) {
+                                            Some(v) => Value::json(v.clone()),
+                                            None => Value::null(),
+                                        };
+                                    } else {
+                                        return Err(Error::TypeMismatch {
+                                            expected: "INT64 or STRING".to_string(),
+                                            actual: index_value.data_type().to_string(),
+                                        });
+                                    }
+                                } else {
+                                    value = yachtsql_functions::array::array_subscript(
+                                        &value,
+                                        &index_value,
+                                    )?;
+                                }
                             }
                             Subscript::Slice {
                                 lower_bound,
@@ -1473,6 +1518,11 @@ impl<'a> ExpressionEvaluator<'a> {
 
                             if value.is_null() {
                                 value = Value::null();
+                            } else if let Some(json_val) = value.as_json() {
+                                value = match json_val.get(field_name) {
+                                    Some(v) => Value::json(v.clone()),
+                                    None => Value::null(),
+                                };
                             } else if let Some(map) = value.as_struct() {
                                 value = if let Some(v) = map.get(field_name) {
                                     v.clone()
@@ -1493,7 +1543,7 @@ impl<'a> ExpressionEvaluator<'a> {
                                 };
                             } else {
                                 return Err(Error::TypeMismatch {
-                                    expected: "STRUCT".to_string(),
+                                    expected: "STRUCT or JSON".to_string(),
                                     actual: value.data_type().to_string(),
                                 });
                             }

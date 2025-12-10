@@ -32,7 +32,14 @@ impl ProjectionWithExprExec {
             field,
             struct_value
         );
-        if let Some(map) = struct_value.as_struct() {
+        if struct_value.is_null() {
+            Ok(Value::null())
+        } else if let Some(json_val) = struct_value.as_json() {
+            Ok(match json_val.get(field) {
+                Some(v) => Value::json(v.clone()),
+                None => Value::null(),
+            })
+        } else if let Some(map) = struct_value.as_struct() {
             debug_print::debug_eprintln!(
                 "[executor::struct_field] struct has fields: {:?}",
                 map.keys().collect::<Vec<_>>()
@@ -48,11 +55,9 @@ impl ProjectionWithExprExec {
                     field
                 )))
             }
-        } else if struct_value.is_null() {
-            Ok(Value::null())
         } else {
             Err(Error::TypeMismatch {
-                expected: "STRUCT".to_string(),
+                expected: "STRUCT or JSON".to_string(),
                 actual: struct_value.data_type().to_string(),
             })
         }
