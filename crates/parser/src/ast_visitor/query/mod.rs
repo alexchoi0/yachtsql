@@ -1740,6 +1740,40 @@ impl LogicalPlanBuilder {
                 }
             }
 
+            Expr::Between {
+                expr: inner,
+                low,
+                high,
+                negated,
+            } => {
+                let inner_rewritten = self.rewrite_post_aggregate_expr(inner, group_by_exprs);
+                let low_rewritten = self.rewrite_post_aggregate_expr(low, group_by_exprs);
+                let high_rewritten = self.rewrite_post_aggregate_expr(high, group_by_exprs);
+                Expr::Between {
+                    expr: Box::new(inner_rewritten),
+                    low: Box::new(low_rewritten),
+                    high: Box::new(high_rewritten),
+                    negated: *negated,
+                }
+            }
+
+            Expr::InList {
+                expr: inner,
+                list,
+                negated,
+            } => {
+                let inner_rewritten = self.rewrite_post_aggregate_expr(inner, group_by_exprs);
+                let list_rewritten = list
+                    .iter()
+                    .map(|item| self.rewrite_post_aggregate_expr(item, group_by_exprs))
+                    .collect();
+                Expr::InList {
+                    expr: Box::new(inner_rewritten),
+                    list: list_rewritten,
+                    negated: *negated,
+                }
+            }
+
             _ => expr.clone(),
         }
     }

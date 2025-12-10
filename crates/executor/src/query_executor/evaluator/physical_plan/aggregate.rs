@@ -211,6 +211,7 @@ impl AggregateExec {
                                     | FunctionName::RegrSxy
                                     | FunctionName::JsonObjectAgg
                                     | FunctionName::JsonbObjectAgg
+                                    | FunctionName::ApproxTopSum
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());
@@ -2726,6 +2727,7 @@ impl SortAggregateExec {
                                     | FunctionName::RegrSxy
                                     | FunctionName::JsonObjectAgg
                                     | FunctionName::JsonbObjectAgg
+                                    | FunctionName::ApproxTopSum
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());

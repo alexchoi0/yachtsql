@@ -11,7 +11,6 @@ fn setup_data(executor: &mut yachtsql::QueryExecutor) {
 }
 
 #[test]
-#[ignore = "APPROX_COUNT_DISTINCT returns wrong type - needs investigation"]
 fn test_approx_count_distinct() {
     let mut executor = create_executor();
     setup_data(&mut executor);
@@ -23,7 +22,6 @@ fn test_approx_count_distinct() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_approx_count_distinct_with_group() {
     let mut executor = create_executor();
     executor
@@ -40,7 +38,7 @@ fn test_approx_count_distinct_with_group() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "APPROX_QUANTILES returns wrong array length"]
 fn test_approx_quantiles() {
     let mut executor = create_executor();
     setup_data(&mut executor);
@@ -52,7 +50,6 @@ fn test_approx_quantiles() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_approx_quantiles_with_group() {
     let mut executor = create_executor();
     setup_data(&mut executor);
@@ -64,7 +61,7 @@ fn test_approx_quantiles_with_group() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "APPROX_TOP_COUNT type mismatch"]
 fn test_approx_top_count() {
     let mut executor = create_executor();
     executor
@@ -81,7 +78,7 @@ fn test_approx_top_count() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "APPROX_TOP_SUM type mismatch"]
 fn test_approx_top_sum() {
     let mut executor = create_executor();
     executor
@@ -100,7 +97,6 @@ fn test_approx_top_sum() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_approx_count_distinct_null() {
     let mut executor = create_executor();
     executor
@@ -117,7 +113,7 @@ fn test_approx_count_distinct_null() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "IGNORE NULLS not implemented for APPROX_QUANTILES"]
 fn test_approx_quantiles_ignore_nulls() {
     let mut executor = create_executor();
     executor
@@ -134,7 +130,7 @@ fn test_approx_quantiles_ignore_nulls() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "RESPECT NULLS not implemented for APPROX_QUANTILES"]
 fn test_approx_quantiles_respect_nulls() {
     let mut executor = create_executor();
     executor
@@ -151,7 +147,7 @@ fn test_approx_quantiles_respect_nulls() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "HLL_COUNT.INIT not implemented"]
 fn test_hll_count_init() {
     let mut executor = create_executor();
     executor
@@ -168,7 +164,7 @@ fn test_hll_count_init() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "HLL_COUNT.MERGE not fully implemented"]
 fn test_hll_count_merge() {
     let mut executor = create_executor();
     executor
@@ -182,7 +178,6 @@ fn test_hll_count_merge() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_hll_count_merge_partial() {
     let mut executor = create_executor();
     executor
@@ -199,7 +194,7 @@ fn test_hll_count_merge_partial() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "HLL_COUNT.EXTRACT not implemented"]
 fn test_hll_count_extract() {
     let mut executor = create_executor();
     executor
@@ -218,7 +213,7 @@ fn test_hll_count_extract() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
+#[ignore = "GENERATE_ARRAY type inference issue in UNNEST"]
 fn test_approx_count_distinct_large_dataset() {
     let mut executor = create_executor();
     executor
