@@ -9214,6 +9214,323 @@ impl<'a> ExpressionEvaluator<'a> {
                     .to_string();
                 yachtsql_functions::network::mac_string_to_oui(&s)
             }
+            "TUMBLE" | "TUMBLESTART" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "tumble/tumbleStart requires exactly 2 arguments".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+                let interval_val = self.evaluate_function_arg(&args[1], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let interval_secs = if let Some(iv) = interval_val.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = interval_val.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let ts_secs = ts.timestamp();
+                let window_num = ts_secs / interval_secs;
+                let window_start_secs = window_num * interval_secs;
+                let result = chrono::DateTime::from_timestamp(window_start_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("tumble: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "TUMBLEEND" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "tumbleEnd requires exactly 2 arguments".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+                let interval_val = self.evaluate_function_arg(&args[1], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let interval_secs = if let Some(iv) = interval_val.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = interval_val.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let ts_secs = ts.timestamp();
+                let window_num = ts_secs / interval_secs;
+                let window_start_secs = window_num * interval_secs;
+                let window_end_secs = window_start_secs + interval_secs;
+                let result = chrono::DateTime::from_timestamp(window_end_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("tumbleEnd: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "HOP" | "HOPSTART" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "hop/hopStart requires exactly 3 arguments".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+                let hop_interval = self.evaluate_function_arg(&args[1], row)?;
+                let window_interval = self.evaluate_function_arg(&args[2], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let hop_secs = if let Some(iv) = hop_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = hop_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let window_secs = if let Some(iv) = window_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = window_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let ts_secs = ts.timestamp();
+                let earliest_possible = ts_secs - window_secs + hop_secs;
+                let hop_num = (earliest_possible + hop_secs - 1) / hop_secs;
+                let hop_start_secs = hop_num * hop_secs;
+                let result = chrono::DateTime::from_timestamp(hop_start_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("hop: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "HOPEND" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "hopEnd requires exactly 3 arguments".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+                let hop_interval = self.evaluate_function_arg(&args[1], row)?;
+                let window_interval = self.evaluate_function_arg(&args[2], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let hop_secs = if let Some(iv) = hop_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = hop_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let window_secs = if let Some(iv) = window_interval.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = window_interval.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let ts_secs = ts.timestamp();
+                let earliest_possible = ts_secs - window_secs + hop_secs;
+                let hop_num = (earliest_possible + hop_secs - 1) / hop_secs;
+                let hop_start_secs = hop_num * hop_secs;
+                let hop_end_secs = hop_start_secs + window_secs;
+                let result = chrono::DateTime::from_timestamp(hop_end_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("hopEnd: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "TIMESLOT" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "timeSlot requires exactly 1 argument".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let ts_secs = ts.timestamp();
+                let slot_secs = 1800;
+                let slot_num = ts_secs / slot_secs;
+                let slot_start_secs = slot_num * slot_secs;
+                let result = chrono::DateTime::from_timestamp(slot_start_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("timeSlot: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
+            "TIMESLOTS" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "timeSlots requires 2 or 3 arguments".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+                let duration_val = self.evaluate_function_arg(&args[1], row)?;
+
+                if ts_val.is_null() || duration_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let duration_secs = duration_val
+                    .as_i64()
+                    .ok_or_else(|| Error::type_mismatch("INT64", "other"))?;
+
+                let slot_secs = if args.len() == 3 {
+                    let slot_val = self.evaluate_function_arg(&args[2], row)?;
+                    slot_val
+                        .as_i64()
+                        .ok_or_else(|| Error::type_mismatch("INT64", "other"))?
+                } else {
+                    1800
+                };
+
+                if slot_secs <= 0 {
+                    return Err(Error::invalid_query(
+                        "timeSlots: slot size must be positive",
+                    ));
+                }
+
+                let start_secs = ts.timestamp();
+                let slot_num = start_secs / slot_secs;
+                let slot_start_secs = slot_num * slot_secs;
+                let end_secs = start_secs + duration_secs;
+
+                let mut slots = Vec::new();
+                let mut current = slot_start_secs;
+                while current < end_secs {
+                    let slot_dt = chrono::DateTime::from_timestamp(current, 0)
+                        .ok_or_else(|| Error::invalid_query("timeSlots: invalid slot timestamp"))?;
+                    slots.push(Value::datetime(slot_dt));
+                    current += slot_secs;
+                }
+                Ok(Value::array(slots))
+            }
+
+            "WINDOWID" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "windowID requires exactly 1 argument".to_string(),
+                    ));
+                }
+                let ts_val = self.evaluate_function_arg(&args[0], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                Ok(Value::int64(ts.timestamp()))
+            }
+
+            "DATE_BIN" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "date_bin requires 2 or 3 arguments".to_string(),
+                    ));
+                }
+                let interval_val = self.evaluate_function_arg(&args[0], row)?;
+                let ts_val = self.evaluate_function_arg(&args[1], row)?;
+
+                if ts_val.is_null() {
+                    return Ok(Value::null());
+                }
+
+                let ts = ts_val
+                    .as_datetime()
+                    .or_else(|| ts_val.as_timestamp())
+                    .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?;
+
+                let interval_secs = if let Some(iv) = interval_val.as_interval() {
+                    (iv.months as i64) * 30 * 24 * 3600
+                        + (iv.days as i64) * 24 * 3600
+                        + iv.micros / 1_000_000
+                } else if let Some(i) = interval_val.as_i64() {
+                    i
+                } else {
+                    return Err(Error::type_mismatch("INTERVAL", "other"));
+                };
+
+                let origin_secs = if args.len() == 3 {
+                    let origin_val = self.evaluate_function_arg(&args[2], row)?;
+                    origin_val
+                        .as_datetime()
+                        .or_else(|| origin_val.as_timestamp())
+                        .ok_or_else(|| Error::type_mismatch("DATETIME or TIMESTAMP", "other"))?
+                        .timestamp()
+                } else {
+                    0
+                };
+
+                let ts_secs = ts.timestamp();
+                let offset = ts_secs - origin_secs;
+                let bin_num = offset / interval_secs;
+                let bin_start_secs = origin_secs + bin_num * interval_secs;
+                let result = chrono::DateTime::from_timestamp(bin_start_secs, 0)
+                    .ok_or_else(|| Error::invalid_query("date_bin: invalid result timestamp"))?;
+                Ok(Value::datetime(result))
+            }
+
             _ => Err(Error::UnsupportedFeature(format!(
                 "Function {} not supported in SELECT expressions",
                 func_name

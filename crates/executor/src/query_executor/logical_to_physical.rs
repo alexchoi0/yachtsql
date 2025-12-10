@@ -1824,7 +1824,8 @@ impl LogicalToPhysicalPlanner {
             "STRING" | "TEXT" => DataType::String,
             "BOOL" | "BOOLEAN" => DataType::Bool,
             "DATE" => DataType::Date,
-            "DATETIME" | "TIMESTAMP" => DataType::Timestamp,
+            "DATETIME" => DataType::DateTime,
+            "TIMESTAMP" => DataType::Timestamp,
             "UUID" => DataType::Uuid,
             _ => DataType::String,
         };

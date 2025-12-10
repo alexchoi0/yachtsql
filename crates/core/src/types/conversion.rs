@@ -80,8 +80,14 @@ impl Value {
                             + chrono::Duration::nanoseconds(nanos);
                         serde_json::Value::String(time.to_string())
                     }
-                    ValueTag::DateTime | ValueTag::Timestamp => {
-                        let micros = small.as_int64().expect("tag matched DateTime/Timestamp");
+                    ValueTag::DateTime => {
+                        let micros = small.as_datetime().expect("tag matched DateTime");
+                        let dt = chrono::DateTime::from_timestamp_micros(micros)
+                            .expect("valid timestamp micros from internal storage");
+                        serde_json::Value::String(dt.to_rfc3339())
+                    }
+                    ValueTag::Timestamp => {
+                        let micros = small.as_timestamp().expect("tag matched Timestamp");
                         let dt = chrono::DateTime::from_timestamp_micros(micros)
                             .expect("valid timestamp micros from internal storage");
                         serde_json::Value::String(dt.to_rfc3339())

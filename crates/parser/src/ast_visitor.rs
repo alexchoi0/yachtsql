@@ -56,6 +56,7 @@ pub struct LogicalPlanBuilder {
     session_variables: HashMap<String, SessionVariable>,
     udfs: HashMap<String, UdfDefinition>,
     final_tables: RefCell<HashSet<String>>,
+    current_group_by_exprs: RefCell<Vec<yachtsql_ir::expr::Expr>>,
 }
 
 mod ddl;
@@ -82,6 +83,7 @@ impl LogicalPlanBuilder {
             session_variables: HashMap::new(),
             udfs: HashMap::new(),
             final_tables: RefCell::new(HashSet::new()),
+            current_group_by_exprs: RefCell::new(Vec::new()),
         }
     }
 
@@ -131,6 +133,7 @@ impl LogicalPlanBuilder {
             session_variables: self.session_variables,
             udfs: self.udfs,
             final_tables: self.final_tables,
+            current_group_by_exprs: self.current_group_by_exprs,
         }
     }
 
@@ -146,6 +149,7 @@ impl LogicalPlanBuilder {
             session_variables: self.session_variables,
             udfs: self.udfs,
             final_tables: self.final_tables,
+            current_group_by_exprs: self.current_group_by_exprs,
         }
     }
 
@@ -166,6 +170,7 @@ impl LogicalPlanBuilder {
             session_variables: variables,
             udfs: self.udfs,
             final_tables: self.final_tables,
+            current_group_by_exprs: self.current_group_by_exprs,
         }
     }
 
@@ -181,6 +186,7 @@ impl LogicalPlanBuilder {
             session_variables: self.session_variables,
             udfs,
             final_tables: self.final_tables,
+            current_group_by_exprs: self.current_group_by_exprs,
         }
     }
 
@@ -222,6 +228,18 @@ impl LogicalPlanBuilder {
 
     fn get_named_window(&self, name: &str) -> Option<ast::WindowSpec> {
         self.named_windows.borrow().get(name).cloned()
+    }
+
+    fn set_current_group_by_exprs(&self, exprs: Vec<Expr>) {
+        *self.current_group_by_exprs.borrow_mut() = exprs;
+    }
+
+    fn get_current_group_by_exprs(&self) -> Vec<Expr> {
+        self.current_group_by_exprs.borrow().clone()
+    }
+
+    fn clear_current_group_by_exprs(&self) {
+        self.current_group_by_exprs.borrow_mut().clear();
     }
 
     fn parse_frame_bound(bound: &sqlparser::ast::WindowFrameBound) -> Option<i64> {

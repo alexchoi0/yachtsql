@@ -421,6 +421,13 @@ impl AggregateExec {
                     | FunctionName::Doy
                     | FunctionName::Dayofweek
                     | FunctionName::Dayofyear => Some(DataType::Int64),
+                    FunctionName::Custom(s) => match s.as_str() {
+                        "TUMBLE" | "TUMBLESTART" | "TUMBLEEND" | "HOP" | "HOPSTART" | "HOPEND"
+                        | "TIMESLOT" | "DATE_BIN" => Some(DataType::DateTime),
+                        "TIMESLOTS" => Some(DataType::Array(Box::new(DataType::DateTime))),
+                        "WINDOWID" => Some(DataType::Int64),
+                        _ => None,
+                    },
                     _ => None,
                 }
             }

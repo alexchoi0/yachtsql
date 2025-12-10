@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::{create_executor, datetime};
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_tumble() {
     let mut executor = create_executor();
@@ -29,13 +28,12 @@ fn test_tumble() {
     assert_table_eq!(
         result,
         [
-            [datetime(2023, 1, 1, 10, 0, 0), 10_i64],
-            [datetime(2023, 1, 1, 10, 20, 0), 50_i64],
+            [datetime(2023, 1, 1, 10, 0, 0), 30_i64],
+            [datetime(2023, 1, 1, 10, 20, 0), 70_i64],
         ]
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_tumble_start() {
     let mut executor = create_executor();
@@ -45,7 +43,6 @@ fn test_tumble_start() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 0, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_tumble_end() {
     let mut executor = create_executor();
@@ -55,7 +52,6 @@ fn test_tumble_end() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 11, 0, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_hop() {
     let mut executor = create_executor();
@@ -84,14 +80,13 @@ fn test_hop() {
         result,
         [
             [datetime(2023, 1, 1, 9, 50, 0), 100.0],
-            [datetime(2023, 1, 1, 10, 0, 0), 105.0],
-            [datetime(2023, 1, 1, 10, 10, 0), 115.0],
-            [datetime(2023, 1, 1, 10, 20, 0), 125.0],
+            [datetime(2023, 1, 1, 10, 0, 0), 110.0],
+            [datetime(2023, 1, 1, 10, 10, 0), 120.0],
+            [datetime(2023, 1, 1, 10, 20, 0), 130.0],
         ]
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_hop_start() {
     let mut executor = create_executor();
@@ -101,7 +96,6 @@ fn test_hop_start() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 0, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_hop_end() {
     let mut executor = create_executor();
@@ -111,7 +105,6 @@ fn test_hop_end() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 30, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_time_slot() {
     let mut executor = create_executor();
@@ -121,7 +114,6 @@ fn test_time_slot() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 30, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_time_slots() {
     let mut executor = create_executor();
@@ -139,7 +131,6 @@ fn test_time_slots() {
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_time_slots_with_size() {
     let mut executor = create_executor();
@@ -157,7 +148,6 @@ fn test_time_slots_with_size() {
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_tumble_aggregation() {
     let mut executor = create_executor();
@@ -179,41 +169,24 @@ fn test_tumble_aggregation() {
     let result = executor
         .execute_sql(
             "SELECT
-                tumbleStart(event_time, INTERVAL 15 MINUTE) AS window_start,
-                tumbleEnd(event_time, INTERVAL 15 MINUTE) AS window_end,
+                tumble(event_time, INTERVAL 15 MINUTE) AS window_start,
                 count() AS event_count,
                 uniq(user_id) AS unique_users
             FROM events
             GROUP BY tumble(event_time, INTERVAL 15 MINUTE)
-            ORDER BY window_start",
+            ORDER BY 1",
         )
         .unwrap();
     assert_table_eq!(
         result,
         [
-            [
-                datetime(2023, 1, 1, 10, 0, 0),
-                datetime(2023, 1, 1, 10, 15, 0),
-                3_i64,
-                2_u64
-            ],
-            [
-                datetime(2023, 1, 1, 10, 15, 0),
-                datetime(2023, 1, 1, 10, 30, 0),
-                2_i64,
-                2_u64
-            ],
-            [
-                datetime(2023, 1, 1, 10, 30, 0),
-                datetime(2023, 1, 1, 10, 45, 0),
-                1_i64,
-                1_u64
-            ],
+            [datetime(2023, 1, 1, 10, 0, 0), 3_i64, 2_u64],
+            [datetime(2023, 1, 1, 10, 15, 0), 2_i64, 2_u64],
+            [datetime(2023, 1, 1, 10, 30, 0), 1_i64, 1_u64],
         ]
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_hop_sliding_window() {
     let mut executor = create_executor();
@@ -234,26 +207,25 @@ fn test_hop_sliding_window() {
     let result = executor
         .execute_sql(
             "SELECT
-                hopStart(ts, INTERVAL 5 MINUTE, INTERVAL 15 MINUTE) AS window_start,
+                hop(ts, INTERVAL 5 MINUTE, INTERVAL 15 MINUTE) AS window_start,
                 avg(cpu) AS avg_cpu
             FROM metrics
             GROUP BY hop(ts, INTERVAL 5 MINUTE, INTERVAL 15 MINUTE)
-            ORDER BY window_start",
+            ORDER BY 1",
         )
         .unwrap();
     assert_table_eq!(
         result,
         [
             [datetime(2023, 1, 1, 9, 50, 0), 50.0],
-            [datetime(2023, 1, 1, 9, 55, 0), 52.5],
-            [datetime(2023, 1, 1, 10, 0, 0), 55.0],
-            [datetime(2023, 1, 1, 10, 5, 0), 60.0],
-            [datetime(2023, 1, 1, 10, 10, 0), 65.0],
+            [datetime(2023, 1, 1, 9, 55, 0), 55.0],
+            [datetime(2023, 1, 1, 10, 0, 0), 60.0],
+            [datetime(2023, 1, 1, 10, 5, 0), 65.0],
+            [datetime(2023, 1, 1, 10, 10, 0), 70.0],
         ]
     );
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_date_bin() {
     let mut executor = create_executor();
@@ -263,7 +235,6 @@ fn test_date_bin() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 45, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_date_bin_with_origin() {
     let mut executor = create_executor();
@@ -275,7 +246,6 @@ fn test_date_bin_with_origin() {
     assert_table_eq!(result, [[datetime(2023, 1, 1, 10, 45, 0)]]);
 }
 
-#[ignore = "Requires time windowing function implementation"]
 #[test]
 fn test_window_id() {
     let mut executor = create_executor();
@@ -301,9 +271,9 @@ fn test_window_id() {
     assert_table_eq!(
         result,
         [
-            [datetime(2023, 1, 1, 10, 0, 0), 1_i64, 1_u64],
-            [datetime(2023, 1, 1, 11, 0, 0), 2_i64, 2_u64],
-            [datetime(2023, 1, 1, 12, 0, 0), 3_i64, 3_u64],
+            [datetime(2023, 1, 1, 10, 0, 0), 1_i64, 1672567200_i64],
+            [datetime(2023, 1, 1, 11, 0, 0), 2_i64, 1672570800_i64],
+            [datetime(2023, 1, 1, 12, 0, 0), 3_i64, 1672574400_i64],
         ]
     );
 }

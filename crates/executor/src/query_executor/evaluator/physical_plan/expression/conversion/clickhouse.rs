@@ -162,19 +162,22 @@ impl ProjectionWithExprExec {
         if val.is_null() {
             return Ok(Value::null());
         }
+        if let Some(dt) = val.as_datetime() {
+            return Ok(Value::datetime(dt));
+        }
         if let Some(ts) = val.as_timestamp() {
-            return Ok(Value::timestamp(ts));
+            return Ok(Value::datetime(ts));
         }
         if let Some(d) = val.as_date() {
             let dt = d.and_hms_opt(0, 0, 0).unwrap();
-            return Ok(Value::timestamp(Utc.from_utc_datetime(&dt)));
+            return Ok(Value::datetime(Utc.from_utc_datetime(&dt)));
         }
         if let Some(s) = val.as_str() {
             let dt = parse_datetime_string(s)?;
-            return Ok(Value::timestamp(dt));
+            return Ok(Value::datetime(dt));
         }
         Err(Error::TypeMismatch {
-            expected: "TIMESTAMP, DATE, or STRING".to_string(),
+            expected: "DATETIME, TIMESTAMP, DATE, or STRING".to_string(),
             actual: val.data_type().to_string(),
         })
     }
