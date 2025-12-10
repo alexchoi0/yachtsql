@@ -212,6 +212,11 @@ pub enum CustomStatement {
 
     ClickHouseCreateDictionary {
         name: sqlparser::ast::ObjectName,
+        columns: Vec<DictionaryColumnDef>,
+        primary_key: Vec<String>,
+        source: DictionarySourceDef,
+        layout: DictionaryLayoutDef,
+        lifetime: DictionaryLifetimeDef,
     },
 
     ClickHouseDatabase {
@@ -314,6 +319,38 @@ pub enum ClickHouseSystemCommand {
 }
 
 use crate::parser::ClickHouseIndexType;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictionaryColumnDef {
+    pub name: String,
+    pub data_type: String,
+    pub is_hierarchical: bool,
+    pub default_value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DictionarySourceDef {
+    pub source_type: String,
+    pub table: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DictionaryLayoutDef {
+    #[default]
+    Flat,
+    Hashed,
+    RangeHashed,
+    Cache,
+    ComplexKeyHashed,
+    ComplexKeyCache,
+    Direct,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DictionaryLifetimeDef {
+    pub min_seconds: u64,
+    pub max_seconds: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetConstraintsMode {

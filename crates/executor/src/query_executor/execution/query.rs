@@ -169,9 +169,16 @@ impl QueryExecutorTrait for QueryExecutor {
             .get_dataset("default")
             .map(|dataset| dataset.types());
 
+        let dict_registry = storage
+            .get_dataset("default")
+            .map(|d| d.dictionaries().clone());
+
         let mut evaluator = ExpressionEvaluator::new(schema).with_dialect(self.dialect());
         if let Some(tr) = type_registry {
             evaluator = evaluator.with_type_registry(tr);
+        }
+        if let Some(dr) = dict_registry {
+            evaluator = evaluator.with_dictionary_registry(dr);
         }
 
         let mut projected_rows: Vec<Row> = Vec::new();
@@ -5613,9 +5620,13 @@ impl QueryExecutor {
         let mut projected_fields: Vec<Field> = Vec::new();
         let mut result_values: Vec<Value> = Vec::new();
 
-        let type_registry = {
+        let (type_registry, dict_registry) = {
             let storage = self.storage.borrow();
-            storage.get_dataset("default").map(|d| d.types().clone())
+            let type_reg = storage.get_dataset("default").map(|d| d.types().clone());
+            let dict_reg = storage
+                .get_dataset("default")
+                .map(|d| d.dictionaries().clone());
+            (type_reg, dict_reg)
         };
 
         let system_vars: std::collections::HashMap<String, Value> = self
@@ -5625,13 +5636,14 @@ impl QueryExecutor {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        let evaluator = if let Some(registry) = type_registry {
-            ExpressionEvaluator::new(&empty_schema)
-                .with_owned_type_registry(registry)
-                .with_system_variables(system_vars)
-        } else {
-            ExpressionEvaluator::new(&empty_schema).with_system_variables(system_vars)
-        };
+        let mut evaluator =
+            ExpressionEvaluator::new(&empty_schema).with_system_variables(system_vars);
+        if let Some(registry) = type_registry {
+            evaluator = evaluator.with_owned_type_registry(registry);
+        }
+        if let Some(registry) = dict_registry {
+            evaluator = evaluator.with_dictionary_registry(registry);
+        }
 
         for item in &select.projection {
             match item {

@@ -74,6 +74,11 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+thread_local! {
+    pub(super) static STORAGE_CONTEXT: std::cell::RefCell<Option<Rc<RefCell<yachtsql_storage::Storage>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[derive(Clone, Debug)]
 pub enum CachedSubqueryResult {
     Scalar(yachtsql_core::types::Value),
@@ -194,6 +199,31 @@ impl Drop for SubqueryCacheGuard {
     fn drop(&mut self) {
         UNCORRELATED_SUBQUERY_CACHE.with(|cache| {
             cache.borrow_mut().clear();
+        });
+    }
+}
+
+pub(crate) struct StorageContextGuard {
+    previous: Option<Rc<RefCell<yachtsql_storage::Storage>>>,
+}
+
+impl StorageContextGuard {
+    pub(crate) fn set(storage: Rc<RefCell<yachtsql_storage::Storage>>) -> Self {
+        let previous = STORAGE_CONTEXT.with(|ctx| {
+            let mut slot = ctx.borrow_mut();
+            let prior = slot.clone();
+            *slot = Some(storage);
+            prior
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for StorageContextGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.clone();
+        STORAGE_CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = previous;
         });
     }
 }
