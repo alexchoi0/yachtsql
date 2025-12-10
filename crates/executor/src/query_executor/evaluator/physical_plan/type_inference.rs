@@ -912,6 +912,9 @@ impl ProjectionWithExprExec {
                 Some(DataType::String)
             }
 
+            FunctionName::Custom(s) if s == "TO_BASE64" => Some(DataType::String),
+            FunctionName::Custom(s) if s == "FROM_BASE64" => Some(DataType::Bytes),
+
             FunctionName::Custom(s)
                 if matches!(
                     s.as_str(),
@@ -2170,6 +2173,7 @@ impl ProjectionWithExprExec {
             FunctionName::Encrypt | FunctionName::AesEncryptMysql => Some(DataType::Bytes),
             FunctionName::Decrypt | FunctionName::AesDecryptMysql => Some(DataType::String),
             FunctionName::Base64UrlEncode | FunctionName::Base64UrlDecode => Some(DataType::String),
+            FunctionName::SafeConvertBytesToString => Some(DataType::String),
 
             FunctionName::ToTsvector
             | FunctionName::ToTsquery

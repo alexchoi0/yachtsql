@@ -949,6 +949,7 @@ pub enum FunctionName {
     AesDecryptMysql,
     Base64UrlEncode,
     Base64UrlDecode,
+    SafeConvertBytesToString,
 
     // System/Special functions
     MergeAction,
@@ -2106,6 +2107,7 @@ impl FunctionName {
             "AES_DECRYPT_MYSQL" => Self::AesDecryptMysql,
             "BASE64URLENCODE" => Self::Base64UrlEncode,
             "BASE64URLDECODE" => Self::Base64UrlDecode,
+            "SAFE_CONVERT_BYTES_TO_STRING" => Self::SafeConvertBytesToString,
 
             // System/Special functions
             "MERGE_ACTION" => Self::MergeAction,
@@ -3222,6 +3224,7 @@ impl FunctionName {
             Self::AesDecryptMysql => "AES_DECRYPT_MYSQL",
             Self::Base64UrlEncode => "BASE64URLENCODE",
             Self::Base64UrlDecode => "BASE64URLDECODE",
+            Self::SafeConvertBytesToString => "SAFE_CONVERT_BYTES_TO_STRING",
 
             // System/Special functions
             Self::MergeAction => "MERGE_ACTION",

@@ -2,7 +2,6 @@ use crate::assert_table_eq;
 use crate::common::create_executor;
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_literal() {
     let mut executor = create_executor();
     let result = executor
@@ -12,7 +11,6 @@ fn test_bytes_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_hex_literal() {
     let mut executor = create_executor();
     let result = executor
@@ -52,7 +50,6 @@ fn test_bytes_length() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_concat() {
     let mut executor = create_executor();
     let result = executor
@@ -62,7 +59,6 @@ fn test_bytes_concat() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_substr() {
     let mut executor = create_executor();
     let result = executor
@@ -72,7 +68,6 @@ fn test_bytes_substr() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_to_string() {
     let mut executor = create_executor();
     let result = executor
@@ -82,7 +77,6 @@ fn test_bytes_to_string() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_string_to_bytes() {
     let mut executor = create_executor();
     let result = executor
@@ -122,7 +116,6 @@ fn test_bytes_() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_from_base64() {
     let mut executor = create_executor();
     let result = executor
@@ -132,7 +125,6 @@ fn test_bytes_from_base64() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_to_base64() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT TO_BASE64(b'hello')").unwrap();
@@ -140,7 +132,6 @@ fn test_bytes_to_base64() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_from_hex() {
     let mut executor = create_executor();
     let result = executor
@@ -150,7 +141,6 @@ fn test_bytes_from_hex() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_to_hex() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT TO_HEX(b'Hello')").unwrap();
@@ -158,7 +148,6 @@ fn test_bytes_to_hex() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_left() {
     let mut executor = create_executor();
     let result = executor
@@ -168,7 +157,6 @@ fn test_bytes_left() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_right() {
     let mut executor = create_executor();
     let result = executor
@@ -178,7 +166,6 @@ fn test_bytes_right() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_reverse() {
     let mut executor = create_executor();
     let result = executor
@@ -204,7 +191,6 @@ fn test_bytes_in_where() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_order_by() {
     let mut executor = create_executor();
     executor

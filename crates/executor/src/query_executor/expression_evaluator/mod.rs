@@ -3353,6 +3353,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 Ok(Value::numeric(rounded))
             }
             SqlDataType::Bytea
+            | SqlDataType::Bytes(_)
             | SqlDataType::Varbinary(_)
             | SqlDataType::Binary(_)
             | SqlDataType::Blob(_) => {
@@ -3674,22 +3675,24 @@ impl<'a> ExpressionEvaluator<'a> {
                         "LEFT() requires exactly 2 arguments".to_string(),
                     ));
                 }
-                let string = self.evaluate_function_arg(&args[0], row)?;
+                let value = self.evaluate_function_arg(&args[0], row)?;
                 let n = self.evaluate_function_arg(&args[1], row)?;
 
-                if string.is_null() || n.is_null() {
+                if value.is_null() || n.is_null() {
                     return Ok(Value::null());
                 }
 
-                let s = self.value_to_string(&string)?;
-                if let Some(count) = n.as_i64() {
-                    let count = count.max(0) as usize;
-                    Ok(Value::string(s.chars().take(count).collect()))
+                let count = n.as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: n.data_type().to_string(),
+                })?;
+                let count = count.max(0) as usize;
+
+                if let Some(bytes) = value.as_bytes() {
+                    Ok(Value::bytes(bytes.iter().take(count).cloned().collect()))
                 } else {
-                    Err(Error::TypeMismatch {
-                        expected: "INT64".to_string(),
-                        actual: n.data_type().to_string(),
-                    })
+                    let s = self.value_to_string(&value)?;
+                    Ok(Value::string(s.chars().take(count).collect()))
                 }
             }
             "RIGHT" => {
@@ -3698,28 +3701,27 @@ impl<'a> ExpressionEvaluator<'a> {
                         "RIGHT() requires exactly 2 arguments".to_string(),
                     ));
                 }
-                let string = self.evaluate_function_arg(&args[0], row)?;
+                let value = self.evaluate_function_arg(&args[0], row)?;
                 let n = self.evaluate_function_arg(&args[1], row)?;
 
-                if string.is_null() || n.is_null() {
+                if value.is_null() || n.is_null() {
                     return Ok(Value::null());
                 }
 
-                let s = self.value_to_string(&string)?;
-                if let Some(count) = n.as_i64() {
-                    let count = count.max(0) as usize;
-                    let chars: Vec<char> = s.chars().collect();
-                    let start = if count >= chars.len() {
-                        0
-                    } else {
-                        chars.len() - count
-                    };
-                    Ok(Value::string(chars[start..].iter().collect()))
+                let count = n.as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: n.data_type().to_string(),
+                })?;
+                let count = count.max(0) as usize;
+
+                if let Some(bytes) = value.as_bytes() {
+                    let start = bytes.len().saturating_sub(count);
+                    Ok(Value::bytes(bytes[start..].to_vec()))
                 } else {
-                    Err(Error::TypeMismatch {
-                        expected: "INT64".to_string(),
-                        actual: n.data_type().to_string(),
-                    })
+                    let s = self.value_to_string(&value)?;
+                    let chars: Vec<char> = s.chars().collect();
+                    let start = chars.len().saturating_sub(count);
+                    Ok(Value::string(chars[start..].iter().collect()))
                 }
             }
             "CHR" | "CHAR" => {
@@ -3789,12 +3791,34 @@ impl<'a> ExpressionEvaluator<'a> {
                 Ok(Value::string(result))
             }
             "CONCAT" => {
-                let mut result = String::new();
-                for arg in args {
-                    let value = self.evaluate_function_arg(arg, row)?;
-                    result.push_str(&self.value_to_string(&value)?);
+                if args.is_empty() {
+                    return Ok(Value::string(String::new()));
                 }
-                Ok(Value::string(result))
+                let first_value = self.evaluate_function_arg(&args[0], row)?;
+                if first_value.as_bytes().is_some() {
+                    let mut result_bytes: Vec<u8> = Vec::new();
+                    for arg in args {
+                        let value = self.evaluate_function_arg(arg, row)?;
+                        if let Some(bytes) = value.as_bytes() {
+                            result_bytes.extend_from_slice(bytes);
+                        } else if value.is_null() {
+                            continue;
+                        } else {
+                            return Err(Error::TypeMismatch {
+                                expected: "BYTES".to_string(),
+                                actual: value.data_type().to_string(),
+                            });
+                        }
+                    }
+                    Ok(Value::bytes(result_bytes))
+                } else {
+                    let mut result = String::new();
+                    for arg in args {
+                        let value = self.evaluate_function_arg(arg, row)?;
+                        result.push_str(&self.value_to_string(&value)?);
+                    }
+                    Ok(Value::string(result))
+                }
             }
             "LENGTH" | "LEN" => {
                 if args.len() != 1 {
@@ -3868,7 +3892,10 @@ impl<'a> ExpressionEvaluator<'a> {
                     ));
                 }
                 let string_val = self.evaluate_function_arg(&args[0], row)?;
-                let s = self.value_to_string(&string_val)?;
+
+                if string_val.is_null() {
+                    return Ok(Value::null());
+                }
 
                 let start_val = self.evaluate_function_arg(&args[1], row)?;
                 let start = if let Some(i) = start_val.as_i64() {
@@ -3880,23 +3907,36 @@ impl<'a> ExpressionEvaluator<'a> {
                     });
                 };
 
-                let result = if args.len() == 3 {
-                    let len_val = self.evaluate_function_arg(&args[2], row)?;
-                    let len = if let Some(i) = len_val.as_i64() {
-                        i as usize
-                    } else {
-                        return Err(Error::TypeMismatch {
+                if let Some(bytes) = string_val.as_bytes() {
+                    let result = if args.len() == 3 {
+                        let len_val = self.evaluate_function_arg(&args[2], row)?;
+                        let len = len_val.as_i64().ok_or_else(|| Error::TypeMismatch {
                             expected: "INT64".to_string(),
                             actual: format!("{:?}", len_val.data_type()),
-                        });
+                        })? as usize;
+                        let end = (start + len).min(bytes.len());
+                        bytes.get(start..end).unwrap_or_default().to_vec()
+                    } else {
+                        bytes.get(start..).unwrap_or_default().to_vec()
                     };
-                    let end = (start + len).min(s.len());
-                    s.chars().skip(start).take(end - start).collect()
+                    Ok(Value::bytes(result))
                 } else {
-                    s.chars().skip(start).collect()
-                };
+                    let s = self.value_to_string(&string_val)?;
 
-                Ok(Value::string(result))
+                    let result = if args.len() == 3 {
+                        let len_val = self.evaluate_function_arg(&args[2], row)?;
+                        let len = len_val.as_i64().ok_or_else(|| Error::TypeMismatch {
+                            expected: "INT64".to_string(),
+                            actual: format!("{:?}", len_val.data_type()),
+                        })? as usize;
+                        let end = (start + len).min(s.len());
+                        s.chars().skip(start).take(end - start).collect()
+                    } else {
+                        s.chars().skip(start).collect()
+                    };
+
+                    Ok(Value::string(result))
+                }
             }
             "INSTR" | "STRPOS" => {
                 if args.len() != 2 {
@@ -5714,6 +5754,28 @@ impl<'a> ExpressionEvaluator<'a> {
                     "FROM_BASE64" => yachtsql_functions::scalar::eval_from_base64(&value),
                     "FARM_FINGERPRINT" => yachtsql_functions::scalar::eval_farm_fingerprint(&value),
                     _ => unreachable!(),
+                }
+            }
+            "SAFE_CONVERT_BYTES_TO_STRING" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "SAFE_CONVERT_BYTES_TO_STRING() requires exactly 1 argument".to_string(),
+                    ));
+                }
+                let value = self.evaluate_function_arg(&args[0], row)?;
+                if value.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(bytes) = value.as_bytes() {
+                    match String::from_utf8(bytes.to_vec()) {
+                        Ok(s) => Ok(Value::string(s)),
+                        Err(_) => Ok(Value::null()),
+                    }
+                } else {
+                    Err(Error::TypeMismatch {
+                        expected: "BYTES".to_string(),
+                        actual: value.data_type().to_string(),
+                    })
                 }
             }
             "CURRENT_DATE" => {

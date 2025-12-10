@@ -68,6 +68,9 @@ impl ProjectionWithExprExec {
             "AES_DECRYPT_MYSQL" => Self::eval_aes_decrypt_mysql(args, batch, row_idx),
             "BASE64URLENCODE" => Self::eval_base64_url_encode(args, batch, row_idx),
             "BASE64URLDECODE" => Self::eval_base64_url_decode(args, batch, row_idx),
+            "SAFE_CONVERT_BYTES_TO_STRING" => {
+                Self::eval_safe_convert_bytes_to_string(args, batch, row_idx)
+            }
             name if name.starts_with("NET.") => Self::eval_net_function(name, args, batch, row_idx),
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown crypto/hash/network function: {}",
@@ -219,6 +222,33 @@ impl ProjectionWithExprExec {
         match String::from_utf8(decoded.clone()) {
             Ok(s) => Ok(Value::string(s)),
             Err(_) => Ok(Value::bytes(decoded)),
+        }
+    }
+
+    fn eval_safe_convert_bytes_to_string(
+        args: &[Expr],
+        batch: &Table,
+        row_idx: usize,
+    ) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::invalid_query(
+                "SAFE_CONVERT_BYTES_TO_STRING requires 1 argument",
+            ));
+        }
+        let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        if value.is_null() {
+            return Ok(Value::null());
+        }
+        if let Some(bytes) = value.as_bytes() {
+            match String::from_utf8(bytes.to_vec()) {
+                Ok(s) => Ok(Value::string(s)),
+                Err(_) => Ok(Value::null()),
+            }
+        } else {
+            Err(Error::TypeMismatch {
+                expected: "BYTES".to_string(),
+                actual: value.data_type().to_string(),
+            })
         }
     }
 }

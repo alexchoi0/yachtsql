@@ -5265,6 +5265,22 @@ impl ProjectionWithExprExec {
                 Ok(Value::bool_val(false))
             }
 
+            "TO_BASE64" => {
+                if args.len() != 1 {
+                    return Err(Error::invalid_query("TO_BASE64 requires 1 argument"));
+                }
+                let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                yachtsql_functions::scalar::eval_to_base64(&val)
+            }
+
+            "FROM_BASE64" => {
+                if args.len() != 1 {
+                    return Err(Error::invalid_query("FROM_BASE64 requires 1 argument"));
+                }
+                let val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                yachtsql_functions::scalar::eval_from_base64(&val)
+            }
+
             "DICTGET" | "DICTGETORDEFAULT" | "DICTGETORNULL" | "DICTHAS" | "DICTGETUINT64"
             | "DICTGETINT64" | "DICTGETFLOAT64" | "DICTGETSTRING" | "DICTGETDATE"
             | "DICTGETDATETIME" | "DICTGETUUID" | "DICTGETHIERARCHY" | "DICTISIN"

@@ -891,6 +891,7 @@ impl ProjectionWithExprExec {
                 | FunctionName::AesDecryptMysql
                 | FunctionName::Base64UrlEncode
                 | FunctionName::Base64UrlDecode
+                | FunctionName::SafeConvertBytesToString
         ) {
             return Self::evaluate_crypto_hash_network_function(
                 func_name, args, batch, row_idx, dialect,

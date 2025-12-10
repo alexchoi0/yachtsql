@@ -11,15 +11,44 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        Self::apply_string_int_binary("RIGHT", args, batch, row_idx, |s, n| {
+        use yachtsql_core::error::Error;
+
+        if args.len() != 2 {
+            return Err(Error::invalid_query("RIGHT requires exactly 2 arguments"));
+        }
+
+        let first_arg = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        let second_arg = Self::evaluate_expr(&args[1], batch, row_idx)?;
+
+        if first_arg.is_null() || second_arg.is_null() {
+            return Ok(Value::null());
+        }
+
+        let n = second_arg.as_i64().ok_or_else(|| Error::TypeMismatch {
+            expected: "INT64".to_string(),
+            actual: second_arg.data_type().to_string(),
+        })?;
+
+        if let Some(bytes) = first_arg.as_bytes() {
             if n <= 0 {
-                String::new()
-            } else {
-                let chars: Vec<char> = s.chars().collect();
-                let skip = chars.len().saturating_sub(n as usize);
-                chars[skip..].iter().collect()
+                return Ok(Value::bytes(vec![]));
             }
-        })
+            let skip = bytes.len().saturating_sub(n as usize);
+            return Ok(Value::bytes(bytes[skip..].to_vec()));
+        }
+
+        let s = first_arg.as_str().ok_or_else(|| Error::TypeMismatch {
+            expected: "STRING".to_string(),
+            actual: first_arg.data_type().to_string(),
+        })?;
+
+        if n <= 0 {
+            Ok(Value::string(String::new()))
+        } else {
+            let chars: Vec<char> = s.chars().collect();
+            let skip = chars.len().saturating_sub(n as usize);
+            Ok(Value::string(chars[skip..].iter().collect()))
+        }
     }
 }
 

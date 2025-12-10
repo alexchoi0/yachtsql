@@ -11,6 +11,34 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
+        use yachtsql_core::error::Error;
+
+        if args.is_empty() {
+            return Ok(Value::string(String::new()));
+        }
+
+        let first_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        let is_bytes_concat = first_val.as_bytes().is_some();
+
+        if is_bytes_concat {
+            let mut result_bytes: Vec<u8> = Vec::new();
+            for arg in args {
+                let val = Self::evaluate_expr(arg, batch, row_idx)?;
+                if val.is_null() {
+                    continue;
+                }
+                if let Some(b) = val.as_bytes() {
+                    result_bytes.extend_from_slice(b);
+                } else {
+                    return Err(Error::TypeMismatch {
+                        expected: "BYTES".to_string(),
+                        actual: val.data_type().to_string(),
+                    });
+                }
+            }
+            return Ok(Value::bytes(result_bytes));
+        }
+
         let mut result_bytes: Vec<u8> = Vec::new();
         let mut has_fixed_string = false;
 

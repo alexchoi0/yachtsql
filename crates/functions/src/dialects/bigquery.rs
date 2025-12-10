@@ -159,6 +159,7 @@ pub fn bigquery_scalar_functions() -> Vec<&'static str> {
         "RANGE_OVERLAPS",
         "RANGE_INTERSECT",
         "GENERATE_RANGE_ARRAY",
+        "SAFE_CONVERT_BYTES_TO_STRING",
     ]
 }
 
