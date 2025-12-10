@@ -1025,7 +1025,82 @@ static CREATE_DATABASE_ENGINE_PARSER: CreateDatabaseEngineParser = CreateDatabas
 static CREATE_DATABASE_COMMENT_PARSER: CreateDatabaseCommentParser = CreateDatabaseCommentParser;
 static USE_PARSER: UseParser = UseParser;
 
+struct CreateTableAsParser;
+
+impl ClickHouseStatementParser for CreateTableAsParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::Consecutive(&["CREATE", "TABLE"])
+    }
+
+    fn parse(&self, tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        let mut idx = 0;
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "CREATE") {
+            return Ok(None);
+        }
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "TABLE") {
+            return Ok(None);
+        }
+
+        let new_table = match tokens.get(idx) {
+            Some(Token::Word(w)) => {
+                idx += 1;
+                let mut name = w.value.clone();
+                if let Some(Token::Period) = tokens.get(idx) {
+                    idx += 1;
+                    if let Some(Token::Word(w2)) = tokens.get(idx) {
+                        name = format!("{}.{}", name, w2.value);
+                        idx += 1;
+                    }
+                }
+                name
+            }
+            _ => return Ok(None),
+        };
+
+        if !ParserHelpers::expect_keyword(tokens, &mut idx, "AS") {
+            return Ok(None);
+        }
+
+        if let Some(Token::Word(w)) = tokens.get(idx)
+            && w.value.eq_ignore_ascii_case("SELECT")
+        {
+            return Ok(None);
+        }
+
+        let source_table = match tokens.get(idx) {
+            Some(Token::Word(w)) => {
+                let mut current_idx = idx + 1;
+                let mut name = w.value.clone();
+                if let Some(Token::Period) = tokens.get(current_idx) {
+                    current_idx += 1;
+                    if let Some(Token::Word(w2)) = tokens.get(current_idx) {
+                        name = format!("{}.{}", name, w2.value);
+                    }
+                }
+                name
+            }
+            _ => return Ok(None),
+        };
+
+        let upper = sql.to_uppercase();
+        let engine_pos = upper.find("ENGINE");
+        if engine_pos.is_none() {
+            return Ok(None);
+        }
+        let engine_clause = sql[engine_pos.unwrap()..].to_string();
+
+        Ok(Some(CustomStatement::ClickHouseCreateTableAs {
+            new_table,
+            source_table,
+            engine_clause,
+        }))
+    }
+}
+
+static CREATE_TABLE_AS_PARSER: CreateTableAsParser = CreateTableAsParser;
+
 static PARSERS: &[&dyn ClickHouseStatementParser] = &[
+    &CREATE_TABLE_AS_PARSER,
     &CREATE_DICT_PARSER,
     &CREATE_INDEX_PARSER,
     &CREATE_DATABASE_ENGINE_PARSER,

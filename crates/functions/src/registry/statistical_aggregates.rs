@@ -21,29 +21,31 @@ use crate::aggregate::boolean_bitwise::{
 use crate::aggregate::clickhouse::{
     AnyFunction, AnyHeavyFunction, AnyLastFunction, ArgMaxFunction, ArgMinFunction,
     ArrayFilterFunction, ArrayFlattenFunction, ArrayMapFunction, ArrayReduceFunction,
-    AvgArrayFunction, AvgDistinctFunction, AvgIfFunction, AvgMapFunction,
-    BitmapAndCardinalityFunction, BitmapCardinalityFunction, BitmapOrCardinalityFunction,
-    BoundingRatioFunction, CategoricalInformationValueFunction, ContingencyFunction,
-    CountEqualFunction, CramersVFunction, DeltaSumFunction, DeltaSumTimestampFunction,
-    EntropyFunction, ExponentialMovingAverageFunction, GroupArrayFunction,
-    GroupArrayInsertAtFunction, GroupArrayIntersectFunction, GroupArrayLastFunction,
-    GroupArrayMovingAvgFunction, GroupArrayMovingSumFunction, GroupArraySampleFunction,
-    GroupArraySortedFunction, GroupBitAndFunction, GroupBitOrFunction, GroupBitXorFunction,
-    GroupBitmapAndFunction, GroupBitmapFunction, GroupBitmapOrFunction, GroupBitmapXorFunction,
-    GroupConcatFunction, GroupUniqArrayFunction, HistogramFunction, IntervalLengthSumFunction,
-    MannWhitneyUTestFunction, MaxArrayFunction, MaxIfFunction, MaxMapFunction, MinArrayFunction,
-    MinIfFunction, MinMapFunction, QuantileBFloat16Function, QuantileBFloat16WeightedFunction,
-    QuantileDDFunction, QuantileDeterministicFunction, QuantileExactFunction,
-    QuantileExactHighFunction, QuantileExactLowFunction, QuantileExactWeightedFunction,
-    QuantileFunction, QuantileGKFunction, QuantileInterpolatedWeightedFunction,
-    QuantileTDigestFunction, QuantileTDigestWeightedFunction, QuantileTimingFunction,
-    QuantileTimingWeightedFunction, QuantilesExactFunction, QuantilesFunction,
-    QuantilesTDigestFunction, QuantilesTimingFunction, RankCorrFunction, RetentionFunction,
-    SequenceCountFunction, SequenceMatchFunction, SimpleLinearRegressionFunction,
-    StudentTTestFunction, SumArrayFunction, SumDistinctFunction, SumIfFunction, SumMapFunction,
-    SumWithOverflowFunction, TheilUFunction, TopKFunction, TopKWeightedFunction,
-    UniqCombined64Function, UniqCombinedFunction, UniqExactFunction, UniqFunction,
-    UniqHll12Function, UniqThetaSketchFunction, UniqUpToFunction, WelchTTestFunction,
+    AvgArrayFunction, AvgDistinctFunction, AvgIfFunction, AvgMapFunction, AvgMergeFunction,
+    AvgStateFunction, BitmapAndCardinalityFunction, BitmapCardinalityFunction,
+    BitmapOrCardinalityFunction, BoundingRatioFunction, CategoricalInformationValueFunction,
+    ContingencyFunction, CountEqualFunction, CountMergeFunction, CountStateFunction,
+    CramersVFunction, DeltaSumFunction, DeltaSumTimestampFunction, EntropyFunction,
+    ExponentialMovingAverageFunction, GroupArrayFunction, GroupArrayInsertAtFunction,
+    GroupArrayIntersectFunction, GroupArrayLastFunction, GroupArrayMovingAvgFunction,
+    GroupArrayMovingSumFunction, GroupArraySampleFunction, GroupArraySortedFunction,
+    GroupBitAndFunction, GroupBitOrFunction, GroupBitXorFunction, GroupBitmapAndFunction,
+    GroupBitmapFunction, GroupBitmapOrFunction, GroupBitmapXorFunction, GroupConcatFunction,
+    GroupUniqArrayFunction, HistogramFunction, IntervalLengthSumFunction, MannWhitneyUTestFunction,
+    MaxArrayFunction, MaxIfFunction, MaxMapFunction, MaxMergeFunction, MaxStateFunction,
+    MinArrayFunction, MinIfFunction, MinMapFunction, MinMergeFunction, MinStateFunction,
+    QuantileBFloat16Function, QuantileBFloat16WeightedFunction, QuantileDDFunction,
+    QuantileDeterministicFunction, QuantileExactFunction, QuantileExactHighFunction,
+    QuantileExactLowFunction, QuantileExactWeightedFunction, QuantileFunction, QuantileGKFunction,
+    QuantileInterpolatedWeightedFunction, QuantileTDigestFunction, QuantileTDigestWeightedFunction,
+    QuantileTimingFunction, QuantileTimingWeightedFunction, QuantilesExactFunction,
+    QuantilesFunction, QuantilesTDigestFunction, QuantilesTimingFunction, RankCorrFunction,
+    RetentionFunction, SequenceCountFunction, SequenceMatchFunction,
+    SimpleLinearRegressionFunction, StudentTTestFunction, SumArrayFunction, SumDistinctFunction,
+    SumIfFunction, SumMapFunction, SumMergeFunction, SumStateFunction, SumWithOverflowFunction,
+    TheilUFunction, TopKFunction, TopKWeightedFunction, UniqCombined64Function,
+    UniqCombinedFunction, UniqExactFunction, UniqFunction, UniqHll12Function, UniqMergeFunction,
+    UniqStateFunction, UniqThetaSketchFunction, UniqUpToFunction, WelchTTestFunction,
     WindowFunnelFunction,
 };
 use crate::aggregate::conditional::CountIfFunction;
@@ -423,4 +425,17 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
     );
     registry.register_aggregate("SUMDISTINCT".to_string(), Rc::new(SumDistinctFunction));
     registry.register_aggregate("AVGDISTINCT".to_string(), Rc::new(AvgDistinctFunction));
+
+    registry.register_aggregate("SUMSTATE".to_string(), Rc::new(SumStateFunction));
+    registry.register_aggregate("SUMMERGE".to_string(), Rc::new(SumMergeFunction));
+    registry.register_aggregate("AVGSTATE".to_string(), Rc::new(AvgStateFunction));
+    registry.register_aggregate("AVGMERGE".to_string(), Rc::new(AvgMergeFunction));
+    registry.register_aggregate("COUNTSTATE".to_string(), Rc::new(CountStateFunction));
+    registry.register_aggregate("COUNTMERGE".to_string(), Rc::new(CountMergeFunction));
+    registry.register_aggregate("MINSTATE".to_string(), Rc::new(MinStateFunction));
+    registry.register_aggregate("MINMERGE".to_string(), Rc::new(MinMergeFunction));
+    registry.register_aggregate("MAXSTATE".to_string(), Rc::new(MaxStateFunction));
+    registry.register_aggregate("MAXMERGE".to_string(), Rc::new(MaxMergeFunction));
+    registry.register_aggregate("UNIQSTATE".to_string(), Rc::new(UniqStateFunction));
+    registry.register_aggregate("UNIQMERGE".to_string(), Rc::new(UniqMergeFunction));
 }

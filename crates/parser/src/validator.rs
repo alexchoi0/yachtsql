@@ -200,6 +200,12 @@ pub enum CustomStatement {
         stripped: String,
     },
 
+    ClickHouseCreateTableAs {
+        new_table: String,
+        source_table: String,
+        engine_clause: String,
+    },
+
     ClickHouseAlterTable {
         statement: String,
     },
@@ -476,6 +482,10 @@ impl StatementValidator {
             }
             CustomStatement::ClickHouseCreateTablePassthrough { .. } => {
                 self.require_clickhouse("CREATE TABLE")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseCreateTableAs { .. } => {
+                self.require_clickhouse("CREATE TABLE AS")?;
                 Ok(())
             }
             CustomStatement::ClickHouseAlterTable { .. } => {
