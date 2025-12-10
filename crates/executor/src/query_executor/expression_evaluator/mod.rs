@@ -86,6 +86,7 @@ pub struct ExpressionEvaluator<'a> {
     type_registry: Option<&'a TypeRegistry>,
     owned_type_registry: Option<TypeRegistry>,
     dialect: crate::DialectType,
+    system_variables: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +106,13 @@ impl<'a> ExpressionEvaluator<'a> {
             type_registry: None,
             owned_type_registry: None,
             dialect: crate::DialectType::BigQuery,
+            system_variables: HashMap::new(),
         }
+    }
+
+    pub fn with_system_variables(mut self, vars: HashMap<String, Value>) -> Self {
+        self.system_variables = vars;
+        self
     }
 
     pub fn with_dialect(mut self, dialect: crate::DialectType) -> Self {
@@ -144,6 +151,7 @@ impl<'a> ExpressionEvaluator<'a> {
             type_registry: None,
             owned_type_registry: None,
             dialect: crate::DialectType::BigQuery,
+            system_variables: HashMap::new(),
         }
     }
 
@@ -173,6 +181,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 type_registry: None,
                 owned_type_registry: None,
                 dialect: crate::DialectType::BigQuery,
+                system_variables: HashMap::new(),
             }
         } else {
             Self {
@@ -184,6 +193,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 type_registry: None,
                 owned_type_registry: None,
                 dialect: crate::DialectType::BigQuery,
+                system_variables: HashMap::new(),
             }
         }
     }
@@ -883,7 +893,14 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expr(&self, expr: &SqlExpr, row: &Row) -> Result<Value> {
         match expr {
-            SqlExpr::Identifier(ident) => self.get_column_value(row, &ident.value),
+            SqlExpr::Identifier(ident) => {
+                if let Some(var_name) = ident.value.strip_prefix("@@") {
+                    if let Some(value) = self.system_variables.get(var_name) {
+                        return Ok(value.clone());
+                    }
+                }
+                self.get_column_value(row, &ident.value)
+            }
 
             SqlExpr::CompoundIdentifier(parts) => {
                 if parts.len() == 2 {

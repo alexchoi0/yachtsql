@@ -104,6 +104,42 @@ pub enum CustomStatement {
 
     Abort,
 
+    Loop {
+        label: Option<String>,
+        body: String,
+    },
+
+    Repeat {
+        label: Option<String>,
+        body: String,
+        until_condition: String,
+    },
+
+    For {
+        label: Option<String>,
+        variable: String,
+        query: String,
+        body: String,
+    },
+
+    Leave {
+        label: Option<String>,
+    },
+
+    Continue {
+        label: Option<String>,
+    },
+
+    Break {
+        label: Option<String>,
+    },
+
+    While {
+        label: Option<String>,
+        condition: String,
+        body: String,
+    },
+
     BeginTransaction {
         isolation_level: Option<String>,
         read_only: Option<bool>,
@@ -492,6 +528,13 @@ impl StatementValidator {
                 self.require_clickhouse("ALTER TABLE")?;
                 Ok(())
             }
+            CustomStatement::Loop { .. }
+            | CustomStatement::Repeat { .. }
+            | CustomStatement::For { .. }
+            | CustomStatement::Leave { .. }
+            | CustomStatement::Continue { .. }
+            | CustomStatement::Break { .. }
+            | CustomStatement::While { .. } => Ok(()),
         }
     }
 

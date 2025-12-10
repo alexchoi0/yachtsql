@@ -307,6 +307,18 @@ impl Dispatcher {
                 let merge_returning = std_stmt.merge_returning().map(|s| s.to_string());
 
                 match ast {
+                    SqlStatement::StartTransaction {
+                        statements,
+                        has_end_keyword,
+                        ..
+                    } if !statements.is_empty() || *has_end_keyword => {
+                        Ok(StatementJob::Scripting {
+                            operation: ScriptingOperation::BeginEnd {
+                                stmt: Box::new(ast.clone()),
+                            },
+                        })
+                    }
+
                     SqlStatement::StartTransaction { .. } => Ok(StatementJob::Transaction {
                         operation: TxOperation::Begin,
                     }),
