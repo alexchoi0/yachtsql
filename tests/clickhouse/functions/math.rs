@@ -120,14 +120,14 @@ fn test_arithmetic_multiply() {
     assert_table_eq!(result, [[12]]);
 }
 
-#[ignore = "Implement me!"]
+#[ignore = "Requires dialect-specific division behavior (ClickHouse returns Float64 for int/int)"]
 #[test]
 fn test_arithmetic_divide() {
     let mut executor = create_executor();
 
     let result = executor.execute_sql("SELECT 10 / 4").unwrap();
 
-    assert_table_eq!(result, [[2.5]]); // 10 / 4 = 2.5
+    assert_table_eq!(result, [[n("2.5")]]); // 10 / 4 = 2.5
 }
 
 #[test]

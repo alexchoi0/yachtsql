@@ -871,6 +871,14 @@ pub enum FunctionName {
     AeadDecryptString,
     DeterministicDecryptString,
 
+    // ClickHouse Encryption functions
+    Encrypt,
+    Decrypt,
+    AesEncryptMysql,
+    AesDecryptMysql,
+    Base64UrlEncode,
+    Base64UrlDecode,
+
     // System/Special functions
     MergeAction,
     Array,
@@ -1930,6 +1938,14 @@ impl FunctionName {
             "AEAD.DECRYPT_STRING" => Self::AeadDecryptString,
             "DETERMINISTIC_DECRYPT_STRING" => Self::DeterministicDecryptString,
 
+            // ClickHouse Encryption functions
+            "ENCRYPT" => Self::Encrypt,
+            "DECRYPT" => Self::Decrypt,
+            "AES_ENCRYPT_MYSQL" => Self::AesEncryptMysql,
+            "AES_DECRYPT_MYSQL" => Self::AesDecryptMysql,
+            "BASE64URLENCODE" => Self::Base64UrlEncode,
+            "BASE64URLDECODE" => Self::Base64UrlDecode,
+
             // System/Special functions
             "MERGE_ACTION" => Self::MergeAction,
             "ARRAY" => Self::Array,
@@ -2966,6 +2982,14 @@ impl FunctionName {
             Self::DeterministicDecryptBytes => "DETERMINISTIC_DECRYPT_BYTES",
             Self::AeadDecryptString => "AEAD.DECRYPT_STRING",
             Self::DeterministicDecryptString => "DETERMINISTIC_DECRYPT_STRING",
+
+            // ClickHouse Encryption functions
+            Self::Encrypt => "ENCRYPT",
+            Self::Decrypt => "DECRYPT",
+            Self::AesEncryptMysql => "AES_ENCRYPT_MYSQL",
+            Self::AesDecryptMysql => "AES_DECRYPT_MYSQL",
+            Self::Base64UrlEncode => "BASE64URLENCODE",
+            Self::Base64UrlDecode => "BASE64URLDECODE",
 
             // System/Special functions
             Self::MergeAction => "MERGE_ACTION",
