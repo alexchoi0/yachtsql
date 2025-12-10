@@ -648,6 +648,10 @@ impl Column {
                     data.push(v);
                     nulls.push(true);
                     Ok(())
+                } else if let Some(v) = value.as_datetime() {
+                    data.push(v);
+                    nulls.push(true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected {}, got {}",
@@ -658,6 +662,10 @@ impl Column {
             }
             Column::DateTime { data, nulls } => {
                 if let Some(v) = value.as_datetime() {
+                    data.push(v);
+                    nulls.push(true);
+                    Ok(())
+                } else if let Some(v) = value.as_timestamp() {
                     data.push(v);
                     nulls.push(true);
                     Ok(())
@@ -1383,6 +1391,10 @@ impl Column {
                     data[index] = v;
                     nulls.set(index, true);
                     Ok(())
+                } else if let Some(v) = value.as_datetime() {
+                    data[index] = v;
+                    nulls.set(index, true);
+                    Ok(())
                 } else {
                     Err(Error::invalid_query(format!(
                         "type mismatch: expected {}, got {}",
@@ -1393,6 +1405,10 @@ impl Column {
             }
             Column::DateTime { data, nulls } => {
                 if let Some(v) = value.as_datetime() {
+                    data[index] = v;
+                    nulls.set(index, true);
+                    Ok(())
+                } else if let Some(v) = value.as_timestamp() {
                     data[index] = v;
                     nulls.set(index, true);
                     Ok(())

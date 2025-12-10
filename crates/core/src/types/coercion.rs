@@ -177,6 +177,8 @@ impl CoercionRules {
 
             (DataType::Timestamp, DataType::TimestampTz) => true,
             (DataType::TimestampTz, DataType::Timestamp) => true,
+            (DataType::Timestamp, DataType::DateTime) => true,
+            (DataType::DateTime, DataType::Timestamp) => true,
 
             (DataType::String, DataType::Uuid) => true,
 
@@ -687,6 +689,30 @@ impl CoercionRules {
             (DataType::Timestamp, DataType::TimestampTz) => Ok(value),
 
             (DataType::TimestampTz, DataType::Timestamp) => Ok(value),
+
+            (DataType::Timestamp, DataType::DateTime) => {
+                if let Some(ts) = value.as_timestamp() {
+                    Ok(Value::datetime(ts))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value extraction failed",
+                    ))
+                }
+            }
+
+            (DataType::DateTime, DataType::Timestamp) => {
+                if let Some(dt) = value.as_datetime() {
+                    Ok(Value::timestamp(dt))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value extraction failed",
+                    ))
+                }
+            }
 
             (DataType::Array(_), DataType::Vector(_)) => Ok(value),
 
