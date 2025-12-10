@@ -659,6 +659,15 @@ pub enum FunctionName {
     Contains,
     ContainedBy,
     Overlaps,
+    Line,
+    Lseg,
+    Path,
+    Polygon,
+    Npoints,
+    Isclosed,
+    Isopen,
+    Popen,
+    Pclose,
 
     // Geography (ST_*) functions
     StGeogpoint,
@@ -1798,6 +1807,15 @@ impl FunctionName {
             "CONTAINS" => Self::Contains,
             "CONTAINED_BY" => Self::ContainedBy,
             "OVERLAPS" => Self::Overlaps,
+            "LINE" => Self::Line,
+            "LSEG" => Self::Lseg,
+            "PATH" => Self::Path,
+            "POLYGON" => Self::Polygon,
+            "NPOINTS" => Self::Npoints,
+            "ISCLOSED" => Self::Isclosed,
+            "ISOPEN" => Self::Isopen,
+            "POPEN" => Self::Popen,
+            "PCLOSE" => Self::Pclose,
 
             // Geography (ST_*) functions
             "ST_GEOGPOINT" => Self::StGeogpoint,
@@ -2894,6 +2912,15 @@ impl FunctionName {
             Self::Contains => "CONTAINS",
             Self::ContainedBy => "CONTAINED_BY",
             Self::Overlaps => "OVERLAPS",
+            Self::Line => "LINE",
+            Self::Lseg => "LSEG",
+            Self::Path => "PATH",
+            Self::Polygon => "POLYGON",
+            Self::Npoints => "NPOINTS",
+            Self::Isclosed => "ISCLOSED",
+            Self::Isopen => "ISOPEN",
+            Self::Popen => "POPEN",
+            Self::Pclose => "PCLOSE",
 
             // Geography (ST_*) functions
             Self::StGeogpoint => "ST_GEOGPOINT",

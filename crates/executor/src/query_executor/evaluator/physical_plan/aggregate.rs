@@ -274,6 +274,10 @@ impl AggregateExec {
                     LiteralValue::Point(_) => DataType::Point,
                     LiteralValue::PgBox(_) => DataType::PgBox,
                     LiteralValue::Circle(_) => DataType::Circle,
+                    LiteralValue::Line(_) => DataType::Line,
+                    LiteralValue::Lseg(_) => DataType::Lseg,
+                    LiteralValue::Path(_) => DataType::Path,
+                    LiteralValue::Polygon(_) => DataType::Polygon,
                     LiteralValue::MacAddr(_) => DataType::MacAddr,
                     LiteralValue::MacAddr8(_) => DataType::MacAddr8,
                 })
