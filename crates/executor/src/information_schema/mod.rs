@@ -820,7 +820,7 @@ impl InformationSchemaProvider {
 
                     for (idx, unique_cols) in table_schema.unique_constraints().iter().enumerate() {
                         let constraint_name = format!("{}_unique_{}", table_name, idx);
-                        for col_name in unique_cols {
+                        for col_name in &unique_cols.columns {
                             rows.push(Row::from_values(vec![
                                 Value::string(schema_name.clone()),
                                 Value::string(schema_name.clone()),

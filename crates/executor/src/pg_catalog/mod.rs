@@ -1076,6 +1076,7 @@ impl PgCatalogProvider {
                     for (idx, unique_cols) in table_schema.unique_constraints().iter().enumerate() {
                         let conname = format!("{}_unique_{}", table_name, idx);
                         let conkey: Vec<Value> = unique_cols
+                            .columns
                             .iter()
                             .filter_map(|col| {
                                 table_schema
