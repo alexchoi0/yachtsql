@@ -163,25 +163,36 @@ impl ProjectionWithExprExec {
                 };
 
                 let field = &schema.fields()[col_idx];
+                let is_json = matches!(field.data_type, yachtsql_core::types::DataType::Json);
                 let is_struct = matches!(
                     field.data_type,
                     yachtsql_core::types::DataType::Struct(_)
                         | yachtsql_core::types::DataType::Custom(_)
                 );
-                if !is_struct {
+                if !is_struct && !is_json {
                     return Err(Error::column_not_found(name.clone()));
                 }
 
-                let struct_value = batch
+                let field_value = batch
                     .column(col_idx)
                     .ok_or_else(|| Error::column_not_found(table_name.clone()))?
                     .get(row_idx)?;
 
-                if struct_value.is_null() {
+                if field_value.is_null() {
                     return Ok(Value::null());
                 }
 
-                let Some(map) = struct_value.as_struct() else {
+                if is_json {
+                    if let Some(json_val) = field_value.as_json() {
+                        return Ok(match json_val.get(name) {
+                            Some(v) => Value::json(v.clone()),
+                            None => Value::null(),
+                        });
+                    }
+                    return Err(Error::column_not_found(name.clone()));
+                }
+
+                let Some(map) = field_value.as_struct() else {
                     return Err(Error::column_not_found(name.clone()));
                 };
 

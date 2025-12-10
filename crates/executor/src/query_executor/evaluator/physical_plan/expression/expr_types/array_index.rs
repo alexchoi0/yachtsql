@@ -19,6 +19,28 @@ impl ProjectionWithExprExec {
             return Ok(Value::null());
         }
 
+        if let Some(json_val) = array_value.as_json() {
+            if index_value.is_null() {
+                return Ok(Value::null());
+            }
+            if let Some(i) = index_value.as_i64() {
+                return Ok(match json_val.get(i as usize) {
+                    Some(v) => Value::json(v.clone()),
+                    None => Value::null(),
+                });
+            } else if let Some(key) = index_value.as_str() {
+                return Ok(match json_val.get(key) {
+                    Some(v) => Value::json(v.clone()),
+                    None => Value::null(),
+                });
+            } else {
+                return Err(Error::TypeMismatch {
+                    expected: "INT64 or STRING".to_string(),
+                    actual: index_value.data_type().to_string(),
+                });
+            }
+        }
+
         if let Some(map_entries) = array_value.as_map() {
             if index_value.is_null() {
                 return Ok(Value::null());
