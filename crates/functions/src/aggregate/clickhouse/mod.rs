@@ -1300,36 +1300,18 @@ impl Accumulator for MinMapAccumulator {
             return Ok(());
         }
 
-        let (keys, values) = if let Some(arr) = value.as_array() {
+        if let Some(arr) = value.as_array() {
             if arr.len() == 2 {
-                if let (Some(k), Some(v)) = (arr[0].as_array(), arr[1].as_array()) {
-                    (k, v)
-                } else {
-                    return Err(Error::TypeMismatch {
-                        expected: "ARRAY[ARRAY, ARRAY]".to_string(),
-                        actual: value.data_type().to_string(),
-                    });
+                if arr[0].is_null() || arr[1].is_null() {
+                    return Ok(());
                 }
-            } else {
-                return Err(Error::TypeMismatch {
-                    expected: "ARRAY[keys, values]".to_string(),
-                    actual: value.data_type().to_string(),
-                });
-            }
-        } else {
-            return Err(Error::TypeMismatch {
-                expected: "ARRAY[keys, values]".to_string(),
-                actual: value.data_type().to_string(),
-            });
-        };
-
-        for (key, val) in keys.iter().zip(values.iter()) {
-            let key_str = value_to_string(key);
-            if let Some(val_f64) = numeric_value_to_f64(val)? {
-                self.mins
-                    .entry(key_str)
-                    .and_modify(|v| *v = v.min(val_f64))
-                    .or_insert(val_f64);
+                let key_str = value_to_string(&arr[0]);
+                if let Some(val_f64) = numeric_value_to_f64(&arr[1])? {
+                    self.mins
+                        .entry(key_str)
+                        .and_modify(|v| *v = v.min(val_f64))
+                        .or_insert(val_f64);
+                }
             }
         }
         Ok(())
@@ -1415,36 +1397,18 @@ impl Accumulator for MaxMapAccumulator {
             return Ok(());
         }
 
-        let (keys, values) = if let Some(arr) = value.as_array() {
+        if let Some(arr) = value.as_array() {
             if arr.len() == 2 {
-                if let (Some(k), Some(v)) = (arr[0].as_array(), arr[1].as_array()) {
-                    (k, v)
-                } else {
-                    return Err(Error::TypeMismatch {
-                        expected: "ARRAY[ARRAY, ARRAY]".to_string(),
-                        actual: value.data_type().to_string(),
-                    });
+                if arr[0].is_null() || arr[1].is_null() {
+                    return Ok(());
                 }
-            } else {
-                return Err(Error::TypeMismatch {
-                    expected: "ARRAY[keys, values]".to_string(),
-                    actual: value.data_type().to_string(),
-                });
-            }
-        } else {
-            return Err(Error::TypeMismatch {
-                expected: "ARRAY[keys, values]".to_string(),
-                actual: value.data_type().to_string(),
-            });
-        };
-
-        for (key, val) in keys.iter().zip(values.iter()) {
-            let key_str = value_to_string(key);
-            if let Some(val_f64) = numeric_value_to_f64(val)? {
-                self.maxs
-                    .entry(key_str)
-                    .and_modify(|v| *v = v.max(val_f64))
-                    .or_insert(val_f64);
+                let key_str = value_to_string(&arr[0]);
+                if let Some(val_f64) = numeric_value_to_f64(&arr[1])? {
+                    self.maxs
+                        .entry(key_str)
+                        .and_modify(|v| *v = v.max(val_f64))
+                        .or_insert(val_f64);
+                }
             }
         }
         Ok(())
