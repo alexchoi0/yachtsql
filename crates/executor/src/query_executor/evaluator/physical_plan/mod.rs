@@ -40,7 +40,7 @@ pub use join::{
     NestedLoopJoinExec, PasteJoinExec,
 };
 pub use join_strategy::JoinStrategy;
-pub use limit::LimitExec;
+pub use limit::{LimitExec, LimitPercentExec};
 pub use merge::MergeExec;
 pub use pivot::{PivotAggregateFunction, PivotExec, UnpivotExec};
 pub use set_ops::{ExceptExec, IntersectExec, UnionExec};

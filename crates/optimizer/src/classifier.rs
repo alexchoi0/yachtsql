@@ -176,7 +176,7 @@ impl ComplexityAnalyzer {
                 self.visit_node(input);
             }
 
-            PlanNode::Limit { input, .. } => {
+            PlanNode::Limit { input, .. } | PlanNode::LimitPercent { input, .. } => {
                 self.visit_node(input);
             }
 

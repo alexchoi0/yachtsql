@@ -108,6 +108,13 @@ pub enum PlanNode {
         input: Box<PlanNode>,
     },
 
+    LimitPercent {
+        percent: f64,
+        offset: usize,
+        with_ties: bool,
+        input: Box<PlanNode>,
+    },
+
     Distinct {
         input: Box<PlanNode>,
     },
@@ -439,6 +446,7 @@ impl PlanNode {
             | PlanNode::Aggregate { input, .. }
             | PlanNode::Sort { input, .. }
             | PlanNode::Limit { input, .. }
+            | PlanNode::LimitPercent { input, .. }
             | PlanNode::Distinct { input }
             | PlanNode::DistinctOn { input, .. }
             | PlanNode::Window { input, .. } => vec![input],

@@ -59,7 +59,6 @@ fn test_declare_cursor_no_scroll() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_next() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -74,7 +73,6 @@ fn test_fetch_next() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_prior() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -92,7 +90,6 @@ fn test_fetch_prior() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_first() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -107,7 +104,6 @@ fn test_fetch_first() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_last() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -122,7 +118,6 @@ fn test_fetch_last() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_absolute() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -137,7 +132,6 @@ fn test_fetch_absolute() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_relative() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -153,7 +147,6 @@ fn test_fetch_relative() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_count() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -168,7 +161,6 @@ fn test_fetch_count() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_all() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -183,7 +175,6 @@ fn test_fetch_all() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_forward() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -198,7 +189,6 @@ fn test_fetch_forward() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_forward_all() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -213,7 +203,6 @@ fn test_fetch_forward_all() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_backward() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -229,7 +218,6 @@ fn test_fetch_backward() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_backward_all() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -249,7 +237,6 @@ fn test_fetch_backward_all() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_move_cursor() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -264,7 +251,6 @@ fn test_move_cursor() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_move_absolute() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -281,7 +267,6 @@ fn test_move_absolute() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_close_cursor() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -296,7 +281,6 @@ fn test_close_cursor() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_close_all_cursors() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -350,7 +334,6 @@ fn test_cursor_for_update() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cursor_where_current_of() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -367,7 +350,6 @@ fn test_cursor_where_current_of() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cursor_delete_current_of() {
     let mut executor = create_executor();
     setup_table(&mut executor);

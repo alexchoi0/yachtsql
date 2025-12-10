@@ -7,6 +7,11 @@ use yachtsql_ir::plan::{JoinType, LogicalPlan, PlanNode};
 
 use super::{AliasScopeGuard, GroupingExtension, LogicalPlanBuilder};
 
+enum FetchResult {
+    Rows(usize),
+    Percent { percent: f64, with_ties: bool },
+}
+
 impl LogicalPlanBuilder {
     fn detect_union_all_in_cte(plan: &PlanNode) -> bool {
         match plan {
@@ -174,20 +179,44 @@ impl LogicalPlanBuilder {
         }
 
         let (mut limit_val, offset_val) = self.parse_limit_clause(&query.limit_clause)?;
+        let fetch_result = self.parse_fetch_clause(&query.fetch)?;
 
-        if let Some(fetch_limit) = self.parse_fetch_clause(&query.fetch)? {
-            limit_val = match limit_val {
-                Some(existing) => Some(existing.min(fetch_limit)),
-                None => Some(fetch_limit),
-            };
-        }
-
-        if limit_val.is_some() || offset_val > 0 {
-            plan = LogicalPlan::new(PlanNode::Limit {
-                limit: limit_val.unwrap_or(usize::MAX),
-                offset: offset_val,
-                input: plan.root,
-            });
+        match fetch_result {
+            Some(FetchResult::Percent { percent, with_ties }) => {
+                if limit_val.is_some() {
+                    return Err(Error::invalid_query(
+                        "Cannot combine LIMIT with FETCH FIRST PERCENT",
+                    ));
+                }
+                plan = LogicalPlan::new(PlanNode::LimitPercent {
+                    percent,
+                    offset: offset_val,
+                    with_ties,
+                    input: plan.root,
+                });
+            }
+            Some(FetchResult::Rows(fetch_limit)) => {
+                limit_val = match limit_val {
+                    Some(existing) => Some(existing.min(fetch_limit)),
+                    None => Some(fetch_limit),
+                };
+                if limit_val.is_some() || offset_val > 0 {
+                    plan = LogicalPlan::new(PlanNode::Limit {
+                        limit: limit_val.unwrap_or(usize::MAX),
+                        offset: offset_val,
+                        input: plan.root,
+                    });
+                }
+            }
+            None => {
+                if limit_val.is_some() || offset_val > 0 {
+                    plan = LogicalPlan::new(PlanNode::Limit {
+                        limit: limit_val.unwrap_or(usize::MAX),
+                        offset: offset_val,
+                        input: plan.root,
+                    });
+                }
+            }
         }
 
         self.clear_current_group_by_exprs();
@@ -1921,20 +1950,50 @@ impl LogicalPlanBuilder {
         Ok((limit_val, offset_val))
     }
 
-    fn parse_fetch_clause(&self, fetch: &Option<ast::Fetch>) -> Result<Option<usize>> {
+    fn parse_fetch_clause(&self, fetch: &Option<ast::Fetch>) -> Result<Option<FetchResult>> {
         let Some(fetch_clause) = fetch else {
             return Ok(None);
         };
 
         if fetch_clause.percent {
-            return Err(Error::unsupported_feature(
-                "FETCH FIRST ... PERCENT is not supported yet".to_string(),
-            ));
+            let percent = match &fetch_clause.quantity {
+                Some(expr) => Self::parse_positive_number(expr, "FETCH PERCENT")?,
+                None => 100.0,
+            };
+            if !(0.0..=100.0).contains(&percent) {
+                return Err(Error::invalid_query(
+                    "PERCENT value must be between 0 and 100",
+                ));
+            }
+            return Ok(Some(FetchResult::Percent {
+                percent,
+                with_ties: fetch_clause.with_ties,
+            }));
         }
 
         match &fetch_clause.quantity {
-            Some(expr) => Ok(Some(Self::parse_positive_integer(expr, "FETCH")?)),
-            None => Ok(Some(1)),
+            Some(expr) => Ok(Some(FetchResult::Rows(Self::parse_positive_integer(
+                expr, "FETCH",
+            )?))),
+            None => Ok(Some(FetchResult::Rows(1))),
+        }
+    }
+
+    fn parse_positive_number(expr: &ast::Expr, label: &str) -> Result<f64> {
+        match expr {
+            ast::Expr::Value(ast::ValueWithSpan {
+                value: ast::Value::Number(num_str, _),
+                ..
+            }) => num_str
+                .parse::<f64>()
+                .map_err(|_| Error::invalid_query(format!("Invalid {label} value"))),
+            ast::Expr::UnaryOp {
+                op: ast::UnaryOperator::Minus,
+                ..
+            } => Err(Error::invalid_query(format!(
+                "{label} value must be non-negative"
+            ))),
+            _ => Err(Error::invalid_query(format!("Invalid {label} value"))),
         }
     }
 

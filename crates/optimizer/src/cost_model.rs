@@ -125,6 +125,12 @@ impl CostModel {
                 let input_cost = self.estimate_node_cost(input);
                 self.estimate_limit_cost(&input_cost, *limit)
             }
+            PlanNode::LimitPercent { input, percent, .. } => {
+                let input_cost = self.estimate_node_cost(input);
+                let estimated_limit =
+                    ((input_cost.rows as f64 * percent / 100.0).ceil() as usize).max(1);
+                self.estimate_limit_cost(&input_cost, estimated_limit)
+            }
             PlanNode::Distinct { input } => {
                 let input_cost = self.estimate_node_cost(input);
                 self.estimate_distinct_cost(&input_cost)

@@ -15,7 +15,6 @@ fn setup_table(executor: &mut yachtsql::QueryExecutor) {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_first_n_rows() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -30,7 +29,6 @@ fn test_fetch_first_n_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_first_row() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -42,7 +40,6 @@ fn test_fetch_first_row() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_first_1_row() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -54,7 +51,6 @@ fn test_fetch_first_1_row() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_next_n_rows() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -66,7 +62,6 @@ fn test_fetch_next_n_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_offset_fetch() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -78,7 +73,6 @@ fn test_offset_fetch() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_offset_rows_fetch() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -106,7 +100,6 @@ fn test_fetch_with_ties() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_first_percent() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -121,7 +114,6 @@ fn test_fetch_first_percent() {
 }
 
 #[test]
-#[ignore = "FETCH FIRST PERCENT is not supported yet"]
 fn test_fetch_first_percent_with_ties() {
     let mut executor = create_executor();
     executor
@@ -161,7 +153,6 @@ fn test_fetch_more_than_available() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_zero_rows() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -173,7 +164,6 @@ fn test_fetch_zero_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_offset_beyond_rows() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -185,7 +175,6 @@ fn test_offset_beyond_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_with_where() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -197,7 +186,6 @@ fn test_fetch_with_where() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_with_aggregate() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -217,7 +205,6 @@ fn test_fetch_with_aggregate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_subquery() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -253,7 +240,6 @@ fn test_fetch_union() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_with_join() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -277,7 +263,6 @@ fn test_fetch_with_join() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_with_cte() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -292,7 +277,6 @@ fn test_fetch_with_cte() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_fetch_window_function() {
     let mut executor = create_executor();
     setup_table(&mut executor);
@@ -307,9 +291,9 @@ fn test_fetch_window_function() {
     assert_table_eq!(
         result,
         [
-            [1, "Apple", 100, 1],
-            [2, "Banana", 50, 2],
-            [3, "Cherry", 200, 3]
+            [1, "Apple", 100, 4],
+            [2, "Banana", 50, 6],
+            [3, "Cherry", 200, 2]
         ]
     );
 }

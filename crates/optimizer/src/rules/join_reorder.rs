@@ -30,6 +30,9 @@ impl JoinReorder {
             }
             PlanNode::Sort { input, .. } => Self::estimate_cardinality(input),
             PlanNode::Limit { limit, .. } => *limit,
+            PlanNode::LimitPercent { input, percent, .. } => {
+                Self::estimate_cardinality(input) * (*percent as usize) / 100
+            }
             PlanNode::Distinct { input } => Self::estimate_cardinality(input) / 2,
             PlanNode::SubqueryScan { subquery, .. } => Self::estimate_cardinality(subquery),
             PlanNode::Union { left, right, .. } => {
@@ -226,6 +229,19 @@ impl JoinReorder {
                 .map(|optimized| PlanNode::Limit {
                     limit: *limit,
                     offset: *offset,
+                    input: Box::new(optimized),
+                }),
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => self
+                .optimize_join_chain(input)
+                .map(|optimized| PlanNode::LimitPercent {
+                    percent: *percent,
+                    offset: *offset,
+                    with_ties: *with_ties,
                     input: Box::new(optimized),
                 }),
             PlanNode::Distinct { input } => {
