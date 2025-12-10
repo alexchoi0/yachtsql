@@ -226,7 +226,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(Error::TypeMismatch { expected, actual }) => {
-                assert_eq!(expected, "STRUCT");
+                assert_eq!(expected, "STRUCT or JSON");
                 assert_eq!(actual, "STRING");
             }
             _ => panic!("Expected TypeMismatch error"),
