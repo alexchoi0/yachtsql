@@ -588,16 +588,19 @@ impl LogicalPlanBuilder {
                     })
                     .collect();
 
-                let needs_projection = final_projection.iter().any(|(expr, alias)| {
-                    alias.is_some()
-                        || matches!(
-                            expr,
-                            Expr::BinaryOp { .. }
-                                | Expr::UnaryOp { .. }
-                                | Expr::Case { .. }
-                                | Expr::Cast { .. }
-                        )
-                });
+                let needs_projection = _has_rollup
+                    || _has_cube
+                    || _has_grouping_sets
+                    || final_projection.iter().any(|(expr, alias)| {
+                        alias.is_some()
+                            || matches!(
+                                expr,
+                                Expr::BinaryOp { .. }
+                                    | Expr::UnaryOp { .. }
+                                    | Expr::Case { .. }
+                                    | Expr::Cast { .. }
+                            )
+                    });
                 if needs_projection {
                     plan = LogicalPlan::new(PlanNode::Projection {
                         expressions: final_projection,
@@ -1581,6 +1584,15 @@ impl LogicalPlanBuilder {
                     args: rewritten_args,
                 }
             }
+
+            Expr::Grouping { column } => Expr::Column {
+                name: format!("__grouping_{}", column),
+                table: None,
+            },
+
+            Expr::GroupingId { columns } => Expr::GroupingId {
+                columns: columns.clone(),
+            },
 
             _ => expr.clone(),
         }
