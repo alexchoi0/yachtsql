@@ -19,8 +19,8 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
         "TUMBLE".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "TUMBLE".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 2 {
@@ -29,7 +29,7 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
                 let ts = extract_timestamp(&args[0])?;
                 let interval_secs = extract_interval_seconds(&args[1])?;
                 let window_start = compute_tumble_start(ts, interval_secs);
-                Ok(Value::timestamp(window_start))
+                Ok(Value::datetime(window_start))
             },
         }),
     );
@@ -38,8 +38,8 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
         "TUMBLESTART".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "TUMBLESTART".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 2 {
@@ -48,7 +48,7 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
                 let ts = extract_timestamp(&args[0])?;
                 let interval_secs = extract_interval_seconds(&args[1])?;
                 let window_start = compute_tumble_start(ts, interval_secs);
-                Ok(Value::timestamp(window_start))
+                Ok(Value::datetime(window_start))
             },
         }),
     );
@@ -57,8 +57,8 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
         "TUMBLEEND".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "TUMBLEEND".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 2 {
@@ -68,7 +68,7 @@ fn register_tumble_functions(registry: &mut FunctionRegistry) {
                 let interval_secs = extract_interval_seconds(&args[1])?;
                 let window_start = compute_tumble_start(ts, interval_secs);
                 let window_end = window_start + Duration::seconds(interval_secs);
-                Ok(Value::timestamp(window_end))
+                Ok(Value::datetime(window_end))
             },
         }),
     );
@@ -79,8 +79,8 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
         "HOP".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "HOP".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 3 {
@@ -90,7 +90,7 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
                 let hop_secs = extract_interval_seconds(&args[1])?;
                 let _window_secs = extract_interval_seconds(&args[2])?;
                 let hop_start = compute_hop_start(ts, hop_secs);
-                Ok(Value::timestamp(hop_start))
+                Ok(Value::datetime(hop_start))
             },
         }),
     );
@@ -99,8 +99,8 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
         "HOPSTART".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "HOPSTART".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 3 {
@@ -110,7 +110,7 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
                 let hop_secs = extract_interval_seconds(&args[1])?;
                 let _window_secs = extract_interval_seconds(&args[2])?;
                 let hop_start = compute_hop_start(ts, hop_secs);
-                Ok(Value::timestamp(hop_start))
+                Ok(Value::datetime(hop_start))
             },
         }),
     );
@@ -119,8 +119,8 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
         "HOPEND".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "HOPEND".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Interval, DataType::Interval],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime, DataType::Interval, DataType::Interval],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 3 {
@@ -131,7 +131,7 @@ fn register_hop_functions(registry: &mut FunctionRegistry) {
                 let window_secs = extract_interval_seconds(&args[2])?;
                 let hop_start = compute_hop_start(ts, hop_secs);
                 let hop_end = hop_start + Duration::seconds(window_secs);
-                Ok(Value::timestamp(hop_end))
+                Ok(Value::datetime(hop_end))
             },
         }),
     );
@@ -142,8 +142,8 @@ fn register_time_slot_functions(registry: &mut FunctionRegistry) {
         "TIMESLOT".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "TIMESLOT".to_string(),
-            arg_types: vec![DataType::Timestamp],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::DateTime],
+            return_type: DataType::DateTime,
             variadic: false,
             evaluator: |args| {
                 if args.len() != 1 {
@@ -151,7 +151,7 @@ fn register_time_slot_functions(registry: &mut FunctionRegistry) {
                 }
                 let ts = extract_timestamp(&args[0])?;
                 let slot_start = compute_tumble_start(ts, 1800);
-                Ok(Value::timestamp(slot_start))
+                Ok(Value::datetime(slot_start))
             },
         }),
     );
@@ -160,8 +160,8 @@ fn register_time_slot_functions(registry: &mut FunctionRegistry) {
         "TIMESLOTS".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "TIMESLOTS".to_string(),
-            arg_types: vec![DataType::Timestamp, DataType::Int64],
-            return_type: DataType::Array(Box::new(DataType::Timestamp)),
+            arg_types: vec![DataType::DateTime, DataType::Int64],
+            return_type: DataType::Array(Box::new(DataType::DateTime)),
             variadic: true,
             evaluator: |args| {
                 if args.len() < 2 || args.len() > 3 {
@@ -187,7 +187,7 @@ fn register_time_slot_functions(registry: &mut FunctionRegistry) {
                 let mut slots = Vec::new();
                 let mut current = slot_start;
                 while current < end_ts {
-                    slots.push(Value::timestamp(current));
+                    slots.push(Value::datetime(current));
                     current += Duration::seconds(slot_size_secs);
                 }
 
@@ -200,7 +200,7 @@ fn register_time_slot_functions(registry: &mut FunctionRegistry) {
         "WINDOWID".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "WINDOWID".to_string(),
-            arg_types: vec![DataType::Timestamp],
+            arg_types: vec![DataType::DateTime],
             return_type: DataType::Int64,
             variadic: false,
             evaluator: |args| {
@@ -220,8 +220,8 @@ fn register_date_bin_functions(registry: &mut FunctionRegistry) {
         "DATE_BIN".to_string(),
         Rc::new(ScalarFunctionImpl {
             name: "DATE_BIN".to_string(),
-            arg_types: vec![DataType::Interval, DataType::Timestamp],
-            return_type: DataType::Timestamp,
+            arg_types: vec![DataType::Interval, DataType::DateTime],
+            return_type: DataType::DateTime,
             variadic: true,
             evaluator: |args| {
                 if args.len() < 2 || args.len() > 3 {
@@ -243,7 +243,7 @@ fn register_date_bin_functions(registry: &mut FunctionRegistry) {
 
                 let result = DateTime::from_timestamp(bin_start_secs, 0)
                     .ok_or_else(|| Error::invalid_query("date_bin: invalid result timestamp"))?;
-                Ok(Value::timestamp(result))
+                Ok(Value::datetime(result))
             },
         }),
     );
@@ -256,8 +256,11 @@ fn extract_timestamp(value: &Value) -> Result<DateTime<Utc>, Error> {
     if let Some(ts) = value.as_timestamp() {
         return Ok(ts);
     }
+    if let Some(dt) = value.as_datetime() {
+        return Ok(dt);
+    }
     Err(Error::TypeMismatch {
-        expected: "TIMESTAMP".to_string(),
+        expected: "TIMESTAMP or DATETIME".to_string(),
         actual: value.data_type().to_string(),
     })
 }

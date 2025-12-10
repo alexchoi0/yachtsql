@@ -115,6 +115,20 @@ impl LogicalPlanBuilder {
         }
 
         if let Some(sort_exprs) = order_by_exprs.take() {
+            let group_by_exprs = self.get_current_group_by_exprs();
+            let sort_exprs: Vec<yachtsql_ir::expr::OrderByExpr> = if !group_by_exprs.is_empty() {
+                sort_exprs
+                    .into_iter()
+                    .map(|mut order_expr| {
+                        order_expr.expr =
+                            self.rewrite_post_aggregate_expr(&order_expr.expr, &group_by_exprs);
+                        order_expr
+                    })
+                    .collect()
+            } else {
+                sort_exprs
+            };
+
             let (modified_plan, original_projection) =
                 self.inject_order_by_columns_into_projection(&plan, &sort_exprs);
 
@@ -169,6 +183,7 @@ impl LogicalPlanBuilder {
             });
         }
 
+        self.clear_current_group_by_exprs();
         Ok(plan)
     }
 
@@ -343,6 +358,8 @@ impl LogicalPlanBuilder {
             } else {
                 (vec![], false, false, false, Vec::new(), Vec::new())
             };
+
+        self.set_current_group_by_exprs(group_by_exprs.clone());
 
         if select.having.is_some() && group_by_exprs.is_empty() {
             return Err(Error::invalid_query(

@@ -943,8 +943,30 @@ impl ProjectionWithExprExec {
                         | "PARSEDATETIMEBESTEFFORTORNULL"
                 ) =>
             {
-                Some(DataType::Timestamp)
+                Some(DataType::DateTime)
             }
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "TUMBLE"
+                        | "TUMBLESTART"
+                        | "TUMBLEEND"
+                        | "HOP"
+                        | "HOPSTART"
+                        | "HOPEND"
+                        | "TIMESLOT"
+                        | "DATE_BIN"
+                ) =>
+            {
+                Some(DataType::DateTime)
+            }
+
+            FunctionName::Custom(s) if s == "TIMESLOTS" => {
+                Some(DataType::Array(Box::new(DataType::DateTime)))
+            }
+
+            FunctionName::Custom(s) if s == "WINDOWID" => Some(DataType::Int64),
 
             FunctionName::Custom(s)
                 if matches!(s.as_str(), "TODECIMAL32" | "TODECIMAL64" | "TODECIMAL128") =>
@@ -1992,7 +2014,7 @@ impl ProjectionWithExprExec {
                             "FLOAT32" | "FLOAT64" => Some(DataType::Float64),
                             "STRING" => Some(DataType::String),
                             "DATE" => Some(DataType::Date),
-                            "DATETIME" | "DATETIME64" => Some(DataType::Timestamp),
+                            "DATETIME" | "DATETIME64" => Some(DataType::DateTime),
                             _ => None,
                         };
                     }
