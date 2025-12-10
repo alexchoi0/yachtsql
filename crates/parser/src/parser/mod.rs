@@ -189,6 +189,34 @@ impl Parser {
     }
 
     fn try_parse_custom_statement(&self, sql: &str) -> Result<Option<Statement>> {
+        if let Some(custom_stmt) = CustomStatementParser::parse_loop_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_repeat_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_for_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_leave_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_continue_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_break_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if let Some(custom_stmt) = CustomStatementParser::parse_while_statement(sql)? {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
         let tokens = Tokenizer::new(&*self.dialect, sql)
             .tokenize()
             .map_err(|e| Error::parse_error(format!("Tokenization error: {}", e)))?;

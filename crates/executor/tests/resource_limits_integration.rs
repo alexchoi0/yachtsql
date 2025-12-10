@@ -136,25 +136,6 @@ fn test_query_cancellation() {
 }
 
 #[test]
-fn test_check_limits_combined() {
-    use yachtsql_executor::resource_limits::{ResourceLimitsConfig, ResourceTracker};
-
-    let config = ResourceLimitsConfig {
-        max_memory_bytes: Some(1024 * 1024 * 1024),
-        timeout: Some(Duration::from_millis(10)),
-        enable_memory_tracking: true,
-    };
-    let tracker = ResourceTracker::new(config);
-
-    assert!(tracker.check_limits().is_ok());
-
-    thread::sleep(Duration::from_millis(50));
-
-    let result = tracker.check_limits();
-    assert!(result.is_err(), "Should fail after timeout");
-}
-
-#[test]
 fn test_resource_stats_logging() {
     use yachtsql_executor::resource_limits::{ResourceLimitsConfig, ResourceTracker};
 

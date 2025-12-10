@@ -14,8 +14,8 @@ use std::str::FromStr;
 use chrono::Datelike;
 pub use ddl::{
     AlterTableExecutor, DdlDropExecutor, DdlExecutor, DomainExecutor, ExtensionExecutor,
-    FunctionExecutor, MaterializedViewExecutor, SchemaExecutor, SequenceExecutor, TriggerExecutor,
-    TypeExecutor,
+    FunctionExecutor, MaterializedViewExecutor, ProcedureExecutor, SchemaExecutor,
+    SequenceExecutor, TriggerExecutor, TypeExecutor,
 };
 use debug_print::debug_eprintln;
 pub use dispatcher::{
@@ -28,7 +28,8 @@ pub use dml::{
 pub use query::QueryExecutorTrait;
 use rust_decimal::prelude::ToPrimitive;
 pub use session::{
-    CursorState, DiagnosticsSnapshot, SessionDiagnostics, SessionVariable, UdfDefinition,
+    CursorState, DiagnosticsSnapshot, ProcedureDefinition, ProcedureParameter,
+    ProcedureParameterMode, SessionDiagnostics, SessionVariable, UdfDefinition,
 };
 pub use utility::{
     add_interval_to_date, apply_interval_to_date, apply_numeric_precision_scale,
@@ -452,6 +453,46 @@ impl QueryExecutor {
                     return self.execute_create_table_as(new_table, source_table, engine_clause);
                 }
                 CustomStatement::ClickHouseAlterTable { .. } => Self::empty_result(),
+                CustomStatement::Loop { label, body } => {
+                    self.execute_loop_custom(label.clone(), body)
+                }
+                CustomStatement::Repeat {
+                    label,
+                    body,
+                    until_condition,
+                } => self.execute_repeat_custom(label.clone(), body, until_condition),
+                CustomStatement::For {
+                    label,
+                    variable,
+                    query,
+                    body,
+                } => self.execute_for_custom(label.clone(), variable, query, body),
+                CustomStatement::Leave { label } => {
+                    let msg = match label {
+                        Some(lbl) => format!("LEAVE {}", lbl),
+                        None => "LEAVE".to_string(),
+                    };
+                    Err(Error::invalid_query(msg))
+                }
+                CustomStatement::Continue { label } => {
+                    let msg = match label {
+                        Some(lbl) => format!("CONTINUE {}", lbl),
+                        None => "CONTINUE".to_string(),
+                    };
+                    Err(Error::invalid_query(msg))
+                }
+                CustomStatement::Break { label } => {
+                    let msg = match label {
+                        Some(lbl) => format!("BREAK {}", lbl),
+                        None => "BREAK".to_string(),
+                    };
+                    Err(Error::invalid_query(msg))
+                }
+                CustomStatement::While {
+                    label,
+                    condition,
+                    body,
+                } => self.execute_while_custom(label.clone(), condition, body),
                 CustomStatement::AlterTableRestartIdentity { .. }
                 | CustomStatement::GetDiagnostics { .. } => Err(Error::unsupported_feature(
                     format!("Custom statement not yet supported: {:?}", custom_stmt),
@@ -542,6 +583,15 @@ impl QueryExecutor {
                     }
                     DdlOperation::DropFunction => {
                         self.execute_drop_function(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::CreateProcedure => {
+                        debug_eprintln!("[mod] Executing CREATE PROCEDURE");
+                        self.execute_create_procedure(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::DropProcedure => {
+                        self.execute_drop_procedure(&stmt)?;
                         Self::empty_result()
                     }
                     DdlOperation::CreateDatabase {
@@ -1652,10 +1702,22 @@ impl QueryExecutor {
                 self.execute_set_capabilities(false, &features)
             }
 
-            _ => Err(Error::unsupported_feature(format!(
-                "Unknown procedure: {}",
-                name
-            ))),
+            _ => {
+                if let Some(proc_def) = self.session.get_procedure(name).cloned() {
+                    debug_eprintln!("[procedure] Executing user-defined procedure: {}", name);
+                    let mut last_result = Self::empty_result()?;
+                    for stmt in &proc_def.body {
+                        let sql = stmt.to_string();
+                        last_result = self.execute_sql(&sql)?;
+                    }
+                    Ok(last_result)
+                } else {
+                    Err(Error::unsupported_feature(format!(
+                        "Unknown procedure: {}",
+                        name
+                    )))
+                }
+            }
         }
     }
 
@@ -2364,7 +2426,9 @@ impl QueryExecutor {
             ScriptingOperation::Continue { label } => Err(Error::invalid_query(
                 "CONTINUE without enclosing LOOP".to_string(),
             )),
-            ScriptingOperation::Return { value } => Self::empty_result(),
+            ScriptingOperation::Return { value: _ } => {
+                Err(Error::invalid_query("RETURN".to_string()))
+            }
             ScriptingOperation::ExecuteImmediate { stmt } => self.execute_execute_immediate(&stmt),
         }
     }
@@ -2461,18 +2525,384 @@ impl QueryExecutor {
         Self::empty_result()
     }
 
-    fn execute_loop_statement(&mut self, stmt: &SqlStatement) -> Result<Table> {
+    fn execute_loop_statement(&mut self, _stmt: &SqlStatement) -> Result<Table> {
         Err(Error::unsupported_feature("LOOP statement".to_string()))
     }
 
-    fn execute_repeat_statement(&mut self, stmt: &SqlStatement) -> Result<Table> {
+    fn execute_repeat_statement(&mut self, _stmt: &SqlStatement) -> Result<Table> {
         Err(Error::unsupported_feature("REPEAT statement".to_string()))
     }
 
-    fn execute_begin_end_statement(&mut self, _stmt: &SqlStatement) -> Result<Table> {
-        Err(Error::unsupported_feature(
-            "BEGIN/END statement".to_string(),
-        ))
+    fn execute_loop_custom(&mut self, label: Option<String>, body: &str) -> Result<Table> {
+        const MAX_ITERATIONS: usize = 100000;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_ITERATIONS {
+                return Err(Error::invalid_query(format!(
+                    "LOOP exceeded maximum iterations ({})",
+                    MAX_ITERATIONS
+                )));
+            }
+
+            match self.execute_body_statements(body) {
+                Ok(_) => continue,
+                Err(e) if Self::is_leave_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        break;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_continue_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_break_error(&e) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_repeat_custom(
+        &mut self,
+        label: Option<String>,
+        body: &str,
+        until_condition: &str,
+    ) -> Result<Table> {
+        const MAX_ITERATIONS: usize = 100000;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_ITERATIONS {
+                return Err(Error::invalid_query(format!(
+                    "REPEAT exceeded maximum iterations ({})",
+                    MAX_ITERATIONS
+                )));
+            }
+
+            match self.execute_body_statements(body) {
+                Ok(_) => {}
+                Err(e) if Self::is_leave_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        break;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_continue_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_break_error(&e) => break,
+                Err(e) => return Err(e),
+            }
+
+            let cond_result = self.evaluate_sql_condition(until_condition)?;
+            if cond_result {
+                break;
+            }
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_while_custom(
+        &mut self,
+        label: Option<String>,
+        condition: &str,
+        body: &str,
+    ) -> Result<Table> {
+        const MAX_ITERATIONS: usize = 100000;
+        let mut iterations = 0;
+
+        loop {
+            let cond_result = self.evaluate_sql_condition(condition)?;
+            if !cond_result {
+                break;
+            }
+
+            iterations += 1;
+            if iterations > MAX_ITERATIONS {
+                return Err(Error::invalid_query(format!(
+                    "WHILE exceeded maximum iterations ({})",
+                    MAX_ITERATIONS
+                )));
+            }
+
+            match self.execute_body_statements(body) {
+                Ok(_) => continue,
+                Err(e) if Self::is_leave_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        break;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_continue_error(&e) => {
+                    if Self::label_matches_error(&e, &label) {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) if Self::is_break_error(&e) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_for_custom(
+        &mut self,
+        _label: Option<String>,
+        variable: &str,
+        query: &str,
+        body: &str,
+    ) -> Result<Table> {
+        let result_table = self.execute_sql(query)?;
+        let schema = result_table.schema();
+        let column_names: Vec<String> = schema.fields().iter().map(|f| f.name.clone()).collect();
+        let data_types: Vec<_> = schema
+            .fields()
+            .iter()
+            .map(|f| f.data_type.clone())
+            .collect();
+
+        for row_idx in 0..result_table.num_rows() {
+            let row = result_table.row(row_idx)?;
+            let values = row.values();
+            for (col_idx, col_name) in column_names.iter().enumerate() {
+                let full_name = format!("{}.{}", variable, col_name);
+                let value = values[col_idx].clone();
+                let data_type = data_types[col_idx].clone();
+                self.session
+                    .declare_variable(full_name.clone(), data_type, Some(value));
+            }
+
+            match self.execute_body_statements(body) {
+                Ok(_) => continue,
+                Err(e) if Self::is_leave_error(&e) || Self::is_break_error(&e) => break,
+                Err(e) if Self::is_continue_error(&e) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Self::empty_result()
+    }
+
+    fn execute_body_statements(&mut self, body: &str) -> Result<Table> {
+        let preprocessed = Self::preprocess_control_flow(body);
+        let statements = Self::split_body_statements(&preprocessed);
+        for stmt_sql in statements {
+            let stmt_sql = stmt_sql.trim();
+            if stmt_sql.is_empty() {
+                continue;
+            }
+            let table = self.execute_sql(stmt_sql)?;
+            Self::check_control_flow_marker(&table)?;
+        }
+        Self::empty_result()
+    }
+
+    fn preprocess_control_flow(sql: &str) -> String {
+        use regex::Regex;
+
+        let leave_re = Regex::new(r"(?i)\bLEAVE\s+(\w+)\s*;").unwrap();
+        let sql = leave_re
+            .replace_all(sql, "SELECT '__LEAVE__$1';")
+            .to_string();
+
+        let leave_no_label_re = Regex::new(r"(?i)\bLEAVE\s*;").unwrap();
+        let sql = leave_no_label_re
+            .replace_all(&sql, "SELECT '__LEAVE__';")
+            .to_string();
+
+        let continue_re = Regex::new(r"(?i)\bCONTINUE\s+(\w+)\s*;").unwrap();
+        let sql = continue_re
+            .replace_all(&sql, "SELECT '__CONTINUE__$1';")
+            .to_string();
+
+        let continue_no_label_re = Regex::new(r"(?i)\bCONTINUE\s*;").unwrap();
+        let sql = continue_no_label_re
+            .replace_all(&sql, "SELECT '__CONTINUE__';")
+            .to_string();
+
+        let break_re = Regex::new(r"(?i)\bBREAK\s+(\w+)\s*;").unwrap();
+        let sql = break_re
+            .replace_all(&sql, "SELECT '__BREAK__$1';")
+            .to_string();
+
+        let break_no_label_re = Regex::new(r"(?i)\bBREAK\s*;").unwrap();
+        let sql = break_no_label_re
+            .replace_all(&sql, "SELECT '__BREAK__';")
+            .to_string();
+
+        sql
+    }
+
+    fn split_body_statements(sql: &str) -> Vec<String> {
+        let mut statements = Vec::new();
+        let mut start = 0;
+        let mut depth = 0;
+        let upper = sql.to_uppercase();
+
+        let chars: Vec<char> = sql.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            if upper[i..].starts_with("BEGIN")
+                || upper[i..].starts_with("IF ")
+                || upper[i..].starts_with("LOOP")
+                || upper[i..].starts_with("WHILE")
+                || upper[i..].starts_with("REPEAT")
+                || upper[i..].starts_with("FOR ")
+                || upper[i..].starts_with("CASE ")
+            {
+                depth += 1;
+            }
+
+            if upper[i..].starts_with("END IF")
+                || upper[i..].starts_with("END LOOP")
+                || upper[i..].starts_with("END WHILE")
+                || upper[i..].starts_with("END REPEAT")
+                || upper[i..].starts_with("END FOR")
+                || upper[i..].starts_with("END CASE")
+            {
+                depth -= 1;
+            }
+            if depth == 0 && upper[i..].starts_with("END;") {
+                depth -= 1;
+            }
+            if depth == 0 && upper[i..].starts_with("END ") {
+                let rest = upper[i + 4..].trim_start();
+                if rest.starts_with(';') || rest.is_empty() {
+                    depth -= 1;
+                }
+            }
+
+            if chars[i] == ';' && depth == 0 {
+                let stmt = sql[start..i].to_string();
+                if !stmt.trim().is_empty() {
+                    statements.push(stmt);
+                }
+                start = i + 1;
+            }
+
+            i += 1;
+        }
+
+        if start < sql.len() {
+            let stmt = sql[start..].to_string();
+            if !stmt.trim().is_empty() {
+                statements.push(stmt);
+            }
+        }
+
+        statements
+    }
+
+    fn evaluate_sql_condition(&mut self, condition: &str) -> Result<bool> {
+        let select_sql = format!("SELECT {}", condition);
+        let result = self.execute_sql(&select_sql)?;
+        if result.num_rows() != 1 {
+            return Err(Error::invalid_query(
+                "Condition must evaluate to a single value".to_string(),
+            ));
+        }
+        let row = result.row(0)?;
+        let value = &row.values()[0];
+        value
+            .as_bool()
+            .ok_or_else(|| Error::invalid_query("Condition must evaluate to boolean".to_string()))
+    }
+
+    fn is_break_error(e: &Error) -> bool {
+        matches!(e, Error::InvalidQuery(msg) if msg.contains("BREAK"))
+    }
+
+    fn label_matches_error(e: &Error, label: &Option<String>) -> bool {
+        match e {
+            Error::InvalidQuery(msg) => {
+                if let Some(lbl) = label {
+                    let leave_pattern = format!("LEAVE {}", lbl);
+                    let continue_pattern = format!("CONTINUE {}", lbl);
+                    msg.contains(&leave_pattern) || msg.contains(&continue_pattern)
+                } else {
+                    !msg.contains(' ')
+                        || msg == "LEAVE"
+                        || msg == "CONTINUE"
+                        || msg.trim() == "LEAVE"
+                        || msg.trim() == "CONTINUE"
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn execute_begin_end_statement(&mut self, stmt: &SqlStatement) -> Result<Table> {
+        use sqlparser::ast::Statement as Stmt;
+
+        let Stmt::StartTransaction {
+            statements,
+            exception,
+            ..
+        } = stmt
+        else {
+            return Err(Error::internal(
+                "Expected StartTransaction statement".to_string(),
+            ));
+        };
+
+        self.session.push_variable_scope();
+        let result = self.execute_begin_end_block(statements, exception.as_ref());
+        self.session.pop_variable_scope();
+        result
+    }
+
+    fn execute_begin_end_block(
+        &mut self,
+        statements: &[SqlStatement],
+        exception: Option<&Vec<sqlparser::ast::ExceptionWhen>>,
+    ) -> Result<Table> {
+        let block_result = (|| {
+            for inner_stmt in statements {
+                match self.execute_inner_statement(inner_stmt) {
+                    Ok(_) => continue,
+                    Err(e) if Self::is_return_error(&e) => {
+                        return Self::empty_result();
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Self::empty_result()
+        })();
+
+        match block_result {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                if let Some(exception_handlers) = exception {
+                    for handler in exception_handlers {
+                        let matches_error = handler.idents.iter().any(|ident| {
+                            let name = ident.value.to_uppercase();
+                            name == "ERROR" || name == "OTHER"
+                        });
+                        if matches_error {
+                            for handler_stmt in &handler.statements {
+                                self.execute_inner_statement(handler_stmt)?;
+                            }
+                            return Self::empty_result();
+                        }
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     fn execute_case_statement(&mut self, stmt: &SqlStatement) -> Result<Table> {
@@ -2526,22 +2956,27 @@ impl QueryExecutor {
     fn execute_execute_immediate(&mut self, stmt: &SqlStatement) -> Result<Table> {
         use sqlparser::ast::{ObjectNamePart, Statement as Stmt};
 
-        let Stmt::Execute { name, .. } = stmt else {
+        let Stmt::Execute {
+            name, parameters, ..
+        } = stmt
+        else {
             return Err(Error::internal(
                 "Expected EXECUTE IMMEDIATE statement".to_string(),
             ));
         };
 
-        let sql_string = match name {
-            Some(name) => {
-                if name.0.is_empty() {
-                    return Err(Error::invalid_query(
-                        "EXECUTE IMMEDIATE requires a string expression".to_string(),
-                    ));
-                }
-                let part = &name.0[0];
-                match part {
-                    ObjectNamePart::Identifier(ident) => {
+        let sql_string = if let Some(name) = name {
+            if name.0.is_empty() {
+                return Err(Error::invalid_query(
+                    "EXECUTE IMMEDIATE requires a string expression".to_string(),
+                ));
+            }
+            let part = &name.0[0];
+            match part {
+                ObjectNamePart::Identifier(ident) => {
+                    if ident.quote_style == Some('\'') {
+                        ident.value.clone()
+                    } else {
                         let sql_expr = sqlparser::ast::Expr::Identifier(ident.clone());
                         let sql_value = self.evaluate_constant_expr(&sql_expr)?;
                         sql_value
@@ -2553,18 +2988,25 @@ impl QueryExecutor {
                             })?
                             .to_string()
                     }
-                    ObjectNamePart::Function(_) => {
-                        return Err(Error::invalid_query(
-                            "EXECUTE IMMEDIATE does not support function expressions".to_string(),
-                        ));
-                    }
+                }
+                ObjectNamePart::Function(_) => {
+                    return Err(Error::invalid_query(
+                        "EXECUTE IMMEDIATE does not support function expressions".to_string(),
+                    ));
                 }
             }
-            None => {
-                return Err(Error::invalid_query(
-                    "EXECUTE IMMEDIATE requires a string expression".to_string(),
-                ));
-            }
+        } else if !parameters.is_empty() {
+            let sql_value = self.evaluate_constant_expr(&parameters[0])?;
+            sql_value
+                .as_str()
+                .ok_or_else(|| {
+                    Error::invalid_query("EXECUTE IMMEDIATE argument must be a string".to_string())
+                })?
+                .to_string()
+        } else {
+            return Err(Error::invalid_query(
+                "EXECUTE IMMEDIATE requires a string expression".to_string(),
+            ));
         };
 
         self.execute_sql(&sql_string)
@@ -2572,7 +3014,49 @@ impl QueryExecutor {
 
     fn execute_inner_statement(&mut self, stmt: &SqlStatement) -> Result<Table> {
         let sql = stmt.to_string();
-        self.execute_sql(&sql)
+        let preprocessed = Self::preprocess_control_flow(&sql);
+        let table = self.execute_sql(&preprocessed)?;
+        Self::check_control_flow_marker(&table)
+    }
+
+    fn check_control_flow_marker(table: &Table) -> Result<Table> {
+        if table.num_rows() == 1 {
+            if let Ok(row) = table.row(0) {
+                let vals = row.values();
+                if !vals.is_empty() {
+                    if let Some(s) = vals[0].as_str() {
+                        if s.starts_with("__LEAVE__") {
+                            let label = s.strip_prefix("__LEAVE__").unwrap_or("");
+                            let msg = if label.is_empty() {
+                                "LEAVE".to_string()
+                            } else {
+                                format!("LEAVE {}", label)
+                            };
+                            return Err(Error::invalid_query(msg));
+                        }
+                        if s.starts_with("__CONTINUE__") {
+                            let label = s.strip_prefix("__CONTINUE__").unwrap_or("");
+                            let msg = if label.is_empty() {
+                                "CONTINUE".to_string()
+                            } else {
+                                format!("CONTINUE {}", label)
+                            };
+                            return Err(Error::invalid_query(msg));
+                        }
+                        if s.starts_with("__BREAK__") {
+                            let label = s.strip_prefix("__BREAK__").unwrap_or("");
+                            let msg = if label.is_empty() {
+                                "BREAK".to_string()
+                            } else {
+                                format!("BREAK {}", label)
+                            };
+                            return Err(Error::invalid_query(msg));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(table.clone())
     }
 
     fn execute_statement_block(&mut self, stmts: &[SqlStatement]) -> Result<Table> {
@@ -2656,6 +3140,23 @@ impl QueryExecutor {
             SqlExpr::Identifier(ident) => {
                 let var_name = &ident.value;
                 if let Some(var) = self.session.get_variable(var_name) {
+                    var.value.clone().ok_or_else(|| {
+                        Error::invalid_query(format!("Variable '{}' has no value", var_name))
+                    })
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "Undeclared variable: {}",
+                        var_name
+                    )))
+                }
+            }
+            SqlExpr::CompoundIdentifier(parts) => {
+                let var_name = parts
+                    .iter()
+                    .map(|p| p.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if let Some(var) = self.session.get_variable(&var_name) {
                     var.value.clone().ok_or_else(|| {
                         Error::invalid_query(format!("Variable '{}' has no value", var_name))
                     })

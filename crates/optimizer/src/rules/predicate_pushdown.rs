@@ -399,6 +399,19 @@ impl PredicatePushdown {
                     offset: *offset,
                     input: Box::new(optimized_input),
                 }),
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => self
+                .optimize_node(input)
+                .map(|optimized_input| PlanNode::LimitPercent {
+                    percent: *percent,
+                    offset: *offset,
+                    with_ties: *with_ties,
+                    input: Box::new(optimized_input),
+                }),
             PlanNode::Distinct { input } => {
                 self.optimize_node(input)
                     .map(|optimized_input| PlanNode::Distinct {

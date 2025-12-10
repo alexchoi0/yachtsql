@@ -46,6 +46,13 @@ impl QueryExecutorTrait for QueryExecutor {
             return Err(Error::InternalError("Not a SELECT statement".to_string()));
         };
 
+        if original_sql.contains("@@") {
+            let preprocessed_sql = self.preprocess_system_variables(original_sql);
+            if preprocessed_sql != original_sql {
+                return self.execute_sql(&preprocessed_sql);
+            }
+        }
+
         self.execute_select_with_optimizer(query, original_sql)
     }
 
@@ -210,6 +217,30 @@ struct NestedLoopJoinParams<'a> {
 }
 
 impl QueryExecutor {
+    fn preprocess_system_variables(&self, sql: &str) -> String {
+        let mut result = sql.to_string();
+        for (name, value) in self.session.system_variables() {
+            let pattern = format!("@@{}", name);
+            if result.contains(&pattern) {
+                let replacement = if let Some(s) = value.as_str() {
+                    format!("'{}'", s.replace('\'', "''"))
+                } else if let Some(n) = value.as_i64() {
+                    n.to_string()
+                } else if let Some(f) = value.as_f64() {
+                    f.to_string()
+                } else if let Some(b) = value.as_bool() {
+                    if b { "TRUE" } else { "FALSE" }.to_string()
+                } else if value.is_null() {
+                    "NULL".to_string()
+                } else {
+                    format!("'{}'", value)
+                };
+                result = result.replace(&pattern, &replacement);
+            }
+        }
+        result
+    }
+
     fn query_contains_subquery(query: &Box<sqlparser::ast::Query>) -> bool {
         match query.body.as_ref() {
             SetExpr::Select(select) => {
@@ -579,7 +610,16 @@ impl QueryExecutor {
                 format!("{}()", func.name)
             }
             Expr::BinaryOp { .. } => "expr".to_string(),
-            _ => panic!("expr_to_column_name: unhandled expression type: {:?}", expr),
+            Expr::IsNotNull(_)
+            | Expr::IsNull(_)
+            | Expr::IsTrue(_)
+            | Expr::IsFalse(_)
+            | Expr::UnaryOp { .. }
+            | Expr::Nested(_)
+            | Expr::Cast { .. }
+            | Expr::Case { .. }
+            | Expr::Value(_) => "expr".to_string(),
+            _ => "?column?".to_string(),
         }
     }
 
@@ -5391,10 +5431,19 @@ impl QueryExecutor {
             storage.get_dataset("default").map(|d| d.types().clone())
         };
 
+        let system_vars: std::collections::HashMap<String, Value> = self
+            .session
+            .system_variables()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         let evaluator = if let Some(registry) = type_registry {
-            ExpressionEvaluator::new(&empty_schema).with_owned_type_registry(registry)
-        } else {
             ExpressionEvaluator::new(&empty_schema)
+                .with_owned_type_registry(registry)
+                .with_system_variables(system_vars)
+        } else {
+            ExpressionEvaluator::new(&empty_schema).with_system_variables(system_vars)
         };
 
         for item in &select.projection {

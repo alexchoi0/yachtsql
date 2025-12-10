@@ -89,6 +89,9 @@ pub enum DdlOperation {
     CreateFunction,
     DropFunction,
 
+    CreateProcedure,
+    DropProcedure,
+
     CreateDatabase {
         name: ObjectName,
         if_not_exists: bool,
@@ -304,6 +307,18 @@ impl Dispatcher {
                 let merge_returning = std_stmt.merge_returning().map(|s| s.to_string());
 
                 match ast {
+                    SqlStatement::StartTransaction {
+                        statements,
+                        has_end_keyword,
+                        ..
+                    } if !statements.is_empty() || *has_end_keyword => {
+                        Ok(StatementJob::Scripting {
+                            operation: ScriptingOperation::BeginEnd {
+                                stmt: Box::new(ast.clone()),
+                            },
+                        })
+                    }
+
                     SqlStatement::StartTransaction { .. } => Ok(StatementJob::Transaction {
                         operation: TxOperation::Begin,
                     }),
@@ -382,6 +397,14 @@ impl Dispatcher {
                         })
                     }
 
+                    SqlStatement::CreateProcedure { .. } => {
+                        debug_print::debug_eprintln!("[dispatcher] Matched CreateProcedure");
+                        Ok(StatementJob::DDL {
+                            operation: DdlOperation::CreateProcedure,
+                            stmt: Box::new(ast.clone()),
+                        })
+                    }
+
                     SqlStatement::CreateSchema { .. } => Ok(StatementJob::DDL {
                         operation: DdlOperation::CreateSchema,
                         stmt: Box::new(ast.clone()),
@@ -413,6 +436,14 @@ impl Dispatcher {
                         };
                         Ok(StatementJob::DDL {
                             operation,
+                            stmt: Box::new(ast.clone()),
+                        })
+                    }
+
+                    SqlStatement::DropProcedure { .. } => {
+                        debug_print::debug_eprintln!("[dispatcher] Matched DropProcedure");
+                        Ok(StatementJob::DDL {
+                            operation: DdlOperation::DropProcedure,
                             stmt: Box::new(ast.clone()),
                         })
                     }

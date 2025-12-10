@@ -111,6 +111,21 @@ pub trait PlanRewriter {
                 }))
             }
 
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => {
+                let new_input = self.rewrite_plan_node(input)?;
+                Ok(new_input.map(|i| PlanNode::LimitPercent {
+                    percent: *percent,
+                    offset: *offset,
+                    with_ties: *with_ties,
+                    input: Box::new(i),
+                }))
+            }
+
             PlanNode::Distinct { input } => {
                 let new_input = self.rewrite_plan_node(input)?;
                 Ok(new_input.map(|i| PlanNode::Distinct { input: Box::new(i) }))

@@ -48,7 +48,6 @@ fn test_declare_string() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_variable() {
     let mut executor = create_executor();
 
@@ -63,7 +62,6 @@ fn test_set_variable() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_from_query() {
     let mut executor = create_executor();
     executor
@@ -83,7 +81,6 @@ fn test_set_from_query() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_if_then() {
     let mut executor = create_executor();
 
@@ -103,7 +100,6 @@ fn test_if_then() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_if_then_else() {
     let mut executor = create_executor();
 
@@ -125,7 +121,6 @@ fn test_if_then_else() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_if_elseif_else() {
     let mut executor = create_executor();
 
@@ -149,7 +144,6 @@ fn test_if_elseif_else() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_loop_basic() {
     let mut executor = create_executor();
 
@@ -173,7 +167,6 @@ fn test_loop_basic() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_while_loop() {
     let mut executor = create_executor();
 
@@ -194,7 +187,6 @@ fn test_while_loop() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_repeat_loop() {
     let mut executor = create_executor();
 
@@ -214,7 +206,6 @@ fn test_repeat_loop() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_for_loop() {
     let mut executor = create_executor();
 
@@ -222,7 +213,7 @@ fn test_for_loop() {
 
     executor
         .execute_sql(
-            "FOR i IN (SELECT val FROM UNNEST([1, 2, 3, 4, 5] AS val) DO
+            "FOR i IN (SELECT val FROM UNNEST([1, 2, 3, 4, 5]) AS val) DO
                 SET sum = sum + i.val;
             END FOR",
         )
@@ -233,7 +224,6 @@ fn test_for_loop() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_break_continue() {
     let mut executor = create_executor();
 
@@ -260,7 +250,6 @@ fn test_break_continue() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_begin_end_block() {
     let mut executor = create_executor();
 
@@ -279,7 +268,6 @@ fn test_begin_end_block() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_nested_blocks() {
     let mut executor = create_executor();
 
@@ -304,7 +292,6 @@ fn test_nested_blocks() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_exception_handling() {
     let mut executor = create_executor();
 
@@ -335,7 +322,6 @@ fn test_raise_exception() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_execute_immediate() {
     let mut executor = create_executor();
     executor
@@ -372,7 +358,6 @@ fn test_execute_immediate_with_params() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_execute_immediate_ddl() {
     let mut executor = create_executor();
 
@@ -391,7 +376,6 @@ fn test_execute_immediate_ddl() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_case_statement() {
     let mut executor = create_executor();
 
@@ -414,7 +398,6 @@ fn test_case_statement() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_return_statement() {
     let mut executor = create_executor();
 
@@ -437,7 +420,6 @@ fn test_return_statement() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_labeled_block() {
     let mut executor = create_executor();
 
@@ -479,7 +461,6 @@ fn test_variable_in_query() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_system_variable() {
     let mut executor = create_executor();
 
@@ -490,7 +471,6 @@ fn test_system_variable() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_set_system_variable() {
     let mut executor = create_executor();
 
