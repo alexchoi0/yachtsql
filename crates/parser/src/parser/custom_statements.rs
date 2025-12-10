@@ -1179,4 +1179,291 @@ impl CustomStatementParser {
             Ok(CustomStatement::ExistsDatabase { name: name.clone() })
         })
     }
+
+    pub fn parse_loop_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+
+        let (label, rest) = Self::extract_label(trimmed);
+
+        if !rest.to_uppercase().starts_with("LOOP") {
+            return Ok(None);
+        }
+
+        let after_loop = rest[4..].trim();
+
+        let end_pattern_upper = if let Some(ref label) = label {
+            format!("END LOOP {}", label.to_uppercase())
+        } else {
+            "END LOOP".to_string()
+        };
+        let end_idx =
+            Self::find_end_keyword(&after_loop.to_uppercase(), &end_pattern_upper, "LOOP");
+        let end_idx = end_idx.ok_or_else(|| Error::parse_error("LOOP requires END LOOP"))?;
+
+        let body = after_loop[..end_idx].trim().to_string();
+
+        Ok(Some(CustomStatement::Loop { label, body }))
+    }
+
+    pub fn parse_repeat_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+
+        let (label, rest) = Self::extract_label(trimmed);
+
+        if !rest.to_uppercase().starts_with("REPEAT") {
+            return Ok(None);
+        }
+
+        let after_repeat = rest[6..].trim();
+
+        let upper = after_repeat.to_uppercase();
+        let until_idx = upper.rfind("UNTIL").ok_or_else(|| {
+            Error::parse_error("REPEAT requires UNTIL condition before END REPEAT")
+        })?;
+
+        let body = after_repeat[..until_idx].trim().to_string();
+        let after_until = after_repeat[until_idx + 5..].trim();
+
+        let end_pattern_upper = if let Some(ref label) = label {
+            format!("END REPEAT {}", label.to_uppercase())
+        } else {
+            "END REPEAT".to_string()
+        };
+        let end_idx = after_until
+            .to_uppercase()
+            .find(&end_pattern_upper)
+            .ok_or_else(|| Error::parse_error("REPEAT requires END REPEAT"))?;
+
+        let until_condition = after_until[..end_idx].trim().to_string();
+
+        Ok(Some(CustomStatement::Repeat {
+            label,
+            body,
+            until_condition,
+        }))
+    }
+
+    pub fn parse_for_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+
+        let (label, rest) = Self::extract_label(trimmed);
+
+        if !rest.to_uppercase().starts_with("FOR") {
+            return Ok(None);
+        }
+
+        let after_for = rest[3..].trim();
+
+        let upper = after_for.to_uppercase();
+        let in_idx = upper
+            .find(" IN ")
+            .ok_or_else(|| Error::parse_error("FOR requires IN keyword"))?;
+
+        let variable = after_for[..in_idx].trim().to_string();
+        let after_in = after_for[in_idx + 4..].trim();
+
+        let do_idx = after_in
+            .to_uppercase()
+            .find(" DO")
+            .ok_or_else(|| Error::parse_error("FOR requires DO keyword after query"))?;
+
+        let query_part = after_in[..do_idx].trim();
+        let query = if query_part.starts_with('(') && query_part.ends_with(')') {
+            query_part[1..query_part.len() - 1].to_string()
+        } else {
+            query_part.to_string()
+        };
+
+        let after_do = after_in[do_idx + 3..].trim();
+
+        let end_pattern_upper = if let Some(ref label) = label {
+            format!("END FOR {}", label.to_uppercase())
+        } else {
+            "END FOR".to_string()
+        };
+        let end_idx = after_do
+            .to_uppercase()
+            .find(&end_pattern_upper)
+            .ok_or_else(|| Error::parse_error("FOR requires END FOR"))?;
+
+        let body = after_do[..end_idx].trim().to_string();
+
+        Ok(Some(CustomStatement::For {
+            label,
+            variable,
+            query,
+            body,
+        }))
+    }
+
+    pub fn parse_leave_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+        let upper = trimmed.to_uppercase();
+
+        if !upper.starts_with("LEAVE") {
+            return Ok(None);
+        }
+
+        let after_leave = trimmed[5..].trim();
+
+        let label = if after_leave.is_empty() || after_leave == ";" {
+            None
+        } else {
+            let label_str = after_leave.trim_end_matches(';').trim();
+            if label_str.is_empty() {
+                None
+            } else {
+                Some(label_str.to_string())
+            }
+        };
+
+        Ok(Some(CustomStatement::Leave { label }))
+    }
+
+    pub fn parse_continue_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+        let upper = trimmed.to_uppercase();
+
+        if !upper.starts_with("CONTINUE") {
+            return Ok(None);
+        }
+
+        let after_continue = trimmed[8..].trim();
+
+        let label = if after_continue.is_empty() || after_continue == ";" {
+            None
+        } else {
+            let label_str = after_continue.trim_end_matches(';').trim();
+            if label_str.is_empty() {
+                None
+            } else {
+                Some(label_str.to_string())
+            }
+        };
+
+        Ok(Some(CustomStatement::Continue { label }))
+    }
+
+    pub fn parse_break_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+        let upper = trimmed.to_uppercase();
+
+        if !upper.starts_with("BREAK") {
+            return Ok(None);
+        }
+
+        let after_break = trimmed[5..].trim();
+
+        let label = if after_break.is_empty() || after_break == ";" {
+            None
+        } else {
+            let label_str = after_break.trim_end_matches(';').trim();
+            if label_str.is_empty() {
+                None
+            } else {
+                Some(label_str.to_string())
+            }
+        };
+
+        Ok(Some(CustomStatement::Break { label }))
+    }
+
+    fn extract_label(sql: &str) -> (Option<String>, &str) {
+        let first_colon = sql.find(':');
+        if let Some(colon_idx) = first_colon {
+            let potential_label = sql[..colon_idx].trim();
+            if !potential_label.is_empty()
+                && potential_label
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
+                let first_keyword = sql[colon_idx + 1..].trim();
+                let upper = first_keyword.to_uppercase();
+                if upper.starts_with("LOOP")
+                    || upper.starts_with("REPEAT")
+                    || upper.starts_with("FOR")
+                    || upper.starts_with("BEGIN")
+                    || upper.starts_with("WHILE")
+                {
+                    return (Some(potential_label.to_string()), first_keyword);
+                }
+            }
+        }
+        (None, sql)
+    }
+
+    fn find_end_keyword(sql_upper: &str, end_pattern: &str, block_type: &str) -> Option<usize> {
+        let mut depth = 0;
+        let mut pos = 0;
+        let end_block = format!("END {}", block_type);
+
+        while pos < sql_upper.len() {
+            if sql_upper[pos..].starts_with(&end_block) {
+                if sql_upper[pos..].starts_with(end_pattern) {
+                    if depth == 0 {
+                        return Some(pos);
+                    }
+                    depth -= 1;
+                }
+                pos += end_block.len();
+                continue;
+            }
+
+            if sql_upper[pos..].starts_with(block_type) {
+                let before = if pos > 0 {
+                    sql_upper.as_bytes()[pos - 1]
+                } else {
+                    b' '
+                };
+                if !before.is_ascii_alphanumeric() && before != b'_' {
+                    depth += 1;
+                }
+                pos += block_type.len();
+                continue;
+            }
+
+            pos += 1;
+        }
+
+        None
+    }
+
+    pub fn parse_while_statement(sql: &str) -> Result<Option<CustomStatement>> {
+        let trimmed = sql.trim();
+
+        let (label, rest) = Self::extract_label(trimmed);
+
+        if !rest.to_uppercase().starts_with("WHILE") {
+            return Ok(None);
+        }
+
+        let after_while = rest[5..].trim();
+        let upper = after_while.to_uppercase();
+
+        let do_idx = upper
+            .find(" DO")
+            .ok_or_else(|| Error::parse_error("WHILE requires DO keyword"))?;
+
+        let condition = after_while[..do_idx].trim().to_string();
+        let after_do = after_while[do_idx + 3..].trim();
+
+        let end_pattern_upper = if let Some(ref label) = label {
+            format!("END WHILE {}", label.to_uppercase())
+        } else {
+            "END WHILE".to_string()
+        };
+
+        let end_idx = after_do
+            .to_uppercase()
+            .find(&end_pattern_upper)
+            .ok_or_else(|| Error::parse_error("WHILE requires END WHILE"))?;
+
+        let body = after_do[..end_idx].trim().to_string();
+
+        Ok(Some(CustomStatement::While {
+            label,
+            condition,
+            body,
+        }))
+    }
 }

@@ -68,6 +68,7 @@ pub struct SessionState {
     extension_registry: ExtensionRegistry,
     search_path: Vec<String>,
     variables: HashMap<String, SessionVariable>,
+    system_variables: HashMap<String, Value>,
     udfs: HashMap<String, UdfDefinition>,
     procedures: HashMap<String, ProcedureDefinition>,
     cursors: HashMap<String, CursorState>,
@@ -80,6 +81,8 @@ impl SessionState {
     }
 
     pub fn with_registry(dialect: DialectType, feature_registry: Rc<FeatureRegistry>) -> Self {
+        let mut system_variables = HashMap::new();
+        system_variables.insert("time_zone".to_string(), Value::string("UTC".to_string()));
         Self {
             dialect,
             diagnostics: SessionDiagnostics::new(),
@@ -89,6 +92,7 @@ impl SessionState {
             extension_registry: ExtensionRegistry::new(),
             search_path: vec!["default".to_string()],
             variables: HashMap::new(),
+            system_variables,
             udfs: HashMap::new(),
             procedures: HashMap::new(),
             cursors: HashMap::new(),
@@ -186,6 +190,10 @@ impl SessionState {
     }
 
     pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), Error> {
+        if let Some(sys_var) = name.strip_prefix("@@") {
+            self.set_system_variable(sys_var.to_string(), value);
+            return Ok(());
+        }
         if let Some(var) = self.variables.get_mut(name) {
             var.value = Some(value);
         } else {
@@ -211,6 +219,18 @@ impl SessionState {
     pub fn push_variable_scope(&mut self) {}
 
     pub fn pop_variable_scope(&mut self) {}
+
+    pub fn get_system_variable(&self, name: &str) -> Option<&Value> {
+        self.system_variables.get(name)
+    }
+
+    pub fn set_system_variable(&mut self, name: String, value: Value) {
+        self.system_variables.insert(name, value);
+    }
+
+    pub fn system_variables(&self) -> &HashMap<String, Value> {
+        &self.system_variables
+    }
 
     pub fn register_udf(&mut self, name: String, definition: UdfDefinition) {
         debug_print::debug_eprintln!("[session] Registering UDF: {}", name.to_uppercase());
