@@ -236,6 +236,24 @@ impl InterestingOrderRule {
                 Ok((new_node, child_order, changed))
             }
 
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => {
+                let (opt_input, child_order, changed) =
+                    self.optimize_with_context(input, required_order)?;
+
+                let new_node = PlanNode::LimitPercent {
+                    percent: *percent,
+                    offset: *offset,
+                    with_ties: *with_ties,
+                    input: Box::new(opt_input),
+                };
+                Ok((new_node, child_order, changed))
+            }
+
             PlanNode::Distinct { input } => {
                 let (opt_input, _child_order, changed) =
                     self.optimize_with_context(input, required_order)?;

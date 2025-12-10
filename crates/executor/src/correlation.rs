@@ -93,6 +93,7 @@ pub fn plan_has_correlation(plan: &PlanNode) -> bool {
             left, right, on, ..
         } => has_correlation(on) || plan_has_correlation(left) || plan_has_correlation(right),
         PlanNode::Limit { input, .. } => plan_has_correlation(input),
+        PlanNode::LimitPercent { input, .. } => plan_has_correlation(input),
         PlanNode::Sort { input, .. } => plan_has_correlation(input),
         PlanNode::Distinct { input, .. } => plan_has_correlation(input),
 
@@ -166,6 +167,17 @@ pub fn bind_correlation(plan: PlanNode, context: &CorrelationContext) -> Result<
         } => Ok(PlanNode::Limit {
             limit,
             offset,
+            input: Box::new(bind_correlation(clone_box(&input), context)?),
+        }),
+        PlanNode::LimitPercent {
+            percent,
+            offset,
+            with_ties,
+            input,
+        } => Ok(PlanNode::LimitPercent {
+            percent,
+            offset,
+            with_ties,
             input: Box::new(bind_correlation(clone_box(&input), context)?),
         }),
 

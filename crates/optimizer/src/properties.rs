@@ -22,6 +22,7 @@ pub fn infer_output_columns(node: &PlanNode) -> Option<HashSet<String>> {
         PlanNode::Filter { input, .. }
         | PlanNode::Sort { input, .. }
         | PlanNode::Limit { input, .. }
+        | PlanNode::LimitPercent { input, .. }
         | PlanNode::Distinct { input }
         | PlanNode::DistinctOn { input, .. }
         | PlanNode::Window { input, .. } => infer_output_columns(input),

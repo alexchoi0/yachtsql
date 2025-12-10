@@ -160,6 +160,19 @@ impl AggregatePushdown {
                 offset: *offset,
                 input: Box::new(optimized),
             }),
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => self
+                .optimize_node(input)
+                .map(|optimized| PlanNode::LimitPercent {
+                    percent: *percent,
+                    offset: *offset,
+                    with_ties: *with_ties,
+                    input: Box::new(optimized),
+                }),
             PlanNode::Distinct { input } => {
                 self.optimize_node(input)
                     .map(|optimized| PlanNode::Distinct {
