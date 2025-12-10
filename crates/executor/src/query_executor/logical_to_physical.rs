@@ -8,7 +8,7 @@ use yachtsql_ir::plan::{JoinType, LogicalPlan, PlanNode};
 use super::evaluator::physical_plan::{
     AggregateExec, AggregateStrategy, ArrayJoinExec, AsOfJoinExec, CteExec, DistinctExec,
     DistinctOnExec, EmptyRelationExec, ExceptExec, ExecutionPlan, FilterExec, HashJoinExec,
-    IndexScanExec, IntersectExec, JoinStrategy, LateralJoinExec, LimitExec,
+    IndexScanExec, IntersectExec, JoinStrategy, LateralJoinExec, LimitExec, LimitPercentExec,
     MaterializedViewScanExec, MergeExec, MergeJoinExec, NestedLoopJoinExec, PasteJoinExec,
     PhysicalPlan, PivotAggregateFunction, PivotExec, ProjectionWithExprExec, SampleSize,
     SamplingMethod, SortAggregateExec, SortExec, SubqueryScanExec, TableSampleExec, TableScanExec,
@@ -1212,6 +1212,18 @@ impl LogicalToPhysicalPlanner {
             } => {
                 let input_exec = self.plan_node_to_exec(input)?;
                 Ok(Rc::new(LimitExec::new(input_exec, *limit, *offset)))
+            }
+
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => {
+                let input_exec = self.plan_node_to_exec(input)?;
+                Ok(Rc::new(LimitPercentExec::new(
+                    input_exec, *percent, *offset, *with_ties,
+                )))
             }
 
             PlanNode::Distinct { input } => {

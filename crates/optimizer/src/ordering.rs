@@ -259,7 +259,7 @@ pub fn provided_ordering(node: &PlanNode, child_ordering: &OrderingProperty) -> 
             OrderingProperty::empty()
         }
 
-        PlanNode::Limit { .. } => child_ordering.clone(),
+        PlanNode::Limit { .. } | PlanNode::LimitPercent { .. } => child_ordering.clone(),
 
         PlanNode::Distinct { .. } | PlanNode::DistinctOn { .. } => OrderingProperty::empty(),
 

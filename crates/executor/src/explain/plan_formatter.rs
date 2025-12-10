@@ -293,6 +293,28 @@ fn format_node_with_metrics(
             format_node_with_metrics(input, output, indent + 1, options, operator_id + 1);
         }
 
+        PlanNode::LimitPercent {
+            input,
+            percent,
+            offset,
+            with_ties,
+        } => {
+            let ties_str = if *with_ties { " WITH TIES" } else { "" };
+            output.push_str(&format!("{}-> Limit: {}%{}", indent_str, percent, ties_str));
+            if *offset > 0 {
+                output.push_str(&format!(" OFFSET: {}", offset));
+            }
+            if let Some(m) = metrics {
+                output.push_str(&format!(
+                    " (rows={}, time={:.2}ms)",
+                    m.rows_produced,
+                    m.execution_time.as_secs_f64() * 1000.0
+                ));
+            }
+            output.push('\n');
+            format_node_with_metrics(input, output, indent + 1, options, operator_id + 1);
+        }
+
         PlanNode::Union { left, right, all } => {
             let union_type = if *all { "UNION ALL" } else { "UNION" };
             output.push_str(&format!("{}-> {}", indent_str, union_type));
@@ -350,6 +372,7 @@ fn count_nodes(node: &PlanNode) -> usize {
         | PlanNode::Aggregate { input, .. }
         | PlanNode::Sort { input, .. }
         | PlanNode::Limit { input, .. }
+        | PlanNode::LimitPercent { input, .. }
         | PlanNode::Distinct { input }
         | PlanNode::SubqueryScan {
             subquery: input, ..
@@ -505,6 +528,21 @@ fn format_node(node: &PlanNode, output: &mut String, indent: usize, verbose: boo
             offset,
         } => {
             output.push_str(&format!("{}-> Limit: {}", indent_str, limit));
+            if *offset > 0 {
+                output.push_str(&format!(" OFFSET: {}", offset));
+            }
+            output.push('\n');
+            format_node(input, output, indent + 1, verbose);
+        }
+
+        PlanNode::LimitPercent {
+            input,
+            percent,
+            offset,
+            with_ties,
+        } => {
+            let ties_str = if *with_ties { " WITH TIES" } else { "" };
+            output.push_str(&format!("{}-> Limit: {}%{}", indent_str, percent, ties_str));
             if *offset > 0 {
                 output.push_str(&format!(" OFFSET: {}", offset));
             }

@@ -64,6 +64,11 @@ impl PhysicalPlanner {
                 input,
             } => self.create_limit(*limit, *offset, input),
 
+            PlanNode::LimitPercent { .. } => Err(Error::unsupported_feature(
+                "LimitPercent requires the LogicalToPhysicalPlanner (use execute_sql instead)"
+                    .to_string(),
+            )),
+
             PlanNode::Distinct { input } => self.create_distinct(input),
 
             PlanNode::DistinctOn { expressions, input } => {

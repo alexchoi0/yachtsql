@@ -99,6 +99,100 @@ impl ExecutionPlan for LimitExec {
     }
 }
 
+#[derive(Debug)]
+pub struct LimitPercentExec {
+    input: Rc<dyn ExecutionPlan>,
+    schema: Schema,
+    percent: f64,
+    offset: usize,
+    with_ties: bool,
+}
+
+impl LimitPercentExec {
+    pub fn new(input: Rc<dyn ExecutionPlan>, percent: f64, offset: usize, with_ties: bool) -> Self {
+        let schema = input.schema().clone();
+        Self {
+            input,
+            schema,
+            percent,
+            offset,
+            with_ties,
+        }
+    }
+}
+
+impl ExecutionPlan for LimitPercentExec {
+    fn schema(&self) -> &Schema {
+        &self.schema
+    }
+
+    fn execute(&self) -> Result<Vec<Table>> {
+        let input_batches = self.input.execute()?;
+
+        let total_rows: usize = input_batches.iter().map(|b| b.num_rows()).sum();
+
+        let limit = ((total_rows as f64 * self.percent / 100.0).ceil() as usize).min(total_rows);
+
+        let mut output_batches = Vec::new();
+        let mut skipped = 0;
+        let mut remaining = limit;
+
+        for batch in input_batches {
+            let batch_rows = batch.num_rows();
+
+            if skipped < self.offset {
+                let to_skip = (self.offset - skipped).min(batch_rows);
+                skipped += to_skip;
+
+                if to_skip == batch_rows {
+                    continue;
+                } else {
+                    let remaining_batch = batch.slice(to_skip, batch_rows - to_skip)?;
+                    let remaining_rows = remaining_batch.num_rows();
+
+                    if remaining_rows <= remaining {
+                        remaining -= remaining_rows;
+                        output_batches.push(remaining_batch);
+                    } else {
+                        output_batches.push(remaining_batch.slice(0, remaining)?);
+                        break;
+                    }
+                }
+            } else {
+                if remaining == 0 {
+                    break;
+                }
+
+                if batch_rows <= remaining {
+                    remaining -= batch_rows;
+                    output_batches.push(batch);
+                } else {
+                    output_batches.push(batch.slice(0, remaining)?);
+                    break;
+                }
+            }
+        }
+
+        Ok(output_batches)
+    }
+
+    fn children(&self) -> Vec<Rc<dyn ExecutionPlan>> {
+        vec![self.input.clone()]
+    }
+
+    fn describe(&self) -> String {
+        let ties_str = if self.with_ties { " WITH TIES" } else { "" };
+        if self.offset > 0 {
+            format!(
+                "Limit: {}% Offset: {}{}",
+                self.percent, self.offset, ties_str
+            )
+        } else {
+            format!("Limit: {}%{}", self.percent, ties_str)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use yachtsql_core::types::{DataType, Value};

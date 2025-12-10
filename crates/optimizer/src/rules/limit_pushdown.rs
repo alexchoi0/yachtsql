@@ -261,6 +261,37 @@ impl LimitPushdown {
                     name_column: name_column.clone(),
                     unpivot_columns: unpivot_columns.clone(),
                 }),
+            PlanNode::LimitPercent {
+                percent,
+                offset,
+                with_ties,
+                input,
+            } => {
+                if let PlanNode::Projection {
+                    expressions,
+                    input: proj_input,
+                } = input.as_ref()
+                {
+                    let new_limit = PlanNode::LimitPercent {
+                        percent: *percent,
+                        offset: *offset,
+                        with_ties: *with_ties,
+                        input: proj_input.clone(),
+                    };
+                    Some(PlanNode::Projection {
+                        expressions: expressions.clone(),
+                        input: Box::new(new_limit),
+                    })
+                } else {
+                    self.optimize_node(input)
+                        .map(|optimized_input| PlanNode::LimitPercent {
+                            percent: *percent,
+                            offset: *offset,
+                            with_ties: *with_ties,
+                            input: Box::new(optimized_input),
+                        })
+                }
+            }
             PlanNode::Scan { .. }
             | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
