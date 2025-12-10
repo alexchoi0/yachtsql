@@ -817,6 +817,9 @@ impl QueryExecutor {
 
                     if let Some(field) = schema.fields().iter().find(|f| f.name == *first_part) {
                         match &field.data_type {
+                            DataType::Json => {
+                                return Ok(DataType::Json);
+                            }
                             DataType::Struct(struct_fields) => {
                                 let struct_field = struct_fields
                                     .iter()

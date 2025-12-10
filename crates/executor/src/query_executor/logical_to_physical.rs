@@ -173,10 +173,16 @@ impl LogicalToPhysicalPlanner {
                         return Ok(());
                     }
                     if let Some(field) = schema.field(table_name) {
-                        if let yachtsql_core::types::DataType::Struct(fields) = &field.data_type {
-                            if fields.iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
+                        match &field.data_type {
+                            yachtsql_core::types::DataType::Json => {
                                 return Ok(());
                             }
+                            yachtsql_core::types::DataType::Struct(fields) => {
+                                if fields.iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
+                                    return Ok(());
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
