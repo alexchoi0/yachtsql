@@ -1111,6 +1111,43 @@ impl ProjectionWithExprExec {
                 }
             }
 
+            FunctionName::Custom(s) if matches!(s.as_str(), "DICTHAS" | "DICTISIN") => {
+                Some(DataType::Bool)
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "DICTGETUINT64" | "DICTGETINT64") => {
+                Some(DataType::Int64)
+            }
+
+            FunctionName::Custom(s) if s == "DICTGETFLOAT64" => Some(DataType::Float64),
+
+            FunctionName::Custom(s) if s == "DICTGETSTRING" => Some(DataType::String),
+
+            FunctionName::Custom(s) if s == "DICTGETDATE" => Some(DataType::Date),
+
+            FunctionName::Custom(s) if s == "DICTGETDATETIME" => Some(DataType::Timestamp),
+
+            FunctionName::Custom(s) if s == "DICTGETUUID" => Some(DataType::Uuid),
+
+            FunctionName::Custom(s)
+                if matches!(
+                    s.as_str(),
+                    "DICTGETHIERARCHY" | "DICTGETCHILDREN" | "DICTGETDESCENDANTS" | "DICTGETALL"
+                ) =>
+            {
+                Some(DataType::Array(Box::new(DataType::Unknown)))
+            }
+
+            FunctionName::Custom(s) if s == "DICTGETORDEFAULT" => {
+                if args.len() >= 4 {
+                    Self::infer_expr_type_with_schema(&args[3], schema)
+                } else {
+                    None
+                }
+            }
+
+            FunctionName::Custom(s) if matches!(s.as_str(), "DICTGET" | "DICTGETORNULL") => None,
+
             FunctionName::BitmapBuild
             | FunctionName::BitmapToArray
             | FunctionName::BitmapAnd

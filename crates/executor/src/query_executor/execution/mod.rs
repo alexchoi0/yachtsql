@@ -350,6 +350,11 @@ impl QueryExecutor {
                 Rc::new(subquery_executor),
             );
 
+        let _storage_guard =
+            crate::query_executor::evaluator::physical_plan::StorageContextGuard::set(Rc::clone(
+                &self.storage,
+            ));
+
         let parser = Parser::with_dialect(self.dialect());
         let statements = parser
             .parse_sql(sql)
@@ -435,7 +440,23 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseAlterUser { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseGrant { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseSystem { .. } => Self::empty_result(),
-                CustomStatement::ClickHouseCreateDictionary { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateDictionary {
+                    name,
+                    columns,
+                    primary_key,
+                    source,
+                    layout,
+                    lifetime,
+                } => {
+                    return self.execute_create_dictionary(
+                        name,
+                        columns,
+                        primary_key,
+                        source,
+                        *layout,
+                        lifetime,
+                    );
+                }
                 CustomStatement::ClickHouseDatabase { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseRenameDatabase { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseUse { .. } => Self::empty_result(),

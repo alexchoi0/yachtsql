@@ -11,6 +11,7 @@ pub mod column_ops;
 pub mod constraints;
 pub mod custom_types;
 pub mod dependency_graph;
+pub mod dictionary;
 pub mod domain;
 pub mod extension;
 pub mod features;
@@ -35,6 +36,10 @@ pub use column::Column;
 pub use constraints::{apply_default_values, validate_row_constraints};
 pub use custom_types::EnumType;
 pub use dependency_graph::DependencyGraph;
+pub use dictionary::{
+    Dictionary, DictionaryColumn, DictionaryLayout, DictionaryLifetime, DictionaryRegistry,
+    DictionarySource,
+};
 pub use domain::{DomainConstraint, DomainDefinition, DomainRegistry};
 pub use extension::{ExtensionError, ExtensionMetadata, ExtensionRegistry};
 pub use foreign_keys::{Deferrable, ForeignKey, ReferentialAction};
@@ -229,6 +234,7 @@ pub struct Dataset {
     views: ViewRegistry,
     domains: DomainRegistry,
     types: TypeRegistry,
+    dictionaries: DictionaryRegistry,
     table_layout: StorageLayout,
 }
 
@@ -252,6 +258,7 @@ impl Dataset {
             views: ViewRegistry::new(),
             domains: DomainRegistry::new(),
             types: TypeRegistry::new(),
+            dictionaries: DictionaryRegistry::new(),
             table_layout: layout,
         }
     }
@@ -358,6 +365,14 @@ impl Dataset {
 
     pub fn get_index(&self, index_name: &str) -> Option<&index::IndexMetadata> {
         self.indexes.get(index_name)
+    }
+
+    pub fn dictionaries(&self) -> &DictionaryRegistry {
+        &self.dictionaries
+    }
+
+    pub fn dictionaries_mut(&mut self) -> &mut DictionaryRegistry {
+        &mut self.dictionaries
     }
 }
 
