@@ -666,7 +666,46 @@ impl ExecutionPlan for TableScanExec {
             .get_table(table_id)
             .ok_or_else(|| Error::TableNotFound(format!("Table '{}' not found", table_id)))?;
 
-        let mut all_rows = table.get_all_rows();
+        let (actual_table, actual_engine) = match table.engine() {
+            TableEngine::Distributed {
+                database,
+                table: target_table,
+                ..
+            } => {
+                let target_db = if database.is_empty() {
+                    dataset_name
+                } else {
+                    database.as_str()
+                };
+                let target_dataset = storage.get_dataset(target_db).ok_or_else(|| {
+                    Error::DatasetNotFound(format!("Dataset '{}' not found", target_db))
+                })?;
+                let underlying = target_dataset.get_table(target_table).ok_or_else(|| {
+                    Error::TableNotFound(format!("Table '{}' not found", target_table))
+                })?;
+                (underlying, underlying.engine().clone())
+            }
+            TableEngine::Buffer {
+                database,
+                table: target_table,
+            } => {
+                let target_db = if database.is_empty() {
+                    dataset_name
+                } else {
+                    database.as_str()
+                };
+                let target_dataset = storage.get_dataset(target_db).ok_or_else(|| {
+                    Error::DatasetNotFound(format!("Dataset '{}' not found", target_db))
+                })?;
+                let underlying = target_dataset.get_table(target_table).ok_or_else(|| {
+                    Error::TableNotFound(format!("Table '{}' not found", target_table))
+                })?;
+                (underlying, underlying.engine().clone())
+            }
+            engine => (table, engine.clone()),
+        };
+
+        let mut all_rows = actual_table.get_all_rows();
 
         if !self.only {
             let parent_col_count = self.schema.fields().len();
@@ -709,7 +748,7 @@ impl ExecutionPlan for TableScanExec {
         }
 
         if self.final_modifier {
-            all_rows = self.apply_final_merge(all_rows, table.engine(), table.schema())?;
+            all_rows = self.apply_final_merge(all_rows, &actual_engine, actual_table.schema())?;
         }
 
         if all_rows.is_empty() {

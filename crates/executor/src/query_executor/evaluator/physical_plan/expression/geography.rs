@@ -4937,6 +4937,34 @@ impl ProjectionWithExprExec {
                 Ok(Value::float64(rounded / multiplier))
             }
 
+            "ROUNDDOWN" => {
+                if args.len() != 2 {
+                    return Err(Error::invalid_query("roundDown requires 2 arguments"));
+                }
+                let value = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let v = value
+                    .as_f64()
+                    .or_else(|| value.as_i64().map(|i| i as f64))
+                    .ok_or_else(|| Error::type_mismatch("FLOAT64", "other"))?;
+                let thresholds_val = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                let thresholds = thresholds_val.as_array().ok_or_else(|| {
+                    Error::invalid_query("roundDown: second argument must be an array")
+                })?;
+                let mut sorted_thresholds: Vec<f64> = thresholds
+                    .iter()
+                    .filter_map(|t| t.as_f64().or_else(|| t.as_i64().map(|i| i as f64)))
+                    .collect();
+                sorted_thresholds
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let result = sorted_thresholds
+                    .iter()
+                    .rev()
+                    .find(|&&t| t <= v)
+                    .copied()
+                    .unwrap_or(sorted_thresholds.first().copied().unwrap_or(0.0));
+                Ok(Value::float64(result))
+            }
+
             "ROUNDTOEXP2" => {
                 if args.len() != 1 {
                     return Err(Error::invalid_query("roundToExp2 requires 1 argument"));

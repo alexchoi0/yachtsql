@@ -40,7 +40,6 @@ fn test_group_array_with_limit() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_sorted() {
     let mut executor = create_executor();
@@ -57,7 +56,6 @@ fn test_group_array_sorted() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_sample() {
     let mut executor = create_executor();
@@ -76,7 +74,6 @@ fn test_group_array_sample() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_array_insert_at() {
     let mut executor = create_executor();
@@ -152,7 +149,6 @@ fn test_group_uniq_array() {
     assert!(result.num_rows() == 2); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_uniq_array_with_limit() {
     let mut executor = create_executor();
@@ -169,7 +165,6 @@ fn test_group_uniq_array_with_limit() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_bit_and() {
     let mut executor = create_executor();
@@ -186,7 +181,6 @@ fn test_group_bit_and() {
     assert_table_eq!(result, [[12]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_bit_or() {
     let mut executor = create_executor();
@@ -203,7 +197,6 @@ fn test_group_bit_or() {
     assert_table_eq!(result, [[7]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_bit_xor() {
     let mut executor = create_executor();
@@ -220,7 +213,6 @@ fn test_group_bit_xor() {
     assert_table_eq!(result, [[0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_group_bitmap() {
     let mut executor = create_executor();
@@ -320,7 +312,6 @@ fn test_max_map() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_avg_map() {
     let mut executor = create_executor();

@@ -1531,15 +1531,46 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
             }
 
-            SqlExpr::Floor { expr, .. } => {
+            SqlExpr::Floor { expr, field } => {
                 let value = self.evaluate_expr(expr, row)?;
                 if value.is_null() {
                     return Ok(Value::null());
                 }
+
+                let decimals = match field {
+                    sqlparser::ast::CeilFloorKind::Scale(scale) => match scale {
+                        sqlparser::ast::Value::Number(n, _) => n.parse::<i64>().unwrap_or(0),
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
+
                 if let Some(f) = value.as_f64() {
-                    Ok(Value::float64(f.floor()))
+                    if decimals == 0 {
+                        Ok(Value::float64(f.floor()))
+                    } else {
+                        let multiplier = 10_f64.powi(decimals as i32);
+                        let floored = (f * multiplier).floor() / multiplier;
+                        Ok(Value::float64(floored))
+                    }
                 } else if let Some(i) = value.as_i64() {
-                    Ok(Value::float64(i as f64))
+                    if decimals >= 0 {
+                        Ok(Value::float64(i as f64))
+                    } else {
+                        let multiplier = 10_i64.pow((-decimals) as u32);
+                        Ok(Value::int64((i / multiplier) * multiplier))
+                    }
+                } else if let Some(d) = value.as_numeric() {
+                    if decimals == 0 {
+                        Ok(Value::numeric(d.floor()))
+                    } else {
+                        let f: f64 = d.to_string().parse().unwrap_or(0.0);
+                        let multiplier = 10_f64.powi(decimals as i32);
+                        let floored = (f * multiplier).floor() / multiplier;
+                        Ok(Value::numeric(
+                            rust_decimal::Decimal::from_f64_retain(floored).unwrap_or_default(),
+                        ))
+                    }
                 } else {
                     Err(Error::TypeMismatch {
                         expected: "NUMERIC".to_string(),
@@ -4099,19 +4130,54 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
             }
             "FLOOR" => {
-                if args.len() != 1 {
+                if args.is_empty() || args.len() > 2 {
                     return Err(Error::InvalidQuery(
-                        "FLOOR() requires exactly 1 argument".to_string(),
+                        "FLOOR() requires 1 or 2 arguments".to_string(),
                     ));
                 }
                 let value = self.evaluate_function_arg(&args[0], row)?;
                 if value.is_null() {
                     return Ok(Value::null());
                 }
+
+                let decimals = if args.len() == 2 {
+                    let prec_val = self.evaluate_function_arg(&args[1], row)?;
+                    if prec_val.is_null() {
+                        return Ok(Value::null());
+                    }
+                    prec_val.as_i64().ok_or_else(|| {
+                        Error::InvalidQuery("FLOOR() precision must be an integer".to_string())
+                    })?
+                } else {
+                    0
+                };
+
                 if let Some(f) = value.as_f64() {
-                    Ok(Value::float64(f.floor()))
+                    if decimals == 0 {
+                        Ok(Value::float64(f.floor()))
+                    } else {
+                        let multiplier = 10_f64.powi(decimals as i32);
+                        let floored = (f * multiplier).floor() / multiplier;
+                        Ok(Value::float64(floored))
+                    }
                 } else if let Some(n) = value.as_i64() {
-                    Ok(Value::int64(n))
+                    if decimals >= 0 {
+                        Ok(Value::int64(n))
+                    } else {
+                        let multiplier = 10_i64.pow((-decimals) as u32);
+                        Ok(Value::int64((n / multiplier) * multiplier))
+                    }
+                } else if let Some(d) = value.as_numeric() {
+                    if decimals == 0 {
+                        Ok(Value::numeric(d.floor()))
+                    } else {
+                        let f: f64 = d.to_string().parse().unwrap_or(0.0);
+                        let multiplier = 10_f64.powi(decimals as i32);
+                        let floored = (f * multiplier).floor() / multiplier;
+                        Ok(Value::numeric(
+                            rust_decimal::Decimal::from_f64_retain(floored).unwrap_or_default(),
+                        ))
+                    }
                 } else {
                     Err(Error::InvalidQuery(
                         "FLOOR() requires a numeric argument".to_string(),

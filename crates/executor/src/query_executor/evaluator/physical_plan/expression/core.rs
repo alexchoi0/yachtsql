@@ -65,6 +65,16 @@ impl ProjectionWithExprExec {
 
         let schema = batch.schema();
 
+        let qualified_name = format!("{}.{}", table_name, name);
+        if schema.field_index(&qualified_name).is_some() {
+            return Self::get_column_by_occurrence(
+                batch,
+                &qualified_name,
+                row_idx,
+                occurrence_index,
+            );
+        }
+
         if schema.field_index(name).is_some() {
             return Self::get_column_by_occurrence(batch, name, row_idx, occurrence_index);
         }
@@ -811,6 +821,12 @@ impl ProjectionWithExprExec {
                 | FunctionName::NetHost
                 | FunctionName::NetPublicSuffix
                 | FunctionName::NetRegDomain
+                | FunctionName::Encrypt
+                | FunctionName::Decrypt
+                | FunctionName::AesEncryptMysql
+                | FunctionName::AesDecryptMysql
+                | FunctionName::Base64UrlEncode
+                | FunctionName::Base64UrlDecode
         ) {
             return Self::evaluate_crypto_hash_network_function(
                 func_name, args, batch, row_idx, dialect,

@@ -204,6 +204,9 @@ pub enum UtilityOperation {
     ShowGrants {
         user_name: Option<String>,
     },
+    OptimizeTable {
+        table_name: ObjectName,
+    },
 }
 
 pub struct Dispatcher {
@@ -612,6 +615,12 @@ impl Dispatcher {
                             },
                         })
                     }
+
+                    SqlStatement::OptimizeTable { name, .. } => Ok(StatementJob::Utility {
+                        operation: UtilityOperation::OptimizeTable {
+                            table_name: name.clone(),
+                        },
+                    }),
 
                     _ => Err(Error::unsupported_feature(format!(
                         "Statement type {:?} is not yet supported",

@@ -63,7 +63,6 @@ fn test_unhex() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_encrypt_aes_128_ecb() {
     let mut executor = create_executor();
@@ -73,7 +72,6 @@ fn test_encrypt_aes_128_ecb() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_decrypt_aes_128_ecb() {
     let mut executor = create_executor();
@@ -85,7 +83,6 @@ fn test_decrypt_aes_128_ecb() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_encrypt_aes_256_cbc() {
     let mut executor = create_executor();
@@ -97,7 +94,6 @@ fn test_encrypt_aes_256_cbc() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_aes_encrypt_mysql() {
     let mut executor = create_executor();
@@ -107,7 +103,6 @@ fn test_aes_encrypt_mysql() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_aes_decrypt_mysql() {
     let mut executor = create_executor();
@@ -146,7 +141,6 @@ fn test_try_base64_decode() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_base64_url_encode() {
     let mut executor = create_executor();
@@ -156,7 +150,6 @@ fn test_base64_url_encode() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_base64_url_decode() {
     let mut executor = create_executor();
@@ -182,7 +175,6 @@ fn test_md5_column() {
     assert!(result.num_rows() == 3); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_encrypt_decrypt_roundtrip() {
     let mut executor = create_executor();

@@ -676,6 +676,16 @@ impl ProjectionWithExprExec {
 
             FunctionName::Custom(s) if s == "MODELEVALUATE" => Some(DataType::Float64),
 
+            FunctionName::Custom(s) if s == "ROUNDBANKERS" => Some(DataType::Float64),
+
+            FunctionName::Custom(s) if s == "ROUNDDOWN" => Some(DataType::Float64),
+
+            FunctionName::Custom(s)
+                if matches!(s.as_str(), "ROUNDTOEXP2" | "ROUNDDURATION" | "ROUNDAGE") =>
+            {
+                Some(DataType::Int64)
+            }
+
             FunctionName::Custom(s) if matches!(s.as_str(), "MATERIALIZE" | "IDENTITY") => {
                 if !args.is_empty() {
                     Self::infer_expr_type_with_schema(&args[0], schema)
@@ -2027,6 +2037,10 @@ impl ProjectionWithExprExec {
                 Some(DataType::String)
             }
 
+            FunctionName::Encrypt | FunctionName::AesEncryptMysql => Some(DataType::Bytes),
+            FunctionName::Decrypt | FunctionName::AesDecryptMysql => Some(DataType::String),
+            FunctionName::Base64UrlEncode | FunctionName::Base64UrlDecode => Some(DataType::String),
+
             FunctionName::ToTsvector
             | FunctionName::ToTsquery
             | FunctionName::PlaintoTsquery
@@ -2366,6 +2380,12 @@ impl ProjectionWithExprExec {
 
         match expr {
             Expr::Column { name, table } => {
+                if let Some(table_name) = table {
+                    let qualified_name = format!("{}.{}", table_name, name);
+                    if let Some(field) = schema.field(&qualified_name) {
+                        return Some(field.data_type.clone());
+                    }
+                }
                 if schema.field(name).is_some() {
                     schema.field(name).map(|f| f.data_type.clone())
                 } else if let Some(table_name) = table {

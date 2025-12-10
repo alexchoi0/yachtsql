@@ -543,6 +543,24 @@ impl DdlExecutor for QueryExecutor {
         for col in columns {
             let name = col.name.value.clone();
 
+            if let SqlDataType::Nested(nested_fields) = &col.data_type {
+                for nested_field in nested_fields {
+                    let nested_col_name = format!("{}.{}", name, nested_field.name.value);
+                    if !column_names.insert(nested_col_name.clone()) {
+                        return Err(Error::InvalidQuery(format!(
+                            "Duplicate column name '{}' in CREATE TABLE",
+                            nested_col_name
+                        )));
+                    }
+                    let inner_type =
+                        self.sql_type_to_data_type(dataset_id, &nested_field.data_type)?;
+                    let array_type = DataType::Array(Box::new(inner_type));
+                    let field = Field::nullable(nested_col_name, array_type);
+                    fields.push(field);
+                }
+                continue;
+            }
+
             if !column_names.insert(name.clone()) {
                 return Err(Error::InvalidQuery(format!(
                     "Duplicate column name '{}' in CREATE TABLE",
@@ -827,6 +845,27 @@ impl DdlExecutor for QueryExecutor {
                         yachtsql_core::types::StructField {
                             name: col.name.value.clone(),
                             data_type: DataType::Array(Box::new(dt)),
+                        }
+                    })
+                    .collect();
+                Ok(DataType::Struct(struct_fields))
+            }
+            SqlDataType::Tuple(fields) => {
+                let struct_fields: Vec<yachtsql_core::types::StructField> = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| {
+                        let dt = self
+                            .sql_type_to_data_type(dataset_id, &field.field_type)
+                            .unwrap_or(DataType::String);
+                        let name = field
+                            .field_name
+                            .as_ref()
+                            .map(|ident| ident.value.clone())
+                            .unwrap_or_else(|| (idx + 1).to_string());
+                        yachtsql_core::types::StructField {
+                            name,
+                            data_type: dt,
                         }
                     })
                     .collect();
@@ -1463,5 +1502,55 @@ impl QueryExecutor {
         schema.set_parent_tables(parent_names);
 
         Ok(())
+    }
+}
+
+impl QueryExecutor {
+    pub fn execute_create_table_as(
+        &mut self,
+        new_table: &str,
+        source_table: &str,
+        engine_clause: &str,
+    ) -> Result<crate::Table> {
+        let (new_dataset_id, new_table_id) = self.parse_ddl_table_name(new_table)?;
+        let (source_dataset_id, source_table_id) = self.parse_ddl_table_name(source_table)?;
+
+        let source_schema = {
+            let storage = self.storage.borrow();
+            let dataset = storage.get_dataset(&source_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", source_dataset_id))
+            })?;
+            let table = dataset
+                .get_table(&source_table_id)
+                .ok_or_else(|| Error::table_not_found(&source_table_id))?;
+            table.schema().clone()
+        };
+
+        {
+            let mut storage = self.storage.borrow_mut();
+            let dataset = storage.get_dataset_mut(&new_dataset_id).ok_or_else(|| {
+                Error::DatasetNotFound(format!("Dataset '{}' not found", new_dataset_id))
+            })?;
+
+            if dataset.get_table(&new_table_id).is_some() {
+                return Err(Error::InvalidQuery(format!(
+                    "Table '{}.{}' already exists",
+                    new_dataset_id, new_table_id
+                )));
+            }
+
+            dataset.create_table(new_table_id.clone(), source_schema)?;
+
+            let engine = parse_engine_from_sql(engine_clause, None);
+            if let Some(table) = dataset.get_table_mut(&new_table_id) {
+                table.set_engine(engine);
+            }
+        }
+
+        self.plan_cache.borrow_mut().invalidate_all();
+
+        Ok(crate::Table::empty(yachtsql_storage::Schema::from_fields(
+            vec![],
+        )))
     }
 }

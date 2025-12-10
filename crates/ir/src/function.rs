@@ -41,6 +41,32 @@ pub enum FunctionName {
     KurtSamp,
     AvgWeighted,
     CountIf,
+    SumIf,
+    AvgIf,
+    MinIf,
+    MaxIf,
+    AnyIf,
+    DeltaSum,
+    DeltaSumTimestamp,
+    SequenceMatch,
+    SequenceCount,
+    SumArray,
+    AvgArray,
+    MinArray,
+    MaxArray,
+    SumDistinct,
+    AvgDistinct,
+    Nothing,
+    SumKahan,
+    SingleValueOrNull,
+    BoundedSample,
+    LargestTriangleThreeBuckets,
+    SparkBar,
+    MaxIntersections,
+    MaxIntersectionsPosition,
+    SumOrNull,
+    SumOrDefault,
+    SumResample,
 
     BoolAnd,
     BoolOr,
@@ -287,6 +313,9 @@ pub enum FunctionName {
     GroupArray,
     GroupArrayMovingAvg,
     GroupArrayMovingSum,
+    GroupArraySample,
+    GroupArraySorted,
+    GroupArrayInsertAt,
     Any,
     AnyLast,
     AnyHeavy,
@@ -296,10 +325,14 @@ pub enum FunctionName {
     SumMap,
     MinMap,
     MaxMap,
+    AvgMap,
     GroupBitmap,
     GroupBitmapAnd,
     GroupBitmapOr,
     GroupBitmapXor,
+    GroupBitAnd,
+    GroupBitOr,
+    GroupBitXor,
     RankCorr,
     ExponentialMovingAverage,
     IntervalLengthSum,
@@ -864,6 +897,14 @@ pub enum FunctionName {
     AeadDecryptString,
     DeterministicDecryptString,
 
+    // ClickHouse Encryption functions
+    Encrypt,
+    Decrypt,
+    AesEncryptMysql,
+    AesDecryptMysql,
+    Base64UrlEncode,
+    Base64UrlDecode,
+
     // System/Special functions
     MergeAction,
     Array,
@@ -1035,6 +1076,36 @@ impl FunctionName {
             "KURT_SAMP" | "KURTSAMP" => Self::KurtSamp,
             "AVG_WEIGHTED" | "AVGWEIGHTED" => Self::AvgWeighted,
             "COUNTIF" | "COUNT_IF" => Self::CountIf,
+            "SUMIF" | "SUM_IF" => Self::SumIf,
+            "AVGIF" | "AVG_IF" => Self::AvgIf,
+            "MINIF" | "MIN_IF" => Self::MinIf,
+            "MAXIF" | "MAX_IF" => Self::MaxIf,
+            "ANYIF" | "ANY_IF" => Self::AnyIf,
+            "DELTASUM" | "DELTA_SUM" => Self::DeltaSum,
+            "DELTASUMTIMESTAMP" | "DELTA_SUM_TIMESTAMP" => Self::DeltaSumTimestamp,
+            "SEQUENCEMATCH" | "SEQUENCE_MATCH" => Self::SequenceMatch,
+            "SEQUENCECOUNT" | "SEQUENCE_COUNT" => Self::SequenceCount,
+            "SUMARRAY" | "SUM_ARRAY" => Self::SumArray,
+            "AVGARRAY" | "AVG_ARRAY" => Self::AvgArray,
+            "MINARRAY" | "MIN_ARRAY" => Self::MinArray,
+            "MAXARRAY" | "MAX_ARRAY" => Self::MaxArray,
+            "SUMDISTINCT" | "SUM_DISTINCT" => Self::SumDistinct,
+            "AVGDISTINCT" | "AVG_DISTINCT" => Self::AvgDistinct,
+            "NOTHING" => Self::Nothing,
+            "SUMKAHAN" | "SUM_KAHAN" => Self::SumKahan,
+            "SINGLEVALUEORNULL" | "SINGLE_VALUE_OR_NULL" => Self::SingleValueOrNull,
+            "BOUNDEDSAMPLE" | "BOUNDED_SAMPLE" => Self::BoundedSample,
+            "LARGESTTRIANGLETHREEBUCKETS" | "LARGEST_TRIANGLE_THREE_BUCKETS" => {
+                Self::LargestTriangleThreeBuckets
+            }
+            "SPARKBAR" | "SPARK_BAR" => Self::SparkBar,
+            "MAXINTERSECTIONS" | "MAX_INTERSECTIONS" => Self::MaxIntersections,
+            "MAXINTERSECTIONSPOSITION" | "MAX_INTERSECTIONS_POSITION" => {
+                Self::MaxIntersectionsPosition
+            }
+            "SUMORNULL" | "SUM_OR_NULL" => Self::SumOrNull,
+            "SUMORDEFAULT" | "SUM_OR_DEFAULT" => Self::SumOrDefault,
+            "SUMRESAMPLE" | "SUM_RESAMPLE" => Self::SumResample,
 
             "BOOL_AND" => Self::BoolAnd,
             "BOOL_OR" => Self::BoolOr,
@@ -1300,6 +1371,12 @@ impl FunctionName {
             "GROUPARRAYMOVINGAVG" => Self::GroupArrayMovingAvg,
             "GROUP_ARRAY_MOVING_SUM" => Self::GroupArrayMovingSum,
             "GROUPARRAYMOVINGSUM" => Self::GroupArrayMovingSum,
+            "GROUP_ARRAY_SAMPLE" => Self::GroupArraySample,
+            "GROUPARRAYSAMPLE" => Self::GroupArraySample,
+            "GROUP_ARRAY_SORTED" => Self::GroupArraySorted,
+            "GROUPARRAYSORTED" => Self::GroupArraySorted,
+            "GROUP_ARRAY_INSERT_AT" => Self::GroupArrayInsertAt,
+            "GROUPARRAYINSERTAT" => Self::GroupArrayInsertAt,
             "ANY" => Self::Any,
             "ANY_LAST" => Self::AnyLast,
             "ANYLAST" => Self::AnyLast,
@@ -1317,6 +1394,8 @@ impl FunctionName {
             "MINMAP" => Self::MinMap,
             "MAX_MAP" => Self::MaxMap,
             "MAXMAP" => Self::MaxMap,
+            "AVG_MAP" => Self::AvgMap,
+            "AVGMAP" => Self::AvgMap,
             "GROUP_BITMAP" => Self::GroupBitmap,
             "GROUPBITMAP" => Self::GroupBitmap,
             "GROUP_BITMAP_AND" => Self::GroupBitmapAnd,
@@ -1325,6 +1404,12 @@ impl FunctionName {
             "GROUPBITMAPOR" => Self::GroupBitmapOr,
             "GROUP_BITMAP_XOR" => Self::GroupBitmapXor,
             "GROUPBITMAPXOR" => Self::GroupBitmapXor,
+            "GROUP_BIT_AND" => Self::GroupBitAnd,
+            "GROUPBITAND" => Self::GroupBitAnd,
+            "GROUP_BIT_OR" => Self::GroupBitOr,
+            "GROUPBITOR" => Self::GroupBitOr,
+            "GROUP_BIT_XOR" => Self::GroupBitXor,
+            "GROUPBITXOR" => Self::GroupBitXor,
             "RANK_CORR" => Self::RankCorr,
             "RANKCORR" => Self::RankCorr,
             "EXPONENTIAL_MOVING_AVERAGE" => Self::ExponentialMovingAverage,
@@ -1909,6 +1994,14 @@ impl FunctionName {
             "AEAD.DECRYPT_STRING" => Self::AeadDecryptString,
             "DETERMINISTIC_DECRYPT_STRING" => Self::DeterministicDecryptString,
 
+            // ClickHouse Encryption functions
+            "ENCRYPT" => Self::Encrypt,
+            "DECRYPT" => Self::Decrypt,
+            "AES_ENCRYPT_MYSQL" => Self::AesEncryptMysql,
+            "AES_DECRYPT_MYSQL" => Self::AesDecryptMysql,
+            "BASE64URLENCODE" => Self::Base64UrlEncode,
+            "BASE64URLDECODE" => Self::Base64UrlDecode,
+
             // System/Special functions
             "MERGE_ACTION" => Self::MergeAction,
             "ARRAY" => Self::Array,
@@ -2116,6 +2209,32 @@ impl FunctionName {
             Self::KurtSamp => "KURT_SAMP",
             Self::AvgWeighted => "AVG_WEIGHTED",
             Self::CountIf => "COUNTIF",
+            Self::SumIf => "SUMIF",
+            Self::AvgIf => "AVGIF",
+            Self::MinIf => "MINIF",
+            Self::MaxIf => "MAXIF",
+            Self::AnyIf => "ANYIF",
+            Self::DeltaSum => "DELTASUM",
+            Self::DeltaSumTimestamp => "DELTASUMTIMESTAMP",
+            Self::SequenceMatch => "SEQUENCEMATCH",
+            Self::SequenceCount => "SEQUENCECOUNT",
+            Self::SumArray => "SUMARRAY",
+            Self::AvgArray => "AVGARRAY",
+            Self::MinArray => "MINARRAY",
+            Self::MaxArray => "MAXARRAY",
+            Self::SumDistinct => "SUMDISTINCT",
+            Self::AvgDistinct => "AVGDISTINCT",
+            Self::Nothing => "NOTHING",
+            Self::SumKahan => "SUMKAHAN",
+            Self::SingleValueOrNull => "SINGLEVALUEORNULL",
+            Self::BoundedSample => "BOUNDEDSAMPLE",
+            Self::LargestTriangleThreeBuckets => "LARGESTTRIANGLETHREEBUCKETS",
+            Self::SparkBar => "SPARKBAR",
+            Self::MaxIntersections => "MAXINTERSECTIONS",
+            Self::MaxIntersectionsPosition => "MAXINTERSECTIONSPOSITION",
+            Self::SumOrNull => "SUMORNULL",
+            Self::SumOrDefault => "SUMORDEFAULT",
+            Self::SumResample => "SUMRESAMPLE",
 
             Self::BoolAnd => "BOOL_AND",
             Self::BoolOr => "BOOL_OR",
@@ -2362,6 +2481,9 @@ impl FunctionName {
             Self::GroupArray => "GROUP_ARRAY",
             Self::GroupArrayMovingAvg => "GROUP_ARRAY_MOVING_AVG",
             Self::GroupArrayMovingSum => "GROUP_ARRAY_MOVING_SUM",
+            Self::GroupArraySample => "GROUP_ARRAY_SAMPLE",
+            Self::GroupArraySorted => "GROUP_ARRAY_SORTED",
+            Self::GroupArrayInsertAt => "GROUP_ARRAY_INSERT_AT",
             Self::Any => "ANY",
             Self::AnyLast => "ANY_LAST",
             Self::AnyHeavy => "ANY_HEAVY",
@@ -2371,10 +2493,14 @@ impl FunctionName {
             Self::SumMap => "SUM_MAP",
             Self::MinMap => "MIN_MAP",
             Self::MaxMap => "MAX_MAP",
+            Self::AvgMap => "AVG_MAP",
             Self::GroupBitmap => "GROUP_BITMAP",
             Self::GroupBitmapAnd => "GROUP_BITMAP_AND",
             Self::GroupBitmapOr => "GROUP_BITMAP_OR",
             Self::GroupBitmapXor => "GROUP_BITMAP_XOR",
+            Self::GroupBitAnd => "GROUP_BIT_AND",
+            Self::GroupBitOr => "GROUP_BIT_OR",
+            Self::GroupBitXor => "GROUP_BIT_XOR",
             Self::RankCorr => "RANK_CORR",
             Self::ExponentialMovingAverage => "EXPONENTIAL_MOVING_AVERAGE",
             Self::IntervalLengthSum => "INTERVAL_LENGTH_SUM",
@@ -2939,6 +3065,14 @@ impl FunctionName {
             Self::AeadDecryptString => "AEAD.DECRYPT_STRING",
             Self::DeterministicDecryptString => "DETERMINISTIC_DECRYPT_STRING",
 
+            // ClickHouse Encryption functions
+            Self::Encrypt => "ENCRYPT",
+            Self::Decrypt => "DECRYPT",
+            Self::AesEncryptMysql => "AES_ENCRYPT_MYSQL",
+            Self::AesDecryptMysql => "AES_DECRYPT_MYSQL",
+            Self::Base64UrlEncode => "BASE64URLENCODE",
+            Self::Base64UrlDecode => "BASE64URLDECODE",
+
             // System/Special functions
             Self::MergeAction => "MERGE_ACTION",
             Self::Array => "ARRAY",
@@ -3106,6 +3240,32 @@ impl FunctionName {
                 | Self::KurtSamp
                 | Self::AvgWeighted
                 | Self::CountIf
+                | Self::SumIf
+                | Self::AvgIf
+                | Self::MinIf
+                | Self::MaxIf
+                | Self::AnyIf
+                | Self::DeltaSum
+                | Self::DeltaSumTimestamp
+                | Self::SequenceMatch
+                | Self::SequenceCount
+                | Self::SumArray
+                | Self::AvgArray
+                | Self::MinArray
+                | Self::MaxArray
+                | Self::SumDistinct
+                | Self::AvgDistinct
+                | Self::Nothing
+                | Self::SumKahan
+                | Self::SingleValueOrNull
+                | Self::BoundedSample
+                | Self::LargestTriangleThreeBuckets
+                | Self::SparkBar
+                | Self::MaxIntersections
+                | Self::MaxIntersectionsPosition
+                | Self::SumOrNull
+                | Self::SumOrDefault
+                | Self::SumResample
                 | Self::BoolAnd
                 | Self::BoolOr
                 | Self::Every
@@ -3136,6 +3296,9 @@ impl FunctionName {
                 | Self::GroupArray
                 | Self::GroupArrayMovingAvg
                 | Self::GroupArrayMovingSum
+                | Self::GroupArraySample
+                | Self::GroupArraySorted
+                | Self::GroupArrayInsertAt
                 | Self::Any
                 | Self::AnyLast
                 | Self::AnyHeavy
@@ -3145,11 +3308,15 @@ impl FunctionName {
                 | Self::SumMap
                 | Self::MinMap
                 | Self::MaxMap
+                | Self::AvgMap
                 | Self::GroupBitmap
                 | Self::GroupBitmapAnd
                 | Self::GroupBitmapOr
                 | Self::GroupBitmapXor
                 | Self::GroupBitmapState
+                | Self::GroupBitAnd
+                | Self::GroupBitOr
+                | Self::GroupBitXor
                 | Self::RankCorr
                 | Self::ExponentialMovingAverage
                 | Self::IntervalLengthSum

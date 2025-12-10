@@ -506,9 +506,7 @@ impl AggregateExec {
                 FunctionName::StringAgg => Some(DataType::String),
 
                 FunctionName::ArgMin | FunctionName::ArgMax => {
-                    if args.len() >= 2 {
-                        Self::infer_expr_type(&args[1], schema)
-                    } else if let Some(arg) = args.first() {
+                    if let Some(arg) = args.first() {
                         Self::infer_expr_type(arg, schema)
                     } else {
                         Some(DataType::String)
@@ -1490,62 +1488,66 @@ impl AggregateExec {
                         }
                     }
                     FunctionName::ArgMin => {
-                        let mut min_key: Option<Value> = None;
-                        let mut min_val: Option<Value> = None;
+                        let mut min_comparison: Option<Value> = None;
+                        let mut arg_at_min: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
                                 continue;
                             }
                             if let Some(arr) = val.as_array() {
                                 if arr.len() >= 2 {
-                                    let key = &arr[0];
-                                    let value = &arr[1];
-                                    if key.is_null() {
+                                    let arg_to_return = &arr[0];
+                                    let val_to_compare = &arr[1];
+                                    if val_to_compare.is_null() {
                                         continue;
                                     }
-                                    let is_smaller = match &min_key {
+                                    let is_smaller = match &min_comparison {
                                         None => true,
-                                        Some(current_min) => compare_values(key, current_min)
-                                            .map(|o| o == std::cmp::Ordering::Less)
-                                            .unwrap_or(false),
+                                        Some(current_min) => {
+                                            compare_values(val_to_compare, current_min)
+                                                .map(|o| o == std::cmp::Ordering::Less)
+                                                .unwrap_or(false)
+                                        }
                                     };
                                     if is_smaller {
-                                        min_key = Some(key.clone());
-                                        min_val = Some(value.clone());
+                                        min_comparison = Some(val_to_compare.clone());
+                                        arg_at_min = Some(arg_to_return.clone());
                                     }
                                 }
                             }
                         }
-                        min_val.unwrap_or(Value::null())
+                        arg_at_min.unwrap_or(Value::null())
                     }
                     FunctionName::ArgMax => {
-                        let mut max_key: Option<Value> = None;
-                        let mut max_val: Option<Value> = None;
+                        let mut max_comparison: Option<Value> = None;
+                        let mut arg_at_max: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
                                 continue;
                             }
                             if let Some(arr) = val.as_array() {
                                 if arr.len() >= 2 {
-                                    let key = &arr[0];
-                                    let value = &arr[1];
-                                    if key.is_null() {
+                                    let arg_to_return = &arr[0];
+                                    let val_to_compare = &arr[1];
+                                    if val_to_compare.is_null() {
                                         continue;
                                     }
-                                    let is_larger = match &max_key {
+                                    let is_larger = match &max_comparison {
                                         None => true,
-                                        Some(current_max) => compare_values(key, current_max)
-                                            .map(|o| o == std::cmp::Ordering::Greater)
-                                            .unwrap_or(false),
+                                        Some(current_max) => {
+                                            compare_values(val_to_compare, current_max)
+                                                .map(|o| o == std::cmp::Ordering::Greater)
+                                                .unwrap_or(false)
+                                        }
                                     };
                                     if is_larger {
-                                        max_key = Some(key.clone());
-                                        max_val = Some(value.clone());
+                                        max_comparison = Some(val_to_compare.clone());
+                                        arg_at_max = Some(arg_to_return.clone());
                                     }
                                 }
                             }
                         }
-                        max_val.unwrap_or(Value::null())
+                        arg_at_max.unwrap_or(Value::null())
                     }
                     FunctionName::GroupArray => {
                         let arr: Vec<Value> = values.iter().map(|v| (*v).clone()).collect();
@@ -1660,6 +1662,48 @@ impl AggregateExec {
                         let arr: Vec<Value> =
                             unique_values.iter().map(|&n| Value::int64(n)).collect();
                         Value::array(arr)
+                    }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
                     }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values
@@ -2846,62 +2890,66 @@ impl SortAggregateExec {
                         }
                     }
                     FunctionName::ArgMin => {
-                        let mut min_key: Option<Value> = None;
-                        let mut min_val: Option<Value> = None;
+                        let mut min_comparison: Option<Value> = None;
+                        let mut arg_at_min: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
                                 continue;
                             }
                             if let Some(arr) = val.as_array() {
                                 if arr.len() >= 2 {
-                                    let key = &arr[0];
-                                    let value = &arr[1];
-                                    if key.is_null() {
+                                    let arg_to_return = &arr[0];
+                                    let val_to_compare = &arr[1];
+                                    if val_to_compare.is_null() {
                                         continue;
                                     }
-                                    let is_smaller = match &min_key {
+                                    let is_smaller = match &min_comparison {
                                         None => true,
-                                        Some(current_min) => compare_values(key, current_min)
-                                            .map(|o| o == std::cmp::Ordering::Less)
-                                            .unwrap_or(false),
+                                        Some(current_min) => {
+                                            compare_values(val_to_compare, current_min)
+                                                .map(|o| o == std::cmp::Ordering::Less)
+                                                .unwrap_or(false)
+                                        }
                                     };
                                     if is_smaller {
-                                        min_key = Some(key.clone());
-                                        min_val = Some(value.clone());
+                                        min_comparison = Some(val_to_compare.clone());
+                                        arg_at_min = Some(arg_to_return.clone());
                                     }
                                 }
                             }
                         }
-                        min_val.unwrap_or(Value::null())
+                        arg_at_min.unwrap_or(Value::null())
                     }
                     FunctionName::ArgMax => {
-                        let mut max_key: Option<Value> = None;
-                        let mut max_val: Option<Value> = None;
+                        let mut max_comparison: Option<Value> = None;
+                        let mut arg_at_max: Option<Value> = None;
                         for val in &values {
                             if val.is_null() {
                                 continue;
                             }
                             if let Some(arr) = val.as_array() {
                                 if arr.len() >= 2 {
-                                    let key = &arr[0];
-                                    let value = &arr[1];
-                                    if key.is_null() {
+                                    let arg_to_return = &arr[0];
+                                    let val_to_compare = &arr[1];
+                                    if val_to_compare.is_null() {
                                         continue;
                                     }
-                                    let is_larger = match &max_key {
+                                    let is_larger = match &max_comparison {
                                         None => true,
-                                        Some(current_max) => compare_values(key, current_max)
-                                            .map(|o| o == std::cmp::Ordering::Greater)
-                                            .unwrap_or(false),
+                                        Some(current_max) => {
+                                            compare_values(val_to_compare, current_max)
+                                                .map(|o| o == std::cmp::Ordering::Greater)
+                                                .unwrap_or(false)
+                                        }
                                     };
                                     if is_larger {
-                                        max_key = Some(key.clone());
-                                        max_val = Some(value.clone());
+                                        max_comparison = Some(val_to_compare.clone());
+                                        arg_at_max = Some(arg_to_return.clone());
                                     }
                                 }
                             }
                         }
-                        max_val.unwrap_or(Value::null())
+                        arg_at_max.unwrap_or(Value::null())
                     }
                     FunctionName::GroupArray => {
                         let arr: Vec<Value> = values.iter().map(|v| (*v).clone()).collect();
@@ -3016,6 +3064,48 @@ impl SortAggregateExec {
                         let arr: Vec<Value> =
                             unique_values.iter().map(|&n| Value::int64(n)).collect();
                         Value::array(arr)
+                    }
+                    FunctionName::GroupBitAnd => {
+                        let mut result: Option<i64> = None;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result = Some(match result {
+                                    Some(r) => r & i,
+                                    None => i,
+                                });
+                            }
+                        }
+                        result.map(Value::int64).unwrap_or(Value::null())
+                    }
+                    FunctionName::GroupBitOr => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result |= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::GroupBitXor => {
+                        let mut result: i64 = 0;
+                        let mut has_value = false;
+                        for val in &values {
+                            if let Some(i) = val.as_i64() {
+                                result ^= i;
+                                has_value = true;
+                            }
+                        }
+                        if has_value {
+                            Value::int64(result)
+                        } else {
+                            Value::null()
+                        }
                     }
                     FunctionName::RegrSlope => {
                         let pairs: Vec<(f64, f64)> = values
