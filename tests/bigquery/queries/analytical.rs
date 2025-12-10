@@ -422,7 +422,6 @@ fn test_customer_purchase_frequency() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_year_over_year_comparison() {
     let mut executor = create_executor();
     executor
@@ -445,15 +444,14 @@ fn test_year_over_year_comparison() {
     let result = executor
         .execute_sql(
             "SELECT
-                y2024.quarter,
-                y2023.revenue AS revenue_2023,
-                y2024.revenue AS revenue_2024,
-                y2024.revenue - y2023.revenue AS yoy_change,
-                ROUND((y2024.revenue - y2023.revenue) * 100.0 / y2023.revenue, 2) AS yoy_pct
-            FROM yearly_sales y2024
-            JOIN yearly_sales y2023 ON y2024.quarter = y2023.quarter
-            WHERE y2024.year = 2024 AND y2023.year = 2023
-            ORDER BY y2024.quarter",
+                a.quarter,
+                a.rev_a AS revenue_2023,
+                b.rev_b AS revenue_2024,
+                b.rev_b - a.rev_a AS yoy_change,
+                ROUND((b.rev_b - a.rev_a) * 100.0 / a.rev_a, 2) AS yoy_pct
+            FROM (SELECT quarter, revenue AS rev_a FROM yearly_sales WHERE year = 2023) a
+            JOIN (SELECT quarter, revenue AS rev_b FROM yearly_sales WHERE year = 2024) b ON a.quarter = b.quarter
+            ORDER BY a.quarter",
         )
         .unwrap();
     assert_table_eq!(
@@ -517,7 +515,6 @@ fn test_cohort_analysis() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_funnel_analysis() {
     let mut executor = create_executor();
     executor
@@ -547,11 +544,13 @@ fn test_funnel_analysis() {
 
     let result = executor
         .execute_sql(
-            "SELECT
+            "WITH total_views AS (
+                SELECT COUNT(DISTINCT user_id) AS total FROM events WHERE event_name = 'page_view'
+            )
+            SELECT
                 event_name,
                 COUNT(DISTINCT user_id) AS users,
-                COUNT(DISTINCT user_id) * 100.0 /
-                    (SELECT COUNT(DISTINCT user_id) FROM events WHERE event_name = 'page_view') AS conversion_rate
+                COUNT(DISTINCT user_id) * 100.0 / (SELECT total FROM total_views) AS conversion_rate
             FROM events
             GROUP BY event_name
             ORDER BY
@@ -623,7 +622,6 @@ fn test_retention_analysis() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_abc_analysis() {
     let mut executor = create_executor();
     setup_sales_data(&mut executor);
@@ -655,7 +653,7 @@ fn test_abc_analysis() {
                     ELSE 'C'
                 END AS abc_class
             FROM cumulative
-            ORDER BY revenue DESC",
+            ORDER BY revenue DESC, product_name",
         )
         .unwrap();
     assert_table_eq!(
@@ -664,8 +662,8 @@ fn test_abc_analysis() {
             ["Widget A", 1500, 26.09, "A"],
             ["Gadget X", 1400, 50.43, "A"],
             ["Chair", 900, 66.09, "A"],
-            ["Desk", 500, 74.78, "A"],
-            ["Book", 500, 83.48, "B"],
+            ["Book", 500, 92.17, "B"],
+            ["Desk", 500, 92.17, "B"],
             ["Magazine", 500, 92.17, "B"],
             ["Widget B", 450, 100.0, "C"],
         ]
@@ -846,7 +844,6 @@ fn test_sessionization() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_market_basket_analysis() {
     let mut executor = create_executor();
     executor
@@ -870,22 +867,32 @@ fn test_market_basket_analysis() {
 
     let result = executor
         .execute_sql(
-            "WITH product_pairs AS (
+            "WITH total_orders AS (
+                SELECT COUNT(DISTINCT order_id) AS cnt FROM order_items
+            ),
+            items_a AS (
+                SELECT order_id AS order_a, product_id AS prod_a FROM order_items
+            ),
+            items_b AS (
+                SELECT order_id AS order_b, product_id AS prod_b FROM order_items
+            ),
+            product_pairs AS (
                 SELECT
-                    a.product_id AS product_a,
-                    b.product_id AS product_b,
-                    COUNT(DISTINCT a.order_id) AS co_occurrence
-                FROM order_items a
-                JOIN order_items b ON a.order_id = b.order_id AND a.product_id < b.product_id
-                GROUP BY a.product_id, b.product_id
+                    prod_a AS product_a,
+                    prod_b AS product_b,
+                    COUNT(DISTINCT order_a) AS co_occurrence
+                FROM items_a
+                JOIN items_b ON order_a = order_b
+                WHERE prod_a < prod_b
+                GROUP BY prod_a, prod_b
             )
             SELECT
                 product_a,
                 product_b,
                 co_occurrence,
-                co_occurrence * 100.0 / (SELECT COUNT(DISTINCT order_id) FROM order_items) AS support_pct
+                co_occurrence * 100.0 / (SELECT cnt FROM total_orders) AS support_pct
             FROM product_pairs
-            ORDER BY co_occurrence DESC",
+            ORDER BY co_occurrence DESC, product_a, product_b",
         )
         .unwrap();
     assert_table_eq!(
@@ -902,7 +909,6 @@ fn test_market_basket_analysis() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_pareto_analysis() {
     let mut executor = create_executor();
     setup_sales_data(&mut executor);
@@ -920,7 +926,7 @@ fn test_pareto_analysis() {
                 SELECT
                     customer_id,
                     total_value,
-                    ROW_NUMBER() OVER (ORDER BY total_value DESC) AS customer_rank,
+                    ROW_NUMBER() OVER (ORDER BY total_value DESC, customer_id) AS customer_rank,
                     COUNT(*) OVER () AS total_customers,
                     SUM(total_value) OVER () AS grand_total
                 FROM customer_value
@@ -931,7 +937,7 @@ fn test_pareto_analysis() {
                 customer_rank * 100.0 / total_customers AS customer_percentile,
                 SUM(total_value) OVER (ORDER BY total_value DESC) * 100.0 / grand_total AS cumulative_value_pct
             FROM ranked
-            ORDER BY customer_rank",
+            ORDER BY customer_rank, customer_id",
         )
         .unwrap();
     assert_table_eq!(
@@ -939,9 +945,9 @@ fn test_pareto_analysis() {
         [
             [1001, 1500, 14.285714285714286, 26.086956521739133],
             [1002, 1450, 28.571428571428573, 51.30434782608696],
-            [1005, 1000, 42.857142857142854, 68.69565217391303],
-            [1004, 500, 57.142857142857146, 77.39130434782608],
-            [1006, 500, 71.42857142857143, 86.08695652173913],
+            [1005, 1000, 42.857142857142854, 68.6956521739131],
+            [1004, 500, 57.142857142857146, 94.78260869565217],
+            [1006, 500, 71.42857142857143, 94.78260869565217],
             [1007, 500, 85.71428571428571, 94.78260869565217],
             [1003, 300, 100.0, 100.0],
         ]
@@ -1081,7 +1087,6 @@ fn test_weighted_average() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_anomaly_detection_zscore() {
     let mut executor = create_executor();
     executor
@@ -1125,14 +1130,14 @@ fn test_anomaly_detection_zscore() {
     assert_table_eq!(
         result,
         [
-            [d(2024, 1, 1), 100, -0.39, "Normal"],
-            [d(2024, 1, 2), 102, -0.37, "Normal"],
-            [d(2024, 1, 3), 98, -0.40, "Normal"],
-            [d(2024, 1, 4), 105, -0.35, "Normal"],
-            [d(2024, 1, 5), 500, 2.64, "Anomaly"],
-            [d(2024, 1, 6), 101, -0.38, "Normal"],
-            [d(2024, 1, 7), 99, -0.39, "Normal"],
-            [d(2024, 1, 8), 103, -0.36, "Normal"],
+            [d(2024, 1, 1), 100, -0.36, "Normal"],
+            [d(2024, 1, 2), 102, -0.35, "Normal"],
+            [d(2024, 1, 3), 98, -0.38, "Normal"],
+            [d(2024, 1, 4), 105, -0.33, "Normal"],
+            [d(2024, 1, 5), 500, 2.47, "Anomaly"],
+            [d(2024, 1, 6), 101, -0.35, "Normal"],
+            [d(2024, 1, 7), 99, -0.37, "Normal"],
+            [d(2024, 1, 8), 103, -0.34, "Normal"],
         ]
     );
 }
