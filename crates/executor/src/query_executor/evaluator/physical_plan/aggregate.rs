@@ -212,6 +212,12 @@ impl AggregateExec {
                                     | FunctionName::JsonObjectAgg
                                     | FunctionName::JsonbObjectAgg
                                     | FunctionName::ApproxTopSum
+                                    | FunctionName::CramersV
+                                    | FunctionName::CramersVBiasCorrected
+                                    | FunctionName::TheilU
+                                    | FunctionName::ContingencyCoefficient
+                                    | FunctionName::RankCorr
+                                    | FunctionName::ExponentialMovingAverage
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());
@@ -2259,7 +2265,50 @@ impl AggregateExec {
                         if pairs.len() < 2 {
                             Value::null()
                         } else {
-                            Value::float64(1.0)
+                            fn rank_values(values: &[f64]) -> Vec<f64> {
+                                let mut indexed: Vec<(usize, f64)> =
+                                    values.iter().copied().enumerate().collect();
+                                indexed.sort_by(|a, b| {
+                                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                let mut ranks = vec![0.0; values.len()];
+                                let mut i = 0;
+                                while i < indexed.len() {
+                                    let mut j = i;
+                                    while j < indexed.len() && indexed[j].1 == indexed[i].1 {
+                                        j += 1;
+                                    }
+                                    let rank = (i + j - 1) as f64 / 2.0 + 1.0;
+                                    for k in i..j {
+                                        ranks[indexed[k].0] = rank;
+                                    }
+                                    i = j;
+                                }
+                                ranks
+                            }
+                            let x_values: Vec<f64> = pairs.iter().map(|(x, _)| *x).collect();
+                            let y_values: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
+                            let x_ranks = rank_values(&x_values);
+                            let y_ranks = rank_values(&y_values);
+                            let n = x_ranks.len() as f64;
+                            let mean_x: f64 = x_ranks.iter().sum::<f64>() / n;
+                            let mean_y: f64 = y_ranks.iter().sum::<f64>() / n;
+                            let mut sum_xy = 0.0f64;
+                            let mut sum_x2 = 0.0f64;
+                            let mut sum_y2 = 0.0f64;
+                            for i in 0..x_ranks.len() {
+                                let dx = x_ranks[i] - mean_x;
+                                let dy = y_ranks[i] - mean_y;
+                                sum_xy += dx * dy;
+                                sum_x2 += dx * dx;
+                                sum_y2 += dy * dy;
+                            }
+                            if sum_x2 == 0.0 || sum_y2 == 0.0 {
+                                Value::null()
+                            } else {
+                                let corr = sum_xy / (sum_x2 * sum_y2).sqrt();
+                                Value::float64(corr)
+                            }
                         }
                     }
                     FunctionName::ExponentialMovingAverage => {
@@ -2501,6 +2550,186 @@ impl AggregateExec {
                             .map(|(_, value)| value.clone())
                             .unwrap_or(Value::null())
                     }
+                    FunctionName::CramersV | FunctionName::CramersVBiasCorrected => {
+                        let mut contingency: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut row_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut col_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *contingency.entry((x.clone(), y.clone())).or_insert(0) += 1;
+                                    *row_totals.entry(x).or_insert(0) += 1;
+                                    *col_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let n = total as f64;
+                            let mut chi_sq = 0.0f64;
+                            for ((x, y), observed) in &contingency {
+                                let row_total = *row_totals.get(x).unwrap_or(&0) as f64;
+                                let col_total = *col_totals.get(y).unwrap_or(&0) as f64;
+                                let expected = (row_total * col_total) / n;
+                                if expected > 0.0 {
+                                    let diff = *observed as f64 - expected;
+                                    chi_sq += (diff * diff) / expected;
+                                }
+                            }
+
+                            let r = row_totals.len() as f64;
+                            let c = col_totals.len() as f64;
+                            let k = r.min(c);
+
+                            if k <= 1.0 || n == 0.0 {
+                                Value::float64(0.0)
+                            } else if matches!(name, FunctionName::CramersVBiasCorrected) {
+                                let phi_sq = chi_sq / n;
+                                let phi_sq_corrected =
+                                    (phi_sq - ((r - 1.0) * (c - 1.0)) / (n - 1.0)).max(0.0);
+                                let r_corrected = r - ((r - 1.0).powi(2)) / (n - 1.0);
+                                let c_corrected = c - ((c - 1.0).powi(2)) / (n - 1.0);
+                                let k_corrected = (r_corrected - 1.0).min(c_corrected - 1.0);
+                                if k_corrected <= 0.0 {
+                                    Value::float64(0.0)
+                                } else {
+                                    Value::float64((phi_sq_corrected / k_corrected).sqrt())
+                                }
+                            } else {
+                                Value::float64((chi_sq / (n * (k - 1.0))).sqrt())
+                            }
+                        }
+                    }
+                    FunctionName::TheilU => {
+                        let mut contingency: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut y_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *contingency.entry((x, y.clone())).or_insert(0) += 1;
+                                    *y_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let n = total as f64;
+                            let mut h_y = 0.0f64;
+                            for &count in y_totals.values() {
+                                if count > 0 {
+                                    let p = count as f64 / n;
+                                    h_y -= p * p.ln();
+                                }
+                            }
+
+                            let mut h_y_given_x = 0.0f64;
+                            let mut x_totals: std::collections::HashMap<String, usize> =
+                                std::collections::HashMap::new();
+                            for ((x, _), count) in &contingency {
+                                *x_totals.entry(x.clone()).or_insert(0) += count;
+                            }
+                            for ((x, _), &count) in &contingency {
+                                if count > 0 {
+                                    let x_total = *x_totals.get(x).unwrap_or(&1) as f64;
+                                    let p_xy = count as f64 / n;
+                                    let p_y_given_x = count as f64 / x_total;
+                                    h_y_given_x -= p_xy * p_y_given_x.ln();
+                                }
+                            }
+
+                            if h_y.abs() < f64::EPSILON {
+                                Value::float64(0.0)
+                            } else {
+                                Value::float64((h_y - h_y_given_x) / h_y)
+                            }
+                        }
+                    }
+                    FunctionName::ContingencyCoefficient => {
+                        let mut contingency: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut row_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut col_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *contingency.entry((x.clone(), y.clone())).or_insert(0) += 1;
+                                    *row_totals.entry(x).or_insert(0) += 1;
+                                    *col_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let n = total as f64;
+                            let mut chi_sq = 0.0f64;
+                            for ((x, y), observed) in &contingency {
+                                let row_total = *row_totals.get(x).unwrap_or(&0) as f64;
+                                let col_total = *col_totals.get(y).unwrap_or(&0) as f64;
+                                let expected = (row_total * col_total) / n;
+                                if expected > 0.0 {
+                                    let diff = *observed as f64 - expected;
+                                    chi_sq += (diff * diff) / expected;
+                                }
+                            }
+
+                            Value::float64((chi_sq / (chi_sq + n)).sqrt())
+                        }
+                    }
+                    FunctionName::AvgWeighted => {
+                        let mut sum_weighted = 0.0f64;
+                        let mut sum_weights = 0.0f64;
+
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 {
+                                    let x = arr[0]
+                                        .as_f64()
+                                        .or_else(|| arr[0].as_i64().map(|i| i as f64));
+                                    let w = arr[1]
+                                        .as_f64()
+                                        .or_else(|| arr[1].as_i64().map(|i| i as f64));
+                                    if let (Some(x), Some(w)) = (x, w) {
+                                        sum_weighted += x * w;
+                                        sum_weights += w;
+                                    }
+                                }
+                            }
+                        }
+
+                        if sum_weights == 0.0 {
+                            Value::null()
+                        } else {
+                            Value::float64(sum_weighted / sum_weights)
+                        }
+                    }
                     _ => Value::null(),
                 },
                 _ => Value::null(),
@@ -2728,6 +2957,12 @@ impl SortAggregateExec {
                                     | FunctionName::JsonObjectAgg
                                     | FunctionName::JsonbObjectAgg
                                     | FunctionName::ApproxTopSum
+                                    | FunctionName::CramersV
+                                    | FunctionName::CramersVBiasCorrected
+                                    | FunctionName::TheilU
+                                    | FunctionName::ContingencyCoefficient
+                                    | FunctionName::RankCorr
+                                    | FunctionName::ExponentialMovingAverage
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());
@@ -3890,7 +4125,50 @@ impl SortAggregateExec {
                         if pairs.len() < 2 {
                             Value::null()
                         } else {
-                            Value::float64(1.0)
+                            fn rank_values(values: &[f64]) -> Vec<f64> {
+                                let mut indexed: Vec<(usize, f64)> =
+                                    values.iter().copied().enumerate().collect();
+                                indexed.sort_by(|a, b| {
+                                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                let mut ranks = vec![0.0; values.len()];
+                                let mut i = 0;
+                                while i < indexed.len() {
+                                    let mut j = i;
+                                    while j < indexed.len() && indexed[j].1 == indexed[i].1 {
+                                        j += 1;
+                                    }
+                                    let rank = (i + j - 1) as f64 / 2.0 + 1.0;
+                                    for k in i..j {
+                                        ranks[indexed[k].0] = rank;
+                                    }
+                                    i = j;
+                                }
+                                ranks
+                            }
+                            let x_values: Vec<f64> = pairs.iter().map(|(x, _)| *x).collect();
+                            let y_values: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
+                            let x_ranks = rank_values(&x_values);
+                            let y_ranks = rank_values(&y_values);
+                            let n = x_ranks.len() as f64;
+                            let mean_x: f64 = x_ranks.iter().sum::<f64>() / n;
+                            let mean_y: f64 = y_ranks.iter().sum::<f64>() / n;
+                            let mut sum_xy = 0.0f64;
+                            let mut sum_x2 = 0.0f64;
+                            let mut sum_y2 = 0.0f64;
+                            for i in 0..x_ranks.len() {
+                                let dx = x_ranks[i] - mean_x;
+                                let dy = y_ranks[i] - mean_y;
+                                sum_xy += dx * dy;
+                                sum_x2 += dx * dx;
+                                sum_y2 += dy * dy;
+                            }
+                            if sum_x2 == 0.0 || sum_y2 == 0.0 {
+                                Value::null()
+                            } else {
+                                let corr = sum_xy / (sum_x2 * sum_y2).sqrt();
+                                Value::float64(corr)
+                            }
                         }
                     }
                     FunctionName::ExponentialMovingAverage => {
@@ -4043,10 +4321,142 @@ impl SortAggregateExec {
                         }
                         Value::int64(count)
                     }
-                    FunctionName::CramersV
-                    | FunctionName::CramersVBiasCorrected
-                    | FunctionName::TheilU
-                    | FunctionName::ContingencyCoefficient => Value::float64(0.0),
+                    FunctionName::CramersV | FunctionName::CramersVBiasCorrected => {
+                        let mut counts: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut row_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut col_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *counts.entry((x.clone(), y.clone())).or_insert(0) += 1;
+                                    *row_totals.entry(x).or_insert(0) += 1;
+                                    *col_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let mut chi_square = 0.0f64;
+                            for ((row, col), &observed) in &counts {
+                                let row_total = *row_totals.get(row).unwrap_or(&0) as f64;
+                                let col_total = *col_totals.get(col).unwrap_or(&0) as f64;
+                                let expected = (row_total * col_total) / total as f64;
+                                if expected > 0.0 {
+                                    let diff = observed as f64 - expected;
+                                    chi_square += (diff * diff) / expected;
+                                }
+                            }
+                            let rows = row_totals.len();
+                            let cols = col_totals.len();
+                            let min_dim = rows.min(cols) as f64;
+                            if min_dim <= 1.0 {
+                                Value::null()
+                            } else {
+                                let cramers_v =
+                                    (chi_square / (total as f64 * (min_dim - 1.0))).sqrt();
+                                Value::float64(cramers_v)
+                            }
+                        }
+                    }
+                    FunctionName::TheilU => {
+                        let mut counts: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut x_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut y_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *counts.entry((x.clone(), y.clone())).or_insert(0) += 1;
+                                    *x_totals.entry(x).or_insert(0) += 1;
+                                    *y_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let n = total as f64;
+                            let h_y: f64 = y_totals
+                                .values()
+                                .map(|&c| {
+                                    let p = c as f64 / n;
+                                    if p > 0.0 { -p * p.ln() } else { 0.0 }
+                                })
+                                .sum();
+                            let mut h_y_given_x = 0.0f64;
+                            for (x_val, &x_count) in &x_totals {
+                                let p_x = x_count as f64 / n;
+                                let mut h_y_x = 0.0f64;
+                                for (y_val, &y_count) in &y_totals {
+                                    let joint_count =
+                                        *counts.get(&(x_val.clone(), y_val.clone())).unwrap_or(&0);
+                                    if joint_count > 0 {
+                                        let p_y_given_x = joint_count as f64 / x_count as f64;
+                                        h_y_x -= p_y_given_x * p_y_given_x.ln();
+                                    }
+                                }
+                                h_y_given_x += p_x * h_y_x;
+                            }
+                            if h_y.abs() < f64::EPSILON {
+                                Value::float64(0.0)
+                            } else {
+                                let theil_u = (h_y - h_y_given_x) / h_y;
+                                Value::float64(theil_u)
+                            }
+                        }
+                    }
+                    FunctionName::ContingencyCoefficient => {
+                        let mut counts: std::collections::HashMap<(String, String), usize> =
+                            std::collections::HashMap::new();
+                        let mut row_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut col_totals: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        let mut total = 0usize;
+                        for val in &values {
+                            if let Some(arr) = val.as_array() {
+                                if arr.len() >= 2 && !arr[0].is_null() && !arr[1].is_null() {
+                                    let x = format!("{:?}", arr[0]);
+                                    let y = format!("{:?}", arr[1]);
+                                    *counts.entry((x.clone(), y.clone())).or_insert(0) += 1;
+                                    *row_totals.entry(x).or_insert(0) += 1;
+                                    *col_totals.entry(y).or_insert(0) += 1;
+                                    total += 1;
+                                }
+                            }
+                        }
+                        if total == 0 {
+                            Value::null()
+                        } else {
+                            let mut chi_square = 0.0f64;
+                            for ((row, col), &observed) in &counts {
+                                let row_total = *row_totals.get(row).unwrap_or(&0) as f64;
+                                let col_total = *col_totals.get(col).unwrap_or(&0) as f64;
+                                let expected = (row_total * col_total) / total as f64;
+                                if expected > 0.0 {
+                                    let diff = observed as f64 - expected;
+                                    chi_square += (diff * diff) / expected;
+                                }
+                            }
+                            let n = total as f64;
+                            let contingency = (chi_square / (chi_square + n)).sqrt();
+                            Value::float64(contingency)
+                        }
+                    }
                     FunctionName::MannWhitneyUTest
                     | FunctionName::StudentTTest
                     | FunctionName::WelchTTest

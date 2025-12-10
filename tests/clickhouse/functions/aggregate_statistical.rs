@@ -129,7 +129,6 @@ fn test_any_heavy() {
     assert_table_eq!(result, [["a"]]); // 'a' is the heavy hitter (appears 3 times)
 }
 
-#[ignore = "Parsing issue with String type"]
 #[test]
 fn test_any_last() {
     let mut executor = create_executor();
@@ -146,7 +145,6 @@ fn test_any_last() {
     assert_table_eq!(result, [["third"]]); // Last inserted value
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_arg_min() {
     let mut executor = create_executor();
@@ -163,7 +161,6 @@ fn test_arg_min() {
     assert_table_eq!(result, [["bob"]]); // bob has minimum score (85)
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_arg_max() {
     let mut executor = create_executor();
@@ -180,7 +177,6 @@ fn test_arg_max() {
     assert_table_eq!(result, [["charlie"]]); // charlie has max score (95)
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_avg_weighted() {
     let mut executor = create_executor();
@@ -317,7 +313,6 @@ fn test_entropy() {
     assert!(result.num_rows() == 1); // Entropy value depends on probability distribution
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_exponential_moving_average() {
     let mut executor = create_executor();
@@ -416,7 +411,6 @@ fn test_median() {
     assert_table_eq!(result, [[3.0]]); // Median of (1,2,3,4,5) = 3.0
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_mean_zscore() {
     let mut executor = create_executor();
@@ -433,7 +427,6 @@ fn test_mean_zscore() {
     assert!(result.num_rows() == 1); // Z-score result is implementation-specific
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_rank_corr() {
     let mut executor = create_executor();
@@ -447,10 +440,9 @@ fn test_rank_corr() {
     let result = executor
         .execute_sql("SELECT rankCorr(x, y) FROM rank_corr_test")
         .unwrap();
-    assert_table_eq!(result, [[0.9]]); // Spearman correlation for near-perfect ordering
+    assert_table_eq!(result, [[0.8]]); // Spearman correlation: 1 - (6*Σd²)/(n*(n²-1)) = 1 - 24/120 = 0.8
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_cramers_v() {
     let mut executor = create_executor();
@@ -469,7 +461,6 @@ fn test_cramers_v() {
     assert_table_eq!(result, [[0.0]]); // No association between x and y
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_cramers_v_bias_corrected() {
     let mut executor = create_executor();
@@ -488,7 +479,6 @@ fn test_cramers_v_bias_corrected() {
     assert_table_eq!(result, [[0.0]]); // No association between x and y
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_theils_u() {
     let mut executor = create_executor();
@@ -507,7 +497,6 @@ fn test_theils_u() {
     assert_table_eq!(result, [[1.0]]); // Perfect predictability (x predicts y)
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_contingency() {
     let mut executor = create_executor();
@@ -526,7 +515,6 @@ fn test_contingency() {
     assert_table_eq!(result, [[0.0]]); // No association between x and y
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_statistics_grouped() {
     let mut executor = create_executor();
