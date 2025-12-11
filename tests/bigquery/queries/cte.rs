@@ -29,7 +29,6 @@ fn test_simple_cte() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_column_aliases() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -140,7 +139,6 @@ fn test_cte_with_aggregation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_in_subquery() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -155,7 +153,6 @@ fn test_cte_in_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_insert() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -178,14 +175,13 @@ fn test_cte_with_insert() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_update() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
 
     executor
         .execute_sql(
-            "WITH low_earners AS (SELECT id FROM employees WHERE salary < 100000) UPDATE employees SET salary = salary * 1.1 WHERE id IN (SELECT id FROM low_earners)",
+            "WITH low_earners AS (SELECT id FROM employees WHERE salary < 100000) UPDATE employees SET salary = CAST(salary * 1.1 AS INT64) WHERE id IN (SELECT id FROM low_earners)",
         )
         .unwrap();
 
@@ -197,7 +193,6 @@ fn test_cte_with_update() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_delete() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -250,7 +245,6 @@ fn test_recursive_cte_fibonacci() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_recursive_cte_path_finding() {
     let mut executor = create_executor();
 
@@ -388,7 +382,6 @@ fn test_recursive_cte_max_depth() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_recursive_cte_with_aggregation() {
     let mut executor = create_executor();
 
@@ -409,7 +402,7 @@ fn test_recursive_cte_with_aggregation() {
     let result = executor
         .execute_sql(
             "WITH RECURSIVE cat_tree AS (
-                SELECT id, name, parent_id, 1 AS level, name AS path
+                SELECT id, name, parent_id, 1 AS level, CAST(name AS STRING) AS path
                 FROM categories WHERE parent_id IS NULL
                 UNION ALL
                 SELECT c.id, c.name, c.parent_id, ct.level + 1,
