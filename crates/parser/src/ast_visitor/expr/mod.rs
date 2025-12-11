@@ -359,6 +359,29 @@ impl LogicalPlanBuilder {
                     None
                 };
 
+                let parameters = match &function.parameters {
+                    ast::FunctionArguments::None => Vec::new(),
+                    ast::FunctionArguments::Subquery(_) => Vec::new(),
+                    ast::FunctionArguments::List(arg_list) => arg_list
+                        .args
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) => {
+                                self.sql_expr_to_expr(e).ok()
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                };
+
+                let args = if !parameters.is_empty() {
+                    let mut all_args = parameters;
+                    all_args.extend(args);
+                    all_args
+                } else {
+                    args
+                };
+
                 if name_str.eq_ignore_ascii_case("GROUPING") {
                     if args.len() != 1 {
                         return Err(Error::invalid_query(format!(

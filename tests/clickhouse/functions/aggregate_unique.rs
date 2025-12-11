@@ -81,7 +81,6 @@ fn test_uniq_hll12() {
     assert_table_eq!(result, [[5]]); // 'a', 'b', 'c', 'd', 'e' are unique
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_uniq_theta() {
     let mut executor = create_executor();
@@ -98,7 +97,6 @@ fn test_uniq_theta() {
     assert_table_eq!(result, [[4]]); // 'a', 'b', 'c', 'd' are unique
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_uniq_up_to() {
     let mut executor = create_executor();
@@ -115,7 +113,6 @@ fn test_uniq_up_to() {
     assert_table_eq!(result, [[4]]); // Returns 4 when >3 unique values (capped at N+1)
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_uniq_multiple_columns() {
     let mut executor = create_executor();
@@ -165,7 +162,6 @@ fn test_uniq_grouped() {
     );
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_uniq_with_if() {
     let mut executor = create_executor();
@@ -253,7 +249,6 @@ fn test_uniq_array_values() {
     assert_table_eq!(result, [[4]]); // 'a', 'b', 'c', 'd' are unique across all arrays
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_sum_distinct() {
     let mut executor = create_executor();
@@ -270,7 +265,6 @@ fn test_sum_distinct() {
     assert_table_eq!(result, [[6]]); // 1 + 2 + 3 = 6
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_avg_distinct() {
     let mut executor = create_executor();
@@ -303,7 +297,6 @@ fn test_uniq_combined_with_precision() {
     assert_table_eq!(result, [[5]]); // 'a', 'b', 'c', 'd', 'e' are unique
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_distinct_nested_array() {
     let mut executor = create_executor();

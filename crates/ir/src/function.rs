@@ -46,6 +46,7 @@ pub enum FunctionName {
     MinIf,
     MaxIf,
     AnyIf,
+    UniqIf,
     DeltaSum,
     DeltaSumTimestamp,
     SequenceMatch,
@@ -312,6 +313,7 @@ pub enum FunctionName {
     UniqCombined64,
     UniqThetaSketch,
     UniqArray,
+    UniqUpTo,
     Quantile,
     QuantileExact,
     QuantileExactLow,
@@ -1128,6 +1130,7 @@ impl FunctionName {
             "MINIF" | "MIN_IF" => Self::MinIf,
             "MAXIF" | "MAX_IF" => Self::MaxIf,
             "ANYIF" | "ANY_IF" => Self::AnyIf,
+            "UNIQIF" | "UNIQ_IF" => Self::UniqIf,
             "DELTASUM" | "DELTA_SUM" => Self::DeltaSum,
             "DELTASUMTIMESTAMP" | "DELTA_SUM_TIMESTAMP" => Self::DeltaSumTimestamp,
             "SEQUENCEMATCH" | "SEQUENCE_MATCH" => Self::SequenceMatch,
@@ -1405,8 +1408,12 @@ impl FunctionName {
             "UNIQCOMBINED64" => Self::UniqCombined64,
             "UNIQ_THETA_SKETCH" => Self::UniqThetaSketch,
             "UNIQTHETASKETCH" => Self::UniqThetaSketch,
+            "UNIQTHETA" => Self::UniqThetaSketch,
+            "UNIQ_THETA" => Self::UniqThetaSketch,
             "UNIQ_ARRAY" => Self::UniqArray,
             "UNIQARRAY" => Self::UniqArray,
+            "UNIQ_UP_TO" => Self::UniqUpTo,
+            "UNIQUPTO" => Self::UniqUpTo,
             "QUANTILE" => Self::Quantile,
             "QUANTILE_EXACT" => Self::QuantileExact,
             "QUANTILEEXACT" => Self::QuantileExact,
@@ -2323,6 +2330,7 @@ impl FunctionName {
             Self::MinIf => "MINIF",
             Self::MaxIf => "MAXIF",
             Self::AnyIf => "ANYIF",
+            Self::UniqIf => "UNIQIF",
             Self::DeltaSum => "DELTASUM",
             Self::DeltaSumTimestamp => "DELTASUMTIMESTAMP",
             Self::SequenceMatch => "SEQUENCEMATCH",
@@ -2589,6 +2597,7 @@ impl FunctionName {
             Self::UniqCombined64 => "UNIQ_COMBINED_64",
             Self::UniqThetaSketch => "UNIQ_THETA_SKETCH",
             Self::UniqArray => "UNIQ_ARRAY",
+            Self::UniqUpTo => "UNIQ_UP_TO",
             Self::Quantile => "QUANTILE",
             Self::QuantileExact => "QUANTILE_EXACT",
             Self::QuantileExactLow => "QUANTILE_EXACT_LOW",
@@ -3401,6 +3410,7 @@ impl FunctionName {
                 | Self::MinIf
                 | Self::MaxIf
                 | Self::AnyIf
+                | Self::UniqIf
                 | Self::DeltaSum
                 | Self::DeltaSumTimestamp
                 | Self::SequenceMatch
@@ -3441,6 +3451,7 @@ impl FunctionName {
                 | Self::UniqCombined64
                 | Self::UniqThetaSketch
                 | Self::UniqArray
+                | Self::UniqUpTo
                 | Self::Quantile
                 | Self::QuantileExact
                 | Self::QuantileExactLow

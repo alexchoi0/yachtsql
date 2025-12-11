@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use rust_decimal::prelude::ToPrimitive;
 use yachtsql_core::error::Result;
 use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
@@ -186,6 +187,29 @@ impl AggregateExec {
                         }
                         Ok(value)
                     }
+                    FunctionName::UniqUpTo => {
+                        if args.len() >= 2 {
+                            self.evaluate_expr(&args[1], batch, row_idx)
+                        } else if !args.is_empty() {
+                            self.evaluate_expr(&args[0], batch, row_idx)
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
+                    FunctionName::UniqIf => {
+                        if args.len() >= 2 {
+                            let condition = self.evaluate_expr(&args[1], batch, row_idx)?;
+                            if condition.as_bool() == Some(true) {
+                                self.evaluate_expr(&args[0], batch, row_idx)
+                            } else {
+                                Ok(Value::null())
+                            }
+                        } else if !args.is_empty() {
+                            self.evaluate_expr(&args[0], batch, row_idx)
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
                     _ => {
                         if args.is_empty() {
                             Ok(Value::int64(1))
@@ -218,6 +242,15 @@ impl AggregateExec {
                                     | FunctionName::ContingencyCoefficient
                                     | FunctionName::RankCorr
                                     | FunctionName::ExponentialMovingAverage
+                                    | FunctionName::Uniq
+                                    | FunctionName::UniqExact
+                                    | FunctionName::UniqHll12
+                                    | FunctionName::UniqCombined
+                                    | FunctionName::UniqCombined64
+                                    | FunctionName::UniqThetaSketch
+                                    | FunctionName::ApproxCountDistinct
+                                    | FunctionName::ApproxDistinct
+                                    | FunctionName::Ndv
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());
@@ -1613,6 +1646,7 @@ impl AggregateExec {
                     | FunctionName::UniqCombined
                     | FunctionName::UniqCombined64
                     | FunctionName::UniqThetaSketch
+                    | FunctionName::UniqIf
                     | FunctionName::ApproxCountDistinct
                     | FunctionName::ApproxDistinct
                     | FunctionName::Ndv => {
@@ -1624,6 +1658,32 @@ impl AggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::UniqUpTo => {
+                        let threshold = if !args.is_empty() {
+                            match &args[0] {
+                                Expr::Literal(lit) => {
+                                    lit.as_f64().map(|f| f as usize).unwrap_or(100)
+                                }
+                                _ => 100,
+                            }
+                        } else {
+                            100
+                        };
+
+                        let mut unique_values = std::collections::HashSet::new();
+                        for val in &values {
+                            if !val.is_null() {
+                                let key = format!("{:?}", val);
+                                unique_values.insert(key);
+                            }
+                        }
+                        let count = unique_values.len();
+                        if count > threshold {
+                            Value::int64((threshold + 1) as i64)
+                        } else {
+                            Value::int64(count as i64)
+                        }
                     }
                     FunctionName::ApproxTopCount => {
                         let number = if args.len() >= 2 {
@@ -2730,6 +2790,66 @@ impl AggregateExec {
                             Value::float64(sum_weighted / sum_weights)
                         }
                     }
+                    FunctionName::SumDistinct => {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut sum = 0.0f64;
+                        let mut has_value = false;
+                        for val in &values {
+                            if val.is_null() {
+                                continue;
+                            }
+                            let key = format!("{:?}", val);
+                            if seen.insert(key) {
+                                if let Some(i) = val.as_i64() {
+                                    sum += i as f64;
+                                    has_value = true;
+                                } else if let Some(f) = val.as_f64() {
+                                    sum += f;
+                                    has_value = true;
+                                } else if let Some(n) = val.as_numeric() {
+                                    if let Some(f) = n.to_f64() {
+                                        sum += f;
+                                        has_value = true;
+                                    }
+                                }
+                            }
+                        }
+                        if has_value {
+                            Value::float64(sum)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::AvgDistinct => {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut sum = 0.0f64;
+                        let mut count = 0usize;
+                        for val in &values {
+                            if val.is_null() {
+                                continue;
+                            }
+                            let key = format!("{:?}", val);
+                            if seen.insert(key) {
+                                if let Some(i) = val.as_i64() {
+                                    sum += i as f64;
+                                    count += 1;
+                                } else if let Some(f) = val.as_f64() {
+                                    sum += f;
+                                    count += 1;
+                                } else if let Some(n) = val.as_numeric() {
+                                    if let Some(f) = n.to_f64() {
+                                        sum += f;
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if count > 0 {
+                            Value::float64(sum / count as f64)
+                        } else {
+                            Value::null()
+                        }
+                    }
                     _ => Value::null(),
                 },
                 _ => Value::null(),
@@ -2931,6 +3051,29 @@ impl SortAggregateExec {
                         }
                         Ok(value)
                     }
+                    FunctionName::UniqUpTo => {
+                        if args.len() >= 2 {
+                            self.evaluate_expr(&args[1], batch, row_idx)
+                        } else if !args.is_empty() {
+                            self.evaluate_expr(&args[0], batch, row_idx)
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
+                    FunctionName::UniqIf => {
+                        if args.len() >= 2 {
+                            let condition = self.evaluate_expr(&args[1], batch, row_idx)?;
+                            if condition.as_bool() == Some(true) {
+                                self.evaluate_expr(&args[0], batch, row_idx)
+                            } else {
+                                Ok(Value::null())
+                            }
+                        } else if !args.is_empty() {
+                            self.evaluate_expr(&args[0], batch, row_idx)
+                        } else {
+                            Ok(Value::null())
+                        }
+                    }
                     _ => {
                         if args.is_empty() {
                             Ok(Value::int64(1))
@@ -2963,6 +3106,15 @@ impl SortAggregateExec {
                                     | FunctionName::ContingencyCoefficient
                                     | FunctionName::RankCorr
                                     | FunctionName::ExponentialMovingAverage
+                                    | FunctionName::Uniq
+                                    | FunctionName::UniqExact
+                                    | FunctionName::UniqHll12
+                                    | FunctionName::UniqCombined
+                                    | FunctionName::UniqCombined64
+                                    | FunctionName::UniqThetaSketch
+                                    | FunctionName::ApproxCountDistinct
+                                    | FunctionName::ApproxDistinct
+                                    | FunctionName::Ndv
                             );
                             if needs_array {
                                 let mut values = Vec::with_capacity(args.len());
@@ -3473,6 +3625,7 @@ impl SortAggregateExec {
                     | FunctionName::UniqCombined
                     | FunctionName::UniqCombined64
                     | FunctionName::UniqThetaSketch
+                    | FunctionName::UniqIf
                     | FunctionName::ApproxCountDistinct
                     | FunctionName::ApproxDistinct
                     | FunctionName::Ndv => {
@@ -3484,6 +3637,32 @@ impl SortAggregateExec {
                             }
                         }
                         Value::int64(unique_values.len() as i64)
+                    }
+                    FunctionName::UniqUpTo => {
+                        let threshold = if !args.is_empty() {
+                            match &args[0] {
+                                Expr::Literal(lit) => {
+                                    lit.as_f64().map(|f| f as usize).unwrap_or(100)
+                                }
+                                _ => 100,
+                            }
+                        } else {
+                            100
+                        };
+
+                        let mut unique_values = std::collections::HashSet::new();
+                        for val in &values {
+                            if !val.is_null() {
+                                let key = format!("{:?}", val);
+                                unique_values.insert(key);
+                            }
+                        }
+                        let count = unique_values.len();
+                        if count > threshold {
+                            Value::int64((threshold + 1) as i64)
+                        } else {
+                            Value::int64(count as i64)
+                        }
                     }
                     FunctionName::ApproxTopCount => {
                         let number = if args.len() >= 2 {
@@ -4564,6 +4743,66 @@ impl SortAggregateExec {
                             .max_by_key(|(count, _)| *count)
                             .map(|(_, value)| value.clone())
                             .unwrap_or(Value::null())
+                    }
+                    FunctionName::SumDistinct => {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut sum = 0.0f64;
+                        let mut has_value = false;
+                        for val in &values {
+                            if val.is_null() {
+                                continue;
+                            }
+                            let key = format!("{:?}", val);
+                            if seen.insert(key) {
+                                if let Some(i) = val.as_i64() {
+                                    sum += i as f64;
+                                    has_value = true;
+                                } else if let Some(f) = val.as_f64() {
+                                    sum += f;
+                                    has_value = true;
+                                } else if let Some(n) = val.as_numeric() {
+                                    if let Some(f) = n.to_f64() {
+                                        sum += f;
+                                        has_value = true;
+                                    }
+                                }
+                            }
+                        }
+                        if has_value {
+                            Value::float64(sum)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                    FunctionName::AvgDistinct => {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut sum = 0.0f64;
+                        let mut count = 0usize;
+                        for val in &values {
+                            if val.is_null() {
+                                continue;
+                            }
+                            let key = format!("{:?}", val);
+                            if seen.insert(key) {
+                                if let Some(i) = val.as_i64() {
+                                    sum += i as f64;
+                                    count += 1;
+                                } else if let Some(f) = val.as_f64() {
+                                    sum += f;
+                                    count += 1;
+                                } else if let Some(n) = val.as_numeric() {
+                                    if let Some(f) = n.to_f64() {
+                                        sum += f;
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if count > 0 {
+                            Value::float64(sum / count as f64)
+                        } else {
+                            Value::null()
+                        }
                     }
                     _ => Value::null(),
                 },
