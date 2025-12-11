@@ -133,10 +133,16 @@ impl Parser {
             sql_with_named_tuples
         };
 
-        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
-            Self::rewrite_pg_lock_clauses(&sql_with_single_element_tuples)
+        let sql_with_view_rewritten = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_view_table_function(&sql_with_single_element_tuples)
         } else {
             sql_with_single_element_tuples
+        };
+
+        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
+            Self::rewrite_pg_lock_clauses(&sql_with_view_rewritten)
+        } else {
+            sql_with_view_rewritten
         };
 
         let sql_without_fk_match = if matches!(self.dialect_type, DialectType::PostgreSQL) {
@@ -1957,6 +1963,28 @@ impl Parser {
         }
 
         true
+    }
+
+    fn rewrite_view_table_function(sql: &str) -> String {
+        let view_re = regex::Regex::new(r"(?i)\bview\s*\(\s*(SELECT\s+[^)]+)\)").unwrap();
+        let sql_with_view = view_re
+            .replace_all(sql, |caps: &regex::Captures| {
+                let subquery = &caps[1];
+                format!("({}) AS __view_subquery", subquery)
+            })
+            .to_string();
+
+        let input_re = regex::Regex::new(
+            r"(?i)\binput\s*\(\s*'([^']+)'\s*\)\s+FORMAT\s+Values\s+(.*?)(?:;|$)",
+        )
+        .unwrap();
+        input_re
+            .replace_all(&sql_with_view, |caps: &regex::Captures| {
+                let schema = &caps[1];
+                let values = &caps[2];
+                format!("VALUES('{}', {})", schema, values.trim())
+            })
+            .to_string()
     }
 }
 

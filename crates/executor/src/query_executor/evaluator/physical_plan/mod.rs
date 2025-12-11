@@ -1649,6 +1649,14 @@ impl TableValuedFunctionExec {
                         Err(_) => Ok(Value::null()),
                     };
                 }
+                if let Expr::Column { name, table } = expr {
+                    let full_name = if let Some(t) = table {
+                        format!("{}.{}", t, name)
+                    } else {
+                        name.clone()
+                    };
+                    return Ok(Value::string(full_name));
+                }
                 let ast_expr = self.ir_expr_to_sql_expr(expr);
                 evaluator.evaluate_expr(&ast_expr, &empty_row)
             })
@@ -1872,6 +1880,13 @@ impl TableValuedFunctionExec {
                     format: None,
                     kind: ast::CastKind::Cast,
                 }
+            }
+            Expr::Tuple(elements) => {
+                let ast_elements: Vec<ast::Expr> = elements
+                    .iter()
+                    .map(|e| self.ir_expr_to_sql_expr(e))
+                    .collect();
+                ast::Expr::Tuple(ast_elements)
             }
             _ => value_expr(AstValue::Null),
         }
@@ -2180,23 +2195,26 @@ impl TableValuedFunctionExec {
             Box::new(rand::rngs::StdRng::from_entropy())
         };
 
+        let num_rows = 1000;
         let mut columns: Vec<Column> = Vec::with_capacity(self.schema.fields().len());
         for field in self.schema.fields() {
-            let mut col = Column::new(&field.data_type, 1);
-            let value = match &field.data_type {
-                DataType::Int64 => Value::int64(rng.next_u64() as i64),
-                DataType::Float64 => Value::float64(rng.next_u64() as f64 / u64::MAX as f64),
-                DataType::String => {
-                    let len = (rng.next_u32() % 15 + 5) as usize;
-                    let s: String = (0..len)
-                        .map(|_| ((rng.next_u32() % 26) as u8 + b'a') as char)
-                        .collect();
-                    Value::string(s)
-                }
-                DataType::Bool => Value::bool_val(rng.next_u32() % 2 == 0),
-                _ => Value::null(),
-            };
-            col.push(value)?;
+            let mut col = Column::new(&field.data_type, num_rows);
+            for _ in 0..num_rows {
+                let value = match &field.data_type {
+                    DataType::Int64 => Value::int64(rng.next_u64() as i64),
+                    DataType::Float64 => Value::float64(rng.next_u64() as f64 / u64::MAX as f64),
+                    DataType::String => {
+                        let len = (rng.next_u32() % 15 + 5) as usize;
+                        let s: String = (0..len)
+                            .map(|_| ((rng.next_u32() % 26) as u8 + b'a') as char)
+                            .collect();
+                        Value::string(s)
+                    }
+                    DataType::Bool => Value::bool_val(rng.next_u32() % 2 == 0),
+                    _ => Value::null(),
+                };
+                col.push(value)?;
+            }
             columns.push(col);
         }
 
@@ -2209,20 +2227,43 @@ impl TableValuedFunctionExec {
         use crate::types::Value;
 
         let num_cols = self.schema.fields().len();
-        let num_rows = (args.len().saturating_sub(1)) / num_cols;
+        let value_args = &args[1..];
+
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+
+        for arg in value_args {
+            if let Some(struct_val) = arg.as_struct() {
+                let row_values: Vec<Value> = struct_val.values().cloned().collect();
+                rows.push(row_values);
+            } else {
+                rows.push(vec![arg.clone()]);
+            }
+        }
+
+        if rows.is_empty() {
+            let num_flat_values = value_args.len();
+            let num_rows = num_flat_values / num_cols;
+            for row_idx in 0..num_rows {
+                let mut row_values: Vec<Value> = Vec::with_capacity(num_cols);
+                for col_idx in 0..num_cols {
+                    let arg_idx = row_idx * num_cols + col_idx;
+                    let value = value_args.get(arg_idx).cloned().unwrap_or(Value::null());
+                    row_values.push(value);
+                }
+                rows.push(row_values);
+            }
+        }
 
         let mut columns: Vec<Column> = self
             .schema
             .fields()
             .iter()
-            .map(|f| Column::new(&f.data_type, num_rows))
+            .map(|f| Column::new(&f.data_type, rows.len()))
             .collect();
 
-        let value_args = &args[1..];
-        for row_idx in 0..num_rows {
+        for row in &rows {
             for col_idx in 0..num_cols {
-                let arg_idx = row_idx * num_cols + col_idx;
-                let value = value_args.get(arg_idx).cloned().unwrap_or(Value::null());
+                let value = row.get(col_idx).cloned().unwrap_or(Value::null());
                 columns[col_idx].push(value)?;
             }
         }
@@ -2255,6 +2296,56 @@ impl TableValuedFunctionExec {
 
         Table::new(self.schema.clone(), columns)
     }
+
+    fn execute_merge(&self, args: &[crate::types::Value]) -> Result<Table> {
+        use yachtsql_storage::Column;
+
+        use crate::types::Value;
+
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "merge() requires database and table pattern".to_string(),
+            ));
+        }
+
+        let table_pattern = args[1].as_str().map(|s| s.to_string()).unwrap_or_default();
+
+        let re = regex::Regex::new(&table_pattern)
+            .map_err(|e| Error::InvalidQuery(format!("Invalid regex: {}", e)))?;
+
+        let storage = self.storage.borrow();
+        let mut all_rows: Vec<Vec<Value>> = Vec::new();
+
+        if let Some(dataset) = storage.get_dataset("default") {
+            for table_name in dataset.list_tables() {
+                if re.is_match(table_name) {
+                    if let Some(table) = dataset.get_table(table_name) {
+                        for row in table.get_all_rows() {
+                            let row_values: Vec<Value> = row.values().to_vec();
+                            all_rows.push(row_values);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut columns: Vec<Column> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(&f.data_type, all_rows.len()))
+            .collect();
+
+        for row in &all_rows {
+            for (col_idx, value) in row.iter().enumerate() {
+                if col_idx < columns.len() {
+                    columns[col_idx].push(value.clone())?;
+                }
+            }
+        }
+
+        Table::new(self.schema.clone(), columns)
+    }
 }
 
 impl ExecutionPlan for TableValuedFunctionExec {
@@ -2283,6 +2374,7 @@ impl ExecutionPlan for TableValuedFunctionExec {
             "NULL" => self.execute_null_table()?,
             "CLUSTER" | "CLUSTERALLREPLICAS" => self.execute_one()?,
             "INPUT" => self.execute_input(&args)?,
+            "MERGE" => self.execute_merge(&args)?,
 
             _ => {
                 return Err(Error::UnsupportedFeature(format!(

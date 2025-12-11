@@ -42,7 +42,6 @@ fn test_zeros_mt() {
     assert!(result.num_rows() == 10);
 }
 
-#[ignore = "Requires implicit system table resolution (SELECT * FROM one -> system.one)"]
 #[test]
 fn test_one() {
     let mut executor = create_executor();
@@ -75,7 +74,6 @@ fn test_generate_series_with_step() {
     assert!(result.num_rows() == 6);
 }
 
-#[ignore = "Requires streaming table function support"]
 #[test]
 fn test_generate_random() {
     let mut executor = create_executor();
@@ -85,7 +83,6 @@ fn test_generate_random() {
     assert!(result.num_rows() == 5);
 }
 
-#[ignore = "Requires streaming table function support"]
 #[test]
 fn test_generate_random_with_seed() {
     let mut executor = create_executor();
@@ -95,7 +92,6 @@ fn test_generate_random_with_seed() {
     assert!(result.num_rows() == 3);
 }
 
-#[ignore = "Requires VALUES table function parsing"]
 #[test]
 fn test_values() {
     let mut executor = create_executor();
@@ -116,7 +112,6 @@ fn test_null_table_function() {
     assert_table_eq!(result, []);
 }
 
-#[ignore = "Requires MERGE table function"]
 #[test]
 fn test_merge() {
     let mut executor = create_executor();
@@ -139,7 +134,6 @@ fn test_merge() {
     assert!(result.num_rows() == 4);
 }
 
-#[ignore = "Requires cluster function support"]
 #[test]
 fn test_cluster() {
     let mut executor = create_executor();
@@ -148,7 +142,6 @@ fn test_cluster() {
         .unwrap();
 }
 
-#[ignore = "Requires cluster function support"]
 #[test]
 fn test_cluster_all_replicas() {
     let mut executor = create_executor();
@@ -157,7 +150,6 @@ fn test_cluster_all_replicas() {
         .unwrap();
 }
 
-#[ignore = "Requires VIEW table function parsing"]
 #[test]
 fn test_view_table_function() {
     let mut executor = create_executor();
@@ -167,7 +159,6 @@ fn test_view_table_function() {
     assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Requires INPUT table function with FORMAT"]
 #[test]
 fn test_input_table_function() {
     let mut executor = create_executor();

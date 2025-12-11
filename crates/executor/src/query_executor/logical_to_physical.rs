@@ -1200,6 +1200,35 @@ impl LogicalToPhysicalPlanner {
                     )));
                 }
 
+                let table_exists = {
+                    let storage = self.storage.borrow();
+                    let dataset = storage.get_dataset(dataset_name);
+                    dataset.is_some_and(|d| d.get_table(table_id).is_some())
+                };
+
+                if !table_exists {
+                    if matches!(self.dialect, crate::DialectType::ClickHouse)
+                        && !table_name.contains('.')
+                    {
+                        use std::str::FromStr;
+                        if let Ok(system_table) = SystemTable::from_str(table_id) {
+                            let provider = SystemSchemaProvider::new(Rc::clone(&self.storage));
+                            let (schema, rows) = provider.query(system_table)?;
+                            let source_table = alias.as_ref().unwrap_or(table_name);
+                            let schema_with_source = schema.with_source_table(source_table);
+                            let batch = crate::Table::from_rows(schema_with_source.clone(), rows)?;
+                            return Ok(Rc::new(MaterializedViewScanExec::new(
+                                schema_with_source,
+                                batch,
+                            )));
+                        }
+                    }
+                    return Err(Error::TableNotFound(format!(
+                        "Table '{}' not found",
+                        table_id
+                    )));
+                }
+
                 let storage = self.storage.borrow_mut();
 
                 let dataset = storage.get_dataset(dataset_name).ok_or_else(|| {
@@ -1782,20 +1811,8 @@ impl LogicalToPhysicalPlanner {
                     }
                     "VALUES" => self.parse_values_schema(args)?,
                     "NULL" => self.parse_null_schema(args)?,
-                    "VIEW" => {
-                        return Err(Error::UnsupportedFeature(
-                            "VIEW table function not yet supported".to_string(),
-                        ));
-                    }
-                    "MERGE" => {
-                        return Err(Error::UnsupportedFeature(
-                            "MERGE table function not yet supported".to_string(),
-                        ));
-                    }
-                    "CLUSTER" | "CLUSTERALLREPLICAS" => Schema::from_fields(vec![Field::nullable(
-                        "dummy",
-                        yachtsql_core::types::DataType::Int64,
-                    )]),
+                    "MERGE" => self.parse_merge_schema(args)?,
+                    "CLUSTER" | "CLUSTERALLREPLICAS" => self.parse_cluster_schema(args)?,
                     "INPUT" => self.parse_input_schema(args)?,
                     _ => {
                         return Err(Error::UnsupportedFeature(format!(
@@ -2190,5 +2207,111 @@ impl LogicalToPhysicalPlanner {
                 "input() requires a string schema argument".to_string(),
             )),
         }
+    }
+
+    fn parse_merge_schema(
+        &self,
+        args: &[yachtsql_ir::expr::Expr],
+    ) -> Result<yachtsql_storage::Schema> {
+        use yachtsql_ir::expr::{Expr, LiteralValue};
+
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "merge() requires at least database and table pattern arguments".to_string(),
+            ));
+        }
+
+        let table_pattern = match &args[1] {
+            Expr::Literal(LiteralValue::String(s)) => s.clone(),
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "merge() requires a string table pattern".to_string(),
+                ));
+            }
+        };
+
+        let storage = self.storage.borrow();
+        let re = regex::Regex::new(&table_pattern)
+            .map_err(|e| Error::InvalidQuery(format!("Invalid regex pattern in merge(): {}", e)))?;
+
+        if let Some(dataset) = storage.get_dataset("default") {
+            for table_name in dataset.list_tables() {
+                if re.is_match(table_name) {
+                    if let Some(table) = dataset.get_table(table_name) {
+                        return Ok(table.schema().clone());
+                    }
+                }
+            }
+        }
+
+        Ok(yachtsql_storage::Schema::from_fields(vec![
+            yachtsql_storage::schema::Field::nullable(
+                "dummy",
+                yachtsql_core::types::DataType::Int64,
+            ),
+        ]))
+    }
+
+    fn parse_cluster_schema(
+        &self,
+        args: &[yachtsql_ir::expr::Expr],
+    ) -> Result<yachtsql_storage::Schema> {
+        use std::str::FromStr;
+
+        use yachtsql_ir::expr::{Expr, LiteralValue};
+
+        if args.len() < 2 {
+            return Ok(yachtsql_storage::Schema::from_fields(vec![
+                yachtsql_storage::schema::Field::nullable(
+                    "dummy",
+                    yachtsql_core::types::DataType::Int64,
+                ),
+            ]));
+        }
+
+        let table_ref = match &args[1] {
+            Expr::Column { name, .. } => name.clone(),
+            Expr::Literal(LiteralValue::String(s)) => s.clone(),
+            _ => {
+                return Ok(yachtsql_storage::Schema::from_fields(vec![
+                    yachtsql_storage::schema::Field::nullable(
+                        "dummy",
+                        yachtsql_core::types::DataType::Int64,
+                    ),
+                ]));
+            }
+        };
+
+        let table_name = if table_ref.contains('.') {
+            table_ref
+                .split('.')
+                .next_back()
+                .unwrap_or(&table_ref)
+                .to_string()
+        } else {
+            table_ref.clone()
+        };
+
+        if table_ref.to_lowercase().starts_with("system.") {
+            let system_table_name = table_ref.split('.').next_back().unwrap_or(&table_ref);
+            if let Ok(system_table) = SystemTable::from_str(system_table_name) {
+                let provider = SystemSchemaProvider::new(Rc::clone(&self.storage));
+                if let Ok((schema, _)) = provider.query(system_table) {
+                    return Ok(schema);
+                }
+            }
+        }
+
+        let storage = self.storage.borrow();
+        if let Some(table) = storage.get_table(&table_name) {
+            return Ok(table.schema().clone());
+        }
+
+        Ok(yachtsql_storage::Schema::from_fields(vec![
+            yachtsql_storage::schema::Field::nullable(
+                "dummy",
+                yachtsql_core::types::DataType::Int64,
+            ),
+        ]))
     }
 }
