@@ -2048,10 +2048,11 @@ impl LogicalToPhysicalPlanner {
 
             Expr::Cast { data_type, .. } => self.cast_data_type_to_data_type(data_type),
 
-            _ => panic!(
-                "infer_aggregate_result_type: unhandled expression type: {:?}",
-                expr
-            ),
+            Expr::Column { .. } => DataType::Unknown,
+
+            Expr::Function { .. } => DataType::Unknown,
+
+            _ => DataType::Unknown,
         }
     }
 

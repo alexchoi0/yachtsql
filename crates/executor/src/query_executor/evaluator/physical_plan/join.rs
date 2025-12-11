@@ -670,6 +670,8 @@ impl LateralJoinExec {
             PlanNode::Unnest {
                 alias,
                 column_alias,
+                with_offset,
+                offset_alias,
                 ..
             } => {
                 let element_name = column_alias
@@ -678,11 +680,23 @@ impl LateralJoinExec {
                     .unwrap_or_else(|| "value".to_string());
 
                 let mut field =
-                    Field::nullable(element_name, yachtsql_core::types::DataType::String);
+                    Field::nullable(element_name, yachtsql_core::types::DataType::Unknown);
                 if let Some(table_alias) = alias {
                     field = field.with_source_table(table_alias.clone());
                 }
-                Ok(Schema::from_fields(vec![field]))
+                let mut fields = vec![field];
+
+                if *with_offset {
+                    let offset_name = offset_alias.clone().unwrap_or_else(|| "offset".to_string());
+                    let mut offset_field =
+                        Field::nullable(offset_name, yachtsql_core::types::DataType::Int64);
+                    if let Some(table_alias) = alias {
+                        offset_field = offset_field.with_source_table(table_alias.clone());
+                    }
+                    fields.push(offset_field);
+                }
+
+                Ok(Schema::from_fields(fields))
             }
 
             _ => Ok(Schema::from_fields(vec![])),
@@ -836,7 +850,7 @@ impl LateralJoinExec {
                 offset_alias,
             } => {
                 let substituted_array_expr =
-                    self.substitute_expr(array_expr, left_row, left_schema)?;
+                    self.substitute_unnest_array_expr(array_expr, left_row, left_schema)?;
                 Ok(PlanNode::Unnest {
                     array_expr: substituted_array_expr,
                     alias: alias.clone(),
@@ -853,7 +867,7 @@ impl LateralJoinExec {
     }
 
     fn value_to_literal(&self, value: &Value) -> Result<yachtsql_ir::expr::LiteralValue> {
-        use yachtsql_ir::expr::LiteralValue;
+        use yachtsql_ir::expr::{Expr, LiteralValue};
 
         if value.is_null() {
             return Ok(LiteralValue::Null);
@@ -877,6 +891,14 @@ impl LateralJoinExec {
 
         if let Some(json) = value.as_json() {
             return Ok(LiteralValue::Json(json.to_string()));
+        }
+
+        if let Some(arr) = value.as_array() {
+            let elements: Vec<Expr> = arr
+                .iter()
+                .map(|v| self.value_to_literal(v).map(|lit| Expr::Literal(lit)))
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(LiteralValue::Array(elements));
         }
 
         Ok(LiteralValue::String(format!("{}", value)))
@@ -964,6 +986,36 @@ impl LateralJoinExec {
             }
 
             _ => Ok(expr.clone()),
+        }
+    }
+
+    fn substitute_unnest_array_expr(
+        &self,
+        expr: &yachtsql_ir::expr::Expr,
+        left_row: &[Value],
+        left_schema: &Schema,
+    ) -> Result<yachtsql_ir::expr::Expr> {
+        use yachtsql_ir::expr::Expr;
+
+        match expr {
+            Expr::Column { name, table } => {
+                let col_idx = if let Some(tbl) = table {
+                    left_schema.fields().iter().position(|f| {
+                        f.source_table.as_deref() == Some(tbl.as_str()) && &f.name == name
+                    })
+                } else {
+                    left_schema.fields().iter().position(|f| &f.name == name)
+                };
+
+                if let Some(idx) = col_idx {
+                    let value = &left_row[idx];
+                    let literal = self.value_to_literal(value)?;
+                    return Ok(Expr::Literal(literal));
+                }
+
+                Ok(expr.clone())
+            }
+            _ => self.substitute_expr(expr, left_row, left_schema),
         }
     }
 }
