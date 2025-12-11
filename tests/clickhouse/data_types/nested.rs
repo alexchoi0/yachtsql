@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::create_executor;
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_create() {
     let mut executor = create_executor();
@@ -15,10 +14,9 @@ fn test_nested_create() {
     let result = executor
         .execute_sql("SELECT id, attrs.key, attrs.value FROM nested_test")
         .unwrap();
-    assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_access_key() {
     let mut executor = create_executor();
@@ -32,10 +30,9 @@ fn test_nested_access_key() {
     let result = executor
         .execute_sql("SELECT data.name FROM nested_keys")
         .unwrap();
-    assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_access_value() {
     let mut executor = create_executor();
@@ -49,10 +46,10 @@ fn test_nested_access_value() {
     let result = executor
         .execute_sql("SELECT items.qty FROM nested_vals")
         .unwrap();
-    assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 1);
 }
 
-#[ignore = "Implement me!"]
+#[ignore = "ARRAY JOIN with nested type expansion not yet implemented"]
 #[test]
 fn test_nested_array_join() {
     let mut executor = create_executor();
@@ -68,10 +65,9 @@ fn test_nested_array_join() {
             "SELECT id, tags.name, tags.count FROM nested_join ARRAY JOIN tags ORDER BY tags.count",
         )
         .unwrap();
-    assert!(result.num_rows() == 3); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 3);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_filter() {
     let mut executor = create_executor();
@@ -90,7 +86,6 @@ fn test_nested_filter() {
     assert_table_eq!(result, [[1]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_multiple_rows() {
     let mut executor = create_executor();
@@ -109,7 +104,6 @@ fn test_nested_multiple_rows() {
     assert_table_eq!(result, [[1, 1], [2, 2]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_empty() {
     let mut executor = create_executor();
@@ -126,7 +120,6 @@ fn test_nested_empty() {
     assert_table_eq!(result, [[1, 0]]);
 }
 
-#[ignore = "Implement me!"]
 #[test]
 fn test_nested_aggregate() {
     let mut executor = create_executor();
@@ -145,7 +138,7 @@ fn test_nested_aggregate() {
     assert_table_eq!(result, [[350]]);
 }
 
-#[ignore = "Implement me!"]
+#[ignore = "ARRAY JOIN with aliases for nested subcolumns not yet implemented"]
 #[test]
 fn test_nested_flatten() {
     let mut executor = create_executor();
@@ -159,10 +152,10 @@ fn test_nested_flatten() {
     let result = executor
         .execute_sql("SELECT id, n, p FROM nested_flat ARRAY JOIN items.name AS n, items.price AS p ORDER BY p")
         .unwrap();
-    assert!(result.num_rows() == 2); // TODO: use table![[expected_values]]
+    assert!(result.num_rows() == 2);
 }
 
-#[ignore = "Implement me!"]
+#[ignore = "Array index access on nested subcolumns (meta.key[1]) not yet implemented"]
 #[test]
 fn test_nested_subcolumn() {
     let mut executor = create_executor();

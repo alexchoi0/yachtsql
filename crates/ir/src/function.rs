@@ -1353,7 +1353,7 @@ impl FunctionName {
             "CARDINALITY" => Self::Cardinality,
             "ARRAY_CONCAT" => Self::ArrayConcat,
             "ARRAY_CAT" => Self::ArrayCat,
-            "ARRAY_CONTAINS" => Self::ArrayContains,
+            "ARRAY_CONTAINS" | "HAS" => Self::ArrayContains,
             "ARRAY_CONTAINS_ALL" => Self::ArrayContainsAll,
             "UNNEST" => Self::Unnest,
             "EXPLODE" => Self::Explode,

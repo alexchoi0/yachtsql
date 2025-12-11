@@ -833,10 +833,43 @@ impl ProjectionWithExprExec {
         row_idx: usize,
         dialect: crate::DialectType,
     ) -> Result<Value> {
-        if args.len() < 2 {
+        if args.is_empty() {
             return Err(Error::invalid_query(
-                "arraySum with lambda requires 2 arguments".to_string(),
+                "arraySum requires at least 1 argument".to_string(),
             ));
+        }
+
+        if args.len() == 1 || !matches!(&args[0], Expr::Lambda { .. }) {
+            let array_val = Self::evaluate_expr_internal(&args[0], batch, row_idx, dialect)?;
+            let Some(array) = array_val.as_array() else {
+                return Ok(Value::null());
+            };
+
+            let mut sum_int: i64 = 0;
+            let mut sum_float: f64 = 0.0;
+            let mut use_float = false;
+
+            for elem in array {
+                if let Some(i) = elem.as_i64() {
+                    if use_float {
+                        sum_float += i as f64;
+                    } else {
+                        sum_int += i;
+                    }
+                } else if let Some(f) = elem.as_f64() {
+                    if !use_float {
+                        sum_float = sum_int as f64;
+                        use_float = true;
+                    }
+                    sum_float += f;
+                }
+            }
+
+            return if use_float {
+                Ok(Value::float64(sum_float))
+            } else {
+                Ok(Value::int64(sum_int))
+            };
         }
 
         let Expr::Lambda { params, body } = &args[0] else {
