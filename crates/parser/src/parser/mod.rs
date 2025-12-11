@@ -163,7 +163,14 @@ impl Parser {
             sql_without_no_inherit
         };
 
-        let rewritten_sql = self.rewrite_json_item_methods(&sql_without_exclude)?;
+        let sql_with_rewritten_procedures = if matches!(self.dialect_type, DialectType::PostgreSQL)
+        {
+            Self::rewrite_procedure_dollar_quotes(&sql_without_exclude)
+        } else {
+            sql_without_exclude
+        };
+
+        let rewritten_sql = self.rewrite_json_item_methods(&sql_with_rewritten_procedures)?;
         let parse_result = SqlParser::parse_sql(&*self.dialect, &rewritten_sql);
 
         let sql_statements = match parse_result {
@@ -510,6 +517,60 @@ impl Parser {
         }
 
         result
+    }
+
+    fn rewrite_procedure_dollar_quotes(sql: &str) -> String {
+        let upper = sql.to_uppercase();
+        if !upper.contains("CREATE PROCEDURE") && !upper.contains("CREATE OR REPLACE PROCEDURE") {
+            return sql.to_string();
+        }
+
+        let prefix_re =
+            regex::Regex::new(r"(?is)(CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+\S+\s*\([^)]*\)\s*)AS\s+(\$[a-zA-Z_0-9]*\$)")
+                .unwrap();
+
+        let Some(caps) = prefix_re.captures(sql) else {
+            return sql.to_string();
+        };
+
+        let prefix = &caps[1];
+        let opening_delimiter = &caps[2];
+        let closing_delimiter = opening_delimiter;
+
+        let prefix_end = caps.get(0).unwrap().end();
+        let remaining = &sql[prefix_end..];
+
+        let Some(closing_pos) = remaining.find(closing_delimiter) else {
+            return sql.to_string();
+        };
+
+        let body = &remaining[..closing_pos];
+        let after_body = &remaining[closing_pos + closing_delimiter.len()..];
+
+        let language_re = regex::Regex::new(r"(?i)^\s*(LANGUAGE\s+\w+)").unwrap();
+        let language = language_re
+            .captures(after_body)
+            .map(|c| c.get(1).unwrap().as_str().to_string());
+        let after_language = if let Some(ref lang_caps) = language_re.captures(after_body) {
+            &after_body[lang_caps.get(0).unwrap().end()..]
+        } else {
+            after_body
+        };
+
+        let body_trimmed = body.trim();
+
+        match language {
+            Some(lang) => {
+                format!(
+                    "{} {} AS {}{}",
+                    prefix.trim(),
+                    lang,
+                    body_trimmed,
+                    after_language
+                )
+            }
+            None => format!("{} AS {}{}", prefix.trim(), body_trimmed, after_language),
+        }
     }
 
     fn strip_codec_clauses(sql: &str) -> String {

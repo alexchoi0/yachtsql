@@ -41,7 +41,6 @@ fn test_create_procedure() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_call_procedure() {
     let mut executor = create_executor();
     executor
@@ -243,7 +242,6 @@ fn test_function_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_drop_function() {
     let mut executor = create_executor();
     executor
@@ -262,11 +260,12 @@ fn test_drop_function_if_exists() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_drop_procedure() {
     let mut executor = create_executor();
     executor
-        .execute_sql("CREATE PROCEDURE to_drop_proc() AS $$ BEGIN NULL; END; $$ LANGUAGE plpgsql")
+        .execute_sql(
+            "CREATE PROCEDURE to_drop_proc() AS $$ BEGIN SELECT 1; END; $$ LANGUAGE plpgsql",
+        )
         .unwrap();
 
     let result = executor.execute_sql("DROP PROCEDURE to_drop_proc()");
@@ -274,7 +273,6 @@ fn test_drop_procedure() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_alter_function_rename() {
     let mut executor = create_executor();
     executor
@@ -286,7 +284,6 @@ fn test_alter_function_rename() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_alter_function_owner() {
     let mut executor = create_executor();
     executor
@@ -298,7 +295,6 @@ fn test_alter_function_owner() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_alter_function_set_schema() {
     let mut executor = create_executor();
     executor.execute_sql("CREATE SCHEMA new_schema").unwrap();
@@ -313,7 +309,6 @@ fn test_alter_function_set_schema() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_create_or_replace_function() {
     let mut executor = create_executor();
     executor
@@ -329,7 +324,6 @@ fn test_create_or_replace_function() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_function_overloading() {
     let mut executor = create_executor();
     executor

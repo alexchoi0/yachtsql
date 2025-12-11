@@ -13,6 +13,8 @@ pub struct SqlContext {
     in_line_comment: bool,
 
     in_block_comment: usize,
+
+    in_dollar_quoted: Option<String>,
 }
 
 impl SqlContext {
@@ -27,6 +29,23 @@ impl SqlContext {
             || self.in_bracket
             || self.in_line_comment
             || self.in_block_comment > 0
+            || self.in_dollar_quoted.is_some()
+    }
+
+    pub fn is_in_dollar_quoted(&self) -> bool {
+        self.in_dollar_quoted.is_some()
+    }
+
+    pub fn enter_dollar_quoted(&mut self, tag: String) {
+        self.in_dollar_quoted = Some(tag);
+    }
+
+    pub fn exit_dollar_quoted(&mut self) {
+        self.in_dollar_quoted = None;
+    }
+
+    pub fn dollar_quote_tag(&self) -> Option<&str> {
+        self.in_dollar_quoted.as_deref()
     }
 
     pub fn is_in_code(&self) -> bool {
@@ -107,15 +126,41 @@ impl<'a> SqlWalker<'a> {
     pub fn split_statements(&self) -> Vec<&'a str> {
         let mut statements = Vec::new();
         let mut start = 0usize;
-        let mut iter = self.sql.char_indices().peekable();
+        let mut idx = 0usize;
+        let bytes = self.sql.as_bytes();
         let mut context = SqlContext::new();
 
-        while let Some((idx, ch)) = iter.next() {
-            let peek = iter.peek().map(|(_, c)| *c);
+        while idx < bytes.len() {
+            let ch = bytes[idx] as char;
+            let peek = bytes.get(idx + 1).map(|&b| b as char);
+
+            if context.is_in_dollar_quoted() {
+                if let Some(tag) = context.dollar_quote_tag() {
+                    let delimiter = format!("${}$", tag);
+                    if self.sql[idx..].starts_with(&delimiter) {
+                        context.exit_dollar_quoted();
+                        idx += delimiter.len();
+                        continue;
+                    }
+                }
+                idx += 1;
+                continue;
+            }
+
+            if ch == '$'
+                && context.is_in_code()
+                && let Some((tag, delimiter_len)) = Self::try_parse_dollar_quote(&self.sql[idx..])
+            {
+                context.enter_dollar_quoted(tag);
+                idx += delimiter_len;
+                continue;
+            }
 
             if context.process_char(ch, peek) {
                 if (ch == '-' && peek == Some('-')) || (ch == '/' && peek == Some('*')) {
-                    iter.next();
+                    idx += 2;
+                } else {
+                    idx += 1;
                 }
                 continue;
             }
@@ -127,6 +172,8 @@ impl<'a> SqlWalker<'a> {
                 }
                 start = idx + 1;
             }
+
+            idx += 1;
         }
 
         if start < self.sql.len() {
@@ -143,14 +190,84 @@ impl<'a> SqlWalker<'a> {
         }
     }
 
+    fn try_parse_dollar_quote(s: &str) -> Option<(String, usize)> {
+        if !s.starts_with('$') {
+            return None;
+        }
+
+        let bytes = s.as_bytes();
+        let mut tag_end = 1;
+
+        while tag_end < bytes.len() {
+            let b = bytes[tag_end];
+            if b == b'$' {
+                let tag = &s[1..tag_end];
+                if tag.is_empty() || Self::is_valid_dollar_tag(tag) {
+                    return Some((tag.to_string(), tag_end + 1));
+                }
+                return None;
+            }
+            if !Self::is_dollar_tag_char(b as char, tag_end == 1) {
+                return None;
+            }
+            tag_end += 1;
+        }
+
+        None
+    }
+
+    fn is_valid_dollar_tag(tag: &str) -> bool {
+        if tag.is_empty() {
+            return true;
+        }
+        let mut chars = tag.chars();
+        let first = chars.next().unwrap();
+        if !first.is_ascii_alphabetic() && first != '_' {
+            return false;
+        }
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn is_dollar_tag_char(ch: char, is_first: bool) -> bool {
+        if is_first {
+            ch.is_ascii_alphabetic() || ch == '_'
+        } else {
+            ch.is_ascii_alphanumeric() || ch == '_'
+        }
+    }
+
     pub fn find_keyword(&self, keyword: &str) -> Option<usize> {
         let keyword_upper = keyword.to_ascii_uppercase();
         let keyword_len = keyword_upper.len();
-        let mut iter = self.sql.char_indices().peekable();
+        let bytes = self.sql.as_bytes();
+        let mut idx = 0usize;
         let mut context = SqlContext::new();
 
-        while let Some((idx, ch)) = iter.next() {
-            let peek = iter.peek().map(|(_, c)| *c);
+        while idx < bytes.len() {
+            let ch = bytes[idx] as char;
+            let peek = bytes.get(idx + 1).map(|&b| b as char);
+
+            if context.is_in_dollar_quoted() {
+                if let Some(tag) = context.dollar_quote_tag() {
+                    let delimiter = format!("${}$", tag);
+                    if self.sql[idx..].starts_with(&delimiter) {
+                        context.exit_dollar_quoted();
+                        idx += delimiter.len();
+                        continue;
+                    }
+                }
+                idx += 1;
+                continue;
+            }
+
+            if ch == '$'
+                && context.is_in_code()
+                && let Some((tag, delimiter_len)) = Self::try_parse_dollar_quote(&self.sql[idx..])
+            {
+                context.enter_dollar_quoted(tag);
+                idx += delimiter_len;
+                continue;
+            }
 
             if context.process_char(ch, peek) {
                 if peek.is_some()
@@ -159,7 +276,9 @@ impl<'a> SqlWalker<'a> {
                         || (ch == '/' && peek == Some('*'))
                         || (ch == '*' && peek == Some('/')))
                 {
-                    iter.next();
+                    idx += 2;
+                } else {
+                    idx += 1;
                 }
                 continue;
             }
@@ -183,6 +302,8 @@ impl<'a> SqlWalker<'a> {
                     return Some(idx);
                 }
             }
+
+            idx += 1;
         }
 
         None
@@ -204,13 +325,31 @@ impl<'a> SqlWalker<'a> {
         let mut context = SqlContext::new();
 
         while cursor < self.sql.len() {
-            let Some(ch) = self.sql.get(cursor..).and_then(|s| s.chars().next()) else {
-                break;
-            };
-            let peek = self
-                .sql
-                .get(cursor + ch.len_utf8()..)
-                .and_then(|s| s.chars().next());
+            let ch = self.sql.as_bytes()[cursor] as char;
+            let peek = self.sql.as_bytes().get(cursor + 1).map(|&b| b as char);
+
+            if context.is_in_dollar_quoted() {
+                if let Some(tag) = context.dollar_quote_tag() {
+                    let delimiter = format!("${}$", tag);
+                    if self.sql[cursor..].starts_with(&delimiter) {
+                        context.exit_dollar_quoted();
+                        cursor += delimiter.len();
+                        continue;
+                    }
+                }
+                cursor += 1;
+                continue;
+            }
+
+            if ch == '$'
+                && context.is_in_code()
+                && let Some((tag, delimiter_len)) =
+                    Self::try_parse_dollar_quote(&self.sql[cursor..])
+            {
+                context.enter_dollar_quoted(tag);
+                cursor += delimiter_len;
+                continue;
+            }
 
             context.process_char(ch, peek);
 
@@ -227,7 +366,7 @@ impl<'a> SqlWalker<'a> {
                 }
             }
 
-            cursor += ch.len_utf8();
+            cursor += 1;
         }
 
         Err(Error::parse_error(
