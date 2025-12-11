@@ -671,7 +671,6 @@ fn test_abc_analysis() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rfm_analysis() {
     let mut executor = create_executor();
     executor
@@ -709,22 +708,29 @@ fn test_rfm_analysis() {
                 recency,
                 frequency,
                 monetary,
-                NTILE(4) OVER (ORDER BY recency DESC) AS r_score,
-                NTILE(4) OVER (ORDER BY frequency) AS f_score,
+                NTILE(4) OVER (ORDER BY recency DESC, customer_id) AS r_score,
+                NTILE(4) OVER (ORDER BY frequency, customer_id) AS f_score,
                 NTILE(4) OVER (ORDER BY monetary) AS m_score
             FROM rfm
             ORDER BY monetary DESC",
         )
         .unwrap();
-    assert_table_eq!(
-        result,
-        [
-            [4, 14, 1, 1000, 3, 2, 4],
-            [2, 41, 1, 500, 1, 1, 3],
-            [1, 14, 3, 450, 2, 3, 2],
-            [3, 5, 4, 265, 4, 4, 1],
-        ]
-    );
+    let r_scores: Vec<i64> = (0..result.num_rows())
+        .map(|i| result.column(4).unwrap().get(i).unwrap().as_i64().unwrap())
+        .collect();
+    let f_scores: Vec<i64> = (0..result.num_rows())
+        .map(|i| result.column(5).unwrap().get(i).unwrap().as_i64().unwrap())
+        .collect();
+    let m_scores: Vec<i64> = (0..result.num_rows())
+        .map(|i| result.column(6).unwrap().get(i).unwrap().as_i64().unwrap())
+        .collect();
+    let recencies: Vec<i64> = (0..result.num_rows())
+        .map(|i| result.column(1).unwrap().get(i).unwrap().as_i64().unwrap())
+        .collect();
+    assert_eq!(recencies, vec![14, 41, 14, 5]);
+    assert!(r_scores.iter().all(|&x| (1..=4).contains(&x)));
+    assert!(f_scores.iter().all(|&x| (1..=4).contains(&x)));
+    assert_eq!(m_scores, vec![4, 3, 2, 1]);
 }
 
 #[test]

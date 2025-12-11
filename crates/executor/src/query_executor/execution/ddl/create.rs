@@ -871,6 +871,27 @@ impl DdlExecutor for QueryExecutor {
                     .collect();
                 Ok(DataType::Struct(struct_fields))
             }
+            SqlDataType::Struct(fields, _bracket_style) => {
+                let struct_fields: Vec<yachtsql_core::types::StructField> = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| {
+                        let dt = self
+                            .sql_type_to_data_type(dataset_id, &field.field_type)
+                            .unwrap_or(DataType::String);
+                        let name = field
+                            .field_name
+                            .as_ref()
+                            .map(|ident| ident.value.clone())
+                            .unwrap_or_else(|| (idx + 1).to_string());
+                        yachtsql_core::types::StructField {
+                            name,
+                            data_type: dt,
+                        }
+                    })
+                    .collect();
+                Ok(DataType::Struct(struct_fields))
+            }
             SqlDataType::Enum(members, _bits) => {
                 use sqlparser::ast::EnumMember;
                 let labels: Vec<String> = members

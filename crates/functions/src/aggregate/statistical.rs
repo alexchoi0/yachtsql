@@ -1707,6 +1707,22 @@ impl MinAccumulator {
             return Ok(x.cmp(y) as i32);
         }
 
+        if let (Some(x), Some(y)) = (a.as_date(), b.as_date()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_timestamp(), b.as_timestamp()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_datetime(), b.as_datetime()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_time(), b.as_time()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
         Err(Error::InternalError(format!(
             "Cannot compare values: {:?} vs {:?}",
             a, b
@@ -1797,6 +1813,22 @@ impl MaxAccumulator {
 
         if let (Some(x), Some(y)) = (a.as_str(), b.as_str()) {
             return Ok(x.cmp(y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_date(), b.as_date()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_timestamp(), b.as_timestamp()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_datetime(), b.as_datetime()) {
+            return Ok(x.cmp(&y) as i32);
+        }
+
+        if let (Some(x), Some(y)) = (a.as_time(), b.as_time()) {
+            return Ok(x.cmp(&y) as i32);
         }
 
         Err(Error::InternalError(format!(

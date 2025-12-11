@@ -4757,6 +4757,18 @@ fn compare_values(a: &Value, b: &Value) -> Result<std::cmp::Ordering> {
     if let (Some(x), Some(y)) = (a.as_date32(), b.as_date32()) {
         return Ok(x.0.cmp(&y.0));
     }
+    if let (Some(x), Some(y)) = (a.as_date(), b.as_date()) {
+        return Ok(x.cmp(&y));
+    }
+    if let (Some(x), Some(y)) = (a.as_datetime(), b.as_datetime()) {
+        return Ok(x.cmp(&y));
+    }
+    if let (Some(x), Some(y)) = (a.as_timestamp(), b.as_timestamp()) {
+        return Ok(x.cmp(&y));
+    }
+    if let (Some(x), Some(y)) = (a.as_time(), b.as_time()) {
+        return Ok(x.cmp(&y));
+    }
     Ok(std::cmp::Ordering::Equal)
 }
 

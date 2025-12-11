@@ -727,6 +727,18 @@ impl CoercionRules {
                 Self::can_implicitly_coerce(elem, &DataType::GeoPolygon)
             }
 
+            (DataType::Struct(from_fields), DataType::Struct(to_fields)) => {
+                if from_fields.len() != to_fields.len() {
+                    return false;
+                }
+                from_fields
+                    .iter()
+                    .zip(to_fields.iter())
+                    .all(|(from_field, to_field)| {
+                        Self::can_implicitly_coerce(&from_field.data_type, &to_field.data_type)
+                    })
+            }
+
             _ => false,
         }
     }
@@ -1579,6 +1591,35 @@ impl CoercionRules {
                     target_type,
                     "cannot convert to GeoMultiPolygon",
                 ))
+            }
+
+            (DataType::Struct(from_fields), DataType::Struct(to_fields)) => {
+                if let Some(st) = value.as_struct() {
+                    let values: Vec<Value> = st.values().cloned().collect();
+                    if values.len() != to_fields.len() {
+                        return Err(Error::type_coercion_error(
+                            &source_type,
+                            target_type,
+                            "struct field count mismatch",
+                        ));
+                    }
+                    let coerced_values: Result<indexmap::IndexMap<String, Value>> = to_fields
+                        .iter()
+                        .zip(values)
+                        .zip(from_fields.iter())
+                        .map(|((to_field, val), _from_field)| {
+                            let coerced_val = Self::coerce_value(val, &to_field.data_type)?;
+                            Ok((to_field.name.clone(), coerced_val))
+                        })
+                        .collect();
+                    Ok(Value::struct_val(coerced_values?))
+                } else {
+                    Err(Error::type_coercion_error(
+                        &source_type,
+                        target_type,
+                        "value is not a struct",
+                    ))
+                }
             }
 
             _ => Err(Error::type_coercion_error(
