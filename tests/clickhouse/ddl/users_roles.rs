@@ -6,7 +6,6 @@ fn test_create_user() {
     executor.execute_sql("CREATE USER test_user").unwrap();
 }
 
-#[ignore = "Parser doesn't support IDENTIFIED BY syntax - sqlparser expects '='"]
 #[test]
 fn test_create_user_with_password() {
     let mut executor = create_executor();
@@ -15,7 +14,6 @@ fn test_create_user_with_password() {
         .unwrap();
 }
 
-#[ignore = "Parser doesn't support IDENTIFIED WITH syntax"]
 #[test]
 fn test_create_user_sha256() {
     let mut executor = create_executor();
@@ -50,7 +48,6 @@ fn test_drop_user_if_exists() {
         .unwrap();
 }
 
-#[ignore = "Parser doesn't support ALTER USER IDENTIFIED BY syntax"]
 #[test]
 fn test_alter_user_password() {
     let mut executor = create_executor();
@@ -128,7 +125,6 @@ fn test_grant_multiple() {
         .unwrap();
 }
 
-#[ignore = "Parser expects privilege keyword, not role name"]
 #[test]
 fn test_grant_role_to_user() {
     let mut executor = create_executor();
@@ -154,7 +150,6 @@ fn test_revoke_select() {
         .unwrap();
 }
 
-#[ignore = "Parser expects privilege keyword, not role name"]
 #[test]
 fn test_revoke_role() {
     let mut executor = create_executor();
@@ -170,7 +165,6 @@ fn test_revoke_role() {
         .unwrap();
 }
 
-#[ignore = "Requires user storage implementation"]
 #[test]
 fn test_show_users() {
     let mut executor = create_executor();
@@ -179,7 +173,6 @@ fn test_show_users() {
     assert!(result.num_rows() >= 1);
 }
 
-#[ignore = "SHOW ROLES not supported in parser"]
 #[test]
 fn test_show_roles() {
     let mut executor = create_executor();
@@ -188,7 +181,6 @@ fn test_show_roles() {
     assert!(result.num_rows() >= 1);
 }
 
-#[ignore = "SHOW GRANTS FOR not supported in parser"]
 #[test]
 fn test_show_grants() {
     let mut executor = create_executor();
@@ -214,7 +206,6 @@ fn test_set_role() {
     executor.execute_sql("SET ROLE set_role").unwrap();
 }
 
-#[ignore = "SET DEFAULT ROLE not supported in parser"]
 #[test]
 fn test_default_role() {
     let mut executor = create_executor();
