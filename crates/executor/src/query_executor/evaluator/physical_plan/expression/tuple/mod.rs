@@ -16,6 +16,7 @@ impl ProjectionWithExprExec {
     ) -> Result<Value> {
         match name {
             FunctionName::Tuple => Self::eval_tuple(args, batch, row_idx),
+            FunctionName::NamedTuple => Self::eval_named_tuple(args, batch, row_idx),
             FunctionName::TupleElement => Self::eval_tuple_element(args, batch, row_idx),
             FunctionName::Untuple => Self::eval_untuple(args, batch, row_idx),
             FunctionName::TupleHammingDistance => {
@@ -58,6 +59,24 @@ impl ProjectionWithExprExec {
             let value = Self::evaluate_expr(arg, batch, row_idx)?;
             let field_name = (i + 1).to_string();
             result_map.insert(field_name, value);
+        }
+        Ok(Value::struct_val(result_map))
+    }
+
+    fn eval_named_tuple(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        if args.len() % 2 != 0 {
+            return Err(Error::InvalidQuery(
+                "__NAMED_TUPLE__ requires pairs of (name, value) arguments".to_string(),
+            ));
+        }
+        let mut result_map = IndexMap::new();
+        for pair in args.chunks(2) {
+            let name_val = Self::evaluate_expr(&pair[0], batch, row_idx)?;
+            let value = Self::evaluate_expr(&pair[1], batch, row_idx)?;
+            let name = name_val.as_str().ok_or_else(|| {
+                Error::InvalidQuery("__NAMED_TUPLE__ field name must be a string".to_string())
+            })?;
+            result_map.insert(name.to_string(), value);
         }
         Ok(Value::struct_val(result_map))
     }

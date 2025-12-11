@@ -2476,6 +2476,29 @@ impl ProjectionWithExprExec {
                 Some(DataType::Struct(struct_fields))
             }
 
+            FunctionName::NamedTuple => {
+                let mut struct_fields = Vec::with_capacity(args.len() / 2);
+                for pair in args.chunks(2) {
+                    if pair.len() == 2 {
+                        let name = if let yachtsql_optimizer::expr::Expr::Literal(
+                            yachtsql_optimizer::expr::LiteralValue::String(s),
+                        ) = &pair[0]
+                        {
+                            s.clone()
+                        } else {
+                            continue;
+                        };
+                        let field_type = Self::infer_expr_type_with_schema(&pair[1], schema)
+                            .unwrap_or(yachtsql_core::types::DataType::Unknown);
+                        struct_fields.push(yachtsql_core::types::StructField {
+                            name,
+                            data_type: field_type,
+                        });
+                    }
+                }
+                Some(DataType::Struct(struct_fields))
+            }
+
             FunctionName::Untuple
             | FunctionName::TuplePlus
             | FunctionName::TupleMinus

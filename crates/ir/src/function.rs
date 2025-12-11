@@ -1032,6 +1032,7 @@ pub enum FunctionName {
 
     // Tuple functions (ClickHouse)
     Tuple,
+    NamedTuple,
     TupleElement,
     Untuple,
     TupleHammingDistance,
@@ -2212,6 +2213,7 @@ impl FunctionName {
 
             // Tuple functions (ClickHouse)
             "TUPLE" => Self::Tuple,
+            "__NAMED_TUPLE__" => Self::NamedTuple,
             "TUPLEELEMENT" => Self::TupleElement,
             "TUPLE_ELEMENT" => Self::TupleElement,
             "UNTUPLE" => Self::Untuple,
@@ -3307,6 +3309,7 @@ impl FunctionName {
 
             // Tuple functions (ClickHouse)
             Self::Tuple => "TUPLE",
+            Self::NamedTuple => "__NAMED_TUPLE__",
             Self::TupleElement => "TUPLEELEMENT",
             Self::Untuple => "UNTUPLE",
             Self::TupleHammingDistance => "TUPLEHAMMINGDISTANCE",

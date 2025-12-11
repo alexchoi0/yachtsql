@@ -1304,6 +1304,7 @@ impl ProjectionWithExprExec {
         if matches!(
             name,
             FunctionName::Tuple
+                | FunctionName::NamedTuple
                 | FunctionName::TupleElement
                 | FunctionName::Untuple
                 | FunctionName::TupleHammingDistance

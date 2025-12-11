@@ -50,7 +50,7 @@ pub fn validate_function_with_udfs(
 }
 
 fn is_sql_keyword_pseudo_function(function_name: &str) -> bool {
-    matches!(function_name, "ALL" | "ANY" | "SOME")
+    matches!(function_name, "ALL" | "ANY" | "SOME" | "__NAMED_TUPLE__")
 }
 
 fn is_core_function(function_name: &str) -> bool {

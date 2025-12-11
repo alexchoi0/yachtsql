@@ -22,7 +22,6 @@ fn test_tuple_element_index() {
     assert_table_eq!(result, [["hello"]]);
 }
 
-#[ignore = "Named tuple syntax (a: 1) not supported"]
 #[test]
 fn test_tuple_element_name() {
     let mut executor = create_executor();
@@ -32,7 +31,6 @@ fn test_tuple_element_name() {
     assert_table_eq!(result, [[1]]);
 }
 
-#[ignore = "Named tuple syntax (a: 1) not supported"]
 #[test]
 fn test_tuple_dot_access() {
     let mut executor = create_executor();
@@ -122,14 +120,22 @@ fn test_tuple_divide_by_number() {
     assert_table_eq!(result, [[(1.0, 2.0, 3.0)]]);
 }
 
-#[ignore = "Parsing single-element tuple (3.14,) not supported"]
 #[test]
 fn test_tuple_concat() {
     let mut executor = create_executor();
     let result = executor
         .execute_sql("SELECT tupleConcat((1, 2), ('a', 'b'), (3.14,))")
         .unwrap();
-    assert_table_eq!(result, [[(1, 2, "a", "b", 3.14)]]);
+    assert_table_eq!(
+        result,
+        [[tuple(vec![
+            i64(1),
+            i64(2),
+            str("a"),
+            str("b"),
+            numeric("3.14")
+        ])]]
+    );
 }
 
 #[test]
@@ -168,7 +174,6 @@ fn test_tuple_modulo_by_number() {
     assert_table_eq!(result, [[tuple(vec![i64(2), i64(1), i64(3)])]]);
 }
 
-#[ignore = "Named tuple syntax (a: 1) not supported"]
 #[test]
 fn test_tuple_to_name_value_pairs() {
     let mut executor = create_executor();
@@ -178,7 +183,6 @@ fn test_tuple_to_name_value_pairs() {
     assert_table_eq!(result, [[[("a", 1), ("b", 2), ("c", 3)]]]);
 }
 
-#[ignore = "Named tuple syntax (a: 1) not supported"]
 #[test]
 fn test_tuple_names() {
     let mut executor = create_executor();

@@ -120,10 +120,23 @@ impl Parser {
             sql_without_settings
         };
 
-        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
-            Self::rewrite_pg_lock_clauses(&sql_without_global)
+        let sql_with_named_tuples = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_named_tuples(&sql_without_global)
         } else {
             sql_without_global
+        };
+
+        let sql_with_single_element_tuples = if matches!(self.dialect_type, DialectType::ClickHouse)
+        {
+            Self::rewrite_single_element_tuples(&sql_with_named_tuples)
+        } else {
+            sql_with_named_tuples
+        };
+
+        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
+            Self::rewrite_pg_lock_clauses(&sql_with_single_element_tuples)
+        } else {
+            sql_with_single_element_tuples
         };
 
         let sql_without_fk_match = if matches!(self.dialect_type, DialectType::PostgreSQL) {
@@ -545,6 +558,243 @@ impl Parser {
     fn strip_global_keyword(sql: &str) -> String {
         let re = regex::Regex::new(r"(?i)\bGLOBAL\s+IN\b").unwrap();
         re.replace_all(sql, "IN").to_string()
+    }
+
+    fn rewrite_named_tuples(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+        let mut in_string = false;
+        let mut string_char = ' ';
+
+        while idx < sql.len() {
+            let ch = match sql[idx..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+
+            if in_string {
+                result.push(ch);
+                if ch == string_char {
+                    in_string = false;
+                }
+                idx += ch.len_utf8();
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' => {
+                    in_string = true;
+                    string_char = ch;
+                    result.push(ch);
+                    idx += ch.len_utf8();
+                }
+                '(' => {
+                    if let Some((named_tuple_str, end_idx)) = Self::try_parse_named_tuple(sql, idx)
+                    {
+                        result.push_str(&named_tuple_str);
+                        idx = end_idx;
+                    } else {
+                        result.push(ch);
+                        idx += ch.len_utf8();
+                    }
+                }
+                _ => {
+                    result.push(ch);
+                    idx += ch.len_utf8();
+                }
+            }
+        }
+
+        result
+    }
+
+    fn try_parse_named_tuple(sql: &str, start: usize) -> Option<(String, usize)> {
+        if !sql[start..].starts_with('(') {
+            return None;
+        }
+
+        let close_idx = Self::find_matching_paren_at(sql, start)?;
+        let inner = &sql[start + 1..close_idx];
+
+        let mut fields: Vec<(String, String)> = Vec::new();
+        let mut current_pos = 0;
+        let inner_bytes = inner.as_bytes();
+
+        while current_pos < inner.len() {
+            while current_pos < inner.len() && inner_bytes[current_pos].is_ascii_whitespace() {
+                current_pos += 1;
+            }
+            if current_pos >= inner.len() {
+                break;
+            }
+
+            let name_start = current_pos;
+            while current_pos < inner.len() {
+                let c = inner_bytes[current_pos];
+                if c.is_ascii_alphanumeric() || c == b'_' {
+                    current_pos += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if current_pos == name_start {
+                return None;
+            }
+            let name = inner[name_start..current_pos].to_string();
+
+            while current_pos < inner.len() && inner_bytes[current_pos].is_ascii_whitespace() {
+                current_pos += 1;
+            }
+
+            if current_pos >= inner.len() || inner_bytes[current_pos] != b':' {
+                return None;
+            }
+            current_pos += 1;
+
+            while current_pos < inner.len() && inner_bytes[current_pos].is_ascii_whitespace() {
+                current_pos += 1;
+            }
+
+            let value_start = current_pos;
+            let mut depth = 0;
+            let mut in_str = false;
+            let mut str_char = b' ';
+
+            while current_pos < inner.len() {
+                let c = inner_bytes[current_pos];
+                if in_str {
+                    if c == str_char {
+                        in_str = false;
+                    }
+                    current_pos += 1;
+                } else {
+                    match c {
+                        b'\'' | b'"' => {
+                            in_str = true;
+                            str_char = c;
+                            current_pos += 1;
+                        }
+                        b'(' => {
+                            depth += 1;
+                            current_pos += 1;
+                        }
+                        b')' => {
+                            if depth == 0 {
+                                break;
+                            }
+                            depth -= 1;
+                            current_pos += 1;
+                        }
+                        b',' if depth == 0 => {
+                            break;
+                        }
+                        _ => {
+                            current_pos += 1;
+                        }
+                    }
+                }
+            }
+
+            let value = inner[value_start..current_pos].trim().to_string();
+            if value.is_empty() {
+                return None;
+            }
+
+            fields.push((name, value));
+
+            if current_pos < inner.len() && inner_bytes[current_pos] == b',' {
+                current_pos += 1;
+            }
+        }
+
+        if fields.is_empty() {
+            return None;
+        }
+
+        let mut args = Vec::new();
+        for (name, value) in &fields {
+            args.push(format!("'{}'", name));
+            args.push(value.clone());
+        }
+        let result = format!("__NAMED_TUPLE__({})", args.join(", "));
+
+        Some((result, close_idx + 1))
+    }
+
+    fn rewrite_single_element_tuples(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut idx = 0;
+        let mut in_string = false;
+        let mut string_char = ' ';
+
+        while idx < sql.len() {
+            let ch = match sql[idx..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+
+            if in_string {
+                result.push(ch);
+                if ch == string_char {
+                    in_string = false;
+                }
+                idx += ch.len_utf8();
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' => {
+                    in_string = true;
+                    string_char = ch;
+                    result.push(ch);
+                    idx += ch.len_utf8();
+                }
+                '(' => {
+                    if let Some((tuple_str, end_idx)) =
+                        Self::try_parse_single_element_tuple(sql, idx)
+                    {
+                        result.push_str(&tuple_str);
+                        idx = end_idx;
+                    } else {
+                        result.push(ch);
+                        idx += ch.len_utf8();
+                    }
+                }
+                _ => {
+                    result.push(ch);
+                    idx += ch.len_utf8();
+                }
+            }
+        }
+
+        result
+    }
+
+    fn try_parse_single_element_tuple(sql: &str, start: usize) -> Option<(String, usize)> {
+        if !sql[start..].starts_with('(') {
+            return None;
+        }
+
+        let close_idx = Self::find_matching_paren_at(sql, start)?;
+        let inner = &sql[start + 1..close_idx];
+        let trimmed = inner.trim();
+
+        if !trimmed.ends_with(',') {
+            return None;
+        }
+
+        let value = trimmed[..trimmed.len() - 1].trim();
+        if value.is_empty() {
+            return None;
+        }
+
+        if value.contains(',') {
+            return None;
+        }
+
+        let result = format!("tuple({})", value);
+        Some((result, close_idx + 1))
     }
 
     fn rewrite_pg_lock_clauses(sql: &str) -> String {
