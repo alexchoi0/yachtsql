@@ -242,7 +242,7 @@ fn test_customer_lifetime_value() {
     assert_table_eq!(
         result,
         [
-            [1, "Alice Johnson", "Premium", 3, 3025, 1008, 0],
+            [1, "Alice Johnson", "Premium", 3, 3025, 1008, 22],
             [3, "Carol White", "Premium", 1, 1800, 1800, 0],
             [2, "Bob Smith", "Standard", 1, 350, 350, 0],
             [5, "Eve Davis", "New", 1, 325, 325, 0],

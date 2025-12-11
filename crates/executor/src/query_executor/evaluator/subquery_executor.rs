@@ -1143,16 +1143,25 @@ impl SubqueryExecutorImpl {
         if let (Some(f1), Some(f2)) = (v1.as_f64(), v2.as_f64()) {
             return f1 > f2;
         }
-
         if let (Some(s1), Some(s2)) = (v1.as_str(), v2.as_str()) {
             return s1 > s2;
+        }
+        if let (Some(d1), Some(d2)) = (v1.as_date(), v2.as_date()) {
+            return d1 > d2;
+        }
+        if let (Some(dt1), Some(dt2)) = (v1.as_datetime(), v2.as_datetime()) {
+            return dt1 > dt2;
+        }
+        if let (Some(ts1), Some(ts2)) = (v1.as_timestamp(), v2.as_timestamp()) {
+            return ts1 > ts2;
+        }
+        if let (Some(t1), Some(t2)) = (v1.as_time(), v2.as_time()) {
+            return t1 > t2;
         }
         false
     }
 
     fn value_less_than(&self, v1: &Value, v2: &Value) -> bool {
-        use rust_decimal::Decimal;
-
         if let (Some(d1), Some(d2)) = (v1.as_numeric(), v2.as_numeric()) {
             return d1 < d2;
         }
@@ -1162,9 +1171,20 @@ impl SubqueryExecutorImpl {
         if let (Some(f1), Some(f2)) = (v1.as_f64(), v2.as_f64()) {
             return f1 < f2;
         }
-
         if let (Some(s1), Some(s2)) = (v1.as_str(), v2.as_str()) {
             return s1 < s2;
+        }
+        if let (Some(d1), Some(d2)) = (v1.as_date(), v2.as_date()) {
+            return d1 < d2;
+        }
+        if let (Some(dt1), Some(dt2)) = (v1.as_datetime(), v2.as_datetime()) {
+            return dt1 < dt2;
+        }
+        if let (Some(ts1), Some(ts2)) = (v1.as_timestamp(), v2.as_timestamp()) {
+            return ts1 < ts2;
+        }
+        if let (Some(t1), Some(t2)) = (v1.as_time(), v2.as_time()) {
+            return t1 < t2;
         }
         false
     }
