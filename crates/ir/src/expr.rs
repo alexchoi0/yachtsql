@@ -78,6 +78,11 @@ pub enum Expr {
         plan: Box<crate::plan::PlanNode>,
         negated: bool,
     },
+    InTable {
+        expr: Box<Expr>,
+        table_name: String,
+        negated: bool,
+    },
     WindowFunction {
         name: crate::function::FunctionName,
         args: Vec<Expr>,
@@ -552,6 +557,7 @@ impl Expr {
 
             Expr::Lambda { body, .. } => body.contains_subquery(),
 
+            Expr::InTable { expr, .. } => expr.contains_subquery(),
             Expr::Column { .. }
             | Expr::Literal(_)
             | Expr::Wildcard

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
+use debug_print::debug_eprintln;
 use yachtsql_capability::FeatureId;
 use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::DataType;
@@ -695,6 +696,77 @@ impl TableScanExec {
             .map(|(i, _)| i)
             .collect()
     }
+
+    fn generate_random_rows(
+        &self,
+        schema: &Schema,
+        seed: Option<u64>,
+        max_string_length: usize,
+    ) -> Vec<yachtsql_storage::Row> {
+        use rand::{Rng, SeedableRng};
+        use yachtsql_core::types::Value;
+
+        let mut rng: rand::rngs::StdRng = match seed {
+            Some(s) => rand::rngs::StdRng::seed_from_u64(s),
+            None => rand::rngs::StdRng::from_entropy(),
+        };
+
+        const DEFAULT_ROW_COUNT: usize = 65535;
+        let mut rows = Vec::with_capacity(DEFAULT_ROW_COUNT);
+
+        for _ in 0..DEFAULT_ROW_COUNT {
+            let values: Vec<Value> = schema
+                .fields()
+                .iter()
+                .map(|field| match &field.data_type {
+                    DataType::Int64 | DataType::Serial | DataType::BigSerial => {
+                        Value::int64(rng.r#gen::<i64>().abs() % 1000000)
+                    }
+                    DataType::Float64 | DataType::Float32 => {
+                        Value::float64(rng.r#gen::<f64>() * 1000.0)
+                    }
+                    DataType::String | DataType::FixedString(_) => {
+                        let len = (rng.r#gen::<usize>() % max_string_length) + 1;
+                        let s: String = (0..len)
+                            .map(|_| (b'a' + (rng.r#gen::<u8>() % 26)) as char)
+                            .collect();
+                        Value::string(s)
+                    }
+                    DataType::Bool => Value::bool_val(rng.r#gen::<bool>()),
+                    _ => Value::null(),
+                })
+                .collect();
+            rows.push(yachtsql_storage::Row::from_values(values));
+        }
+        rows
+    }
+
+    fn read_merge_engine_rows(
+        &self,
+        storage: &yachtsql_storage::Storage,
+        database: &str,
+        pattern: &str,
+    ) -> Result<(Schema, Vec<yachtsql_storage::Row>)> {
+        let dataset = storage
+            .get_dataset(database)
+            .ok_or_else(|| Error::DatasetNotFound(format!("Dataset '{}' not found", database)))?;
+
+        let regex = regex::Regex::new(pattern).map_err(|e| {
+            Error::InvalidQuery(format!("Invalid regex pattern '{}': {}", pattern, e))
+        })?;
+
+        let mut all_rows = Vec::new();
+        let mut schema: Option<Schema> = None;
+        for (table_name, table) in dataset.tables() {
+            if regex.is_match(&table_name) {
+                if schema.is_none() {
+                    schema = Some(table.schema().clone());
+                }
+                all_rows.extend(table.get_all_rows());
+            }
+        }
+        Ok((schema.unwrap_or_default(), all_rows))
+    }
 }
 
 impl ExecutionPlan for TableScanExec {
@@ -742,6 +814,47 @@ impl ExecutionPlan for TableScanExec {
             }
             engine => (table, engine.clone()),
         };
+
+        if let TableEngine::GenerateRandom {
+            random_seed,
+            max_string_length,
+            max_array_length: _,
+        } = table.engine()
+        {
+            let rows = self.generate_random_rows(
+                table.schema(),
+                *random_seed,
+                max_string_length.unwrap_or(10) as usize,
+            );
+            let result_table = Table::from_rows(table.schema().clone(), rows)?;
+            return Ok(vec![result_table]);
+        }
+
+        if let TableEngine::Merge { database, pattern } = table.engine() {
+            let target_db = if database == "currentDatabase()" {
+                dataset_name
+            } else {
+                database.as_str()
+            };
+            debug_eprintln!(
+                "[physical_plan::merge] Reading from Merge engine: db={}, pattern={}",
+                target_db,
+                pattern
+            );
+            let (_underlying_schema, rows) =
+                self.read_merge_engine_rows(&storage, target_db, pattern)?;
+            debug_eprintln!(
+                "[physical_plan::merge] Got {} rows, using schema fields: {:?}",
+                rows.len(),
+                self.schema
+                    .fields()
+                    .iter()
+                    .map(|f| &f.name)
+                    .collect::<Vec<_>>()
+            );
+            let result_table = Table::from_rows(self.schema.clone(), rows)?.to_column_format()?;
+            return Ok(vec![result_table]);
+        }
 
         let mut all_rows = actual_table.get_all_rows();
 

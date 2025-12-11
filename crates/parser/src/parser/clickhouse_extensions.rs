@@ -815,7 +815,6 @@ impl ClickHouseStatementParser for CreateTableWithSettingsParser {
 static CREATE_TABLE_WITH_SETTINGS_PARSER: CreateTableWithSettingsParser =
     CreateTableWithSettingsParser;
 
-#[allow(dead_code)]
 fn find_engine_clause(sql: &str) -> Option<usize> {
     let upper = sql.to_uppercase();
     let mut pos = 0;
@@ -839,23 +838,21 @@ fn find_engine_clause(sql: &str) -> Option<usize> {
     None
 }
 
-#[allow(dead_code)]
 fn has_complex_engine(sql: &str) -> bool {
     if let Some(engine_pos) = find_engine_clause(sql) {
         let after_engine = &sql[engine_pos + "ENGINE".len()..].trim_start();
         if let Some(after_eq) = after_engine.strip_prefix('=') {
             let after_eq = after_eq.trim_start();
-            let engine_names = [
-                "Distributed",
-                "Merge",
-                "Buffer",
-                "GenerateRandom",
-                "Set",
-                "Null",
-            ];
-            for name in &engine_names {
-                if after_eq.to_uppercase().starts_with(&name.to_uppercase()) {
-                    return true;
+            let complex_engine_names = ["Distributed", "Merge", "Buffer", "GenerateRandom"];
+            for name in &complex_engine_names {
+                let upper_after_eq = after_eq.to_uppercase();
+                let upper_name = name.to_uppercase();
+                if upper_after_eq.starts_with(&upper_name) {
+                    let after_name = &after_eq[name.len()..];
+                    let next_char = after_name.chars().next();
+                    if next_char == Some('(') || next_char == Some(' ') || next_char.is_none() {
+                        return true;
+                    }
                 }
             }
         }
@@ -863,7 +860,6 @@ fn has_complex_engine(sql: &str) -> bool {
     false
 }
 
-#[allow(dead_code)]
 fn add_dummy_column_if_needed(sql: &str) -> String {
     let upper = sql.to_uppercase();
     if let Some(table_pos) = upper.find("CREATE TABLE") {
@@ -891,7 +887,6 @@ fn add_dummy_column_if_needed(sql: &str) -> String {
     sql.to_string()
 }
 
-#[allow(dead_code)]
 fn strip_engine_params(sql: &str) -> String {
     if let Some(engine_pos) = find_engine_clause(sql) {
         let after_engine = &sql[engine_pos + "ENGINE".len()..].trim_start();
@@ -954,8 +949,16 @@ impl ClickHouseStatementParser for CreateTableWithComplexEngineParser {
         }
     }
 
-    fn parse(&self, _tokens: &[&Token], _sql: &str) -> Result<Option<CustomStatement>> {
-        Ok(None)
+    fn parse(&self, _tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        if !has_complex_engine(sql) {
+            return Ok(None);
+        }
+        let with_dummy = add_dummy_column_if_needed(sql);
+        let stripped = strip_engine_params(&with_dummy);
+        Ok(Some(CustomStatement::ClickHouseCreateTablePassthrough {
+            original: sql.to_string(),
+            stripped,
+        }))
     }
 }
 

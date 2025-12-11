@@ -111,6 +111,32 @@ fn parse_engine_from_sql(
             if engine_upper.starts_with("MEMORY") {
                 return TableEngine::Memory;
             }
+            if engine_upper.starts_with("NULL") {
+                return TableEngine::Null;
+            }
+            if engine_upper.starts_with("SET") {
+                return TableEngine::Set;
+            }
+            if engine_upper.starts_with("MERGE") && !engine_upper.starts_with("MERGETREE") {
+                let params = extract_parenthesized_params(after_eq);
+                let database = params
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "currentDatabase()".to_string());
+                let pattern = params.get(1).cloned().unwrap_or_default();
+                return TableEngine::Merge { database, pattern };
+            }
+            if engine_upper.starts_with("GENERATERANDOM") {
+                let params = extract_parenthesized_params(after_eq);
+                let random_seed = params.first().and_then(|s| s.parse().ok());
+                let max_string_length = params.get(1).and_then(|s| s.parse().ok());
+                let max_array_length = params.get(2).and_then(|s| s.parse().ok());
+                return TableEngine::GenerateRandom {
+                    random_seed,
+                    max_string_length,
+                    max_array_length,
+                };
+            }
         }
     }
     TableEngine::Memory
@@ -118,13 +144,55 @@ fn parse_engine_from_sql(
 
 fn extract_parenthesized_params(s: &str) -> Vec<String> {
     if let Some(start) = s.find('(') {
-        if let Some(end) = s.find(')') {
-            let params_str = &s[start + 1..end];
-            return params_str
-                .split(',')
-                .map(|p| p.trim().trim_matches('\'').to_string())
-                .filter(|p| !p.is_empty())
-                .collect();
+        let mut depth = 0;
+        let mut end = None;
+        for (i, c) in s.char_indices().skip(start) {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(end_pos) = end {
+            let params_str = &s[start + 1..end_pos];
+            let mut params = Vec::new();
+            let mut current = String::new();
+            let mut paren_depth = 0;
+
+            for c in params_str.chars() {
+                match c {
+                    '(' => {
+                        paren_depth += 1;
+                        current.push(c);
+                    }
+                    ')' => {
+                        paren_depth -= 1;
+                        current.push(c);
+                    }
+                    ',' if paren_depth == 0 => {
+                        let param = current.trim().trim_matches('\'').to_string();
+                        if !param.is_empty() {
+                            params.push(param);
+                        }
+                        current = String::new();
+                    }
+                    _ => current.push(c),
+                }
+            }
+
+            let param = current.trim().trim_matches('\'').to_string();
+            if !param.is_empty() {
+                params.push(param);
+            }
+
+            return params;
         }
     }
     Vec::new()
@@ -236,6 +304,55 @@ impl DdlExecutor for QueryExecutor {
             self.apply_inheritance(&dataset_id, &table_id, &mut schema, inherits)?;
         }
 
+        let engine = parse_engine_from_sql(original_sql, create_table.order_by.as_ref());
+
+        let needs_schema_inference = schema.fields().is_empty()
+            || (schema.fields().len() == 1 && schema.fields()[0].name == "_dummy");
+
+        debug_eprintln!(
+            "[executor::ddl::create] Engine: {:?}, needs_schema_inference: {}, schema fields: {:?}",
+            engine,
+            needs_schema_inference,
+            schema.fields().iter().map(|f| &f.name).collect::<Vec<_>>()
+        );
+
+        if needs_schema_inference {
+            if let TableEngine::Merge { database, pattern } = &engine {
+                let storage = self.storage.borrow();
+                let target_db = if database == "currentDatabase()" {
+                    &dataset_id
+                } else {
+                    database
+                };
+                debug_eprintln!(
+                    "[executor::ddl::create] Merge engine - target_db: {}, pattern: {}",
+                    target_db,
+                    pattern
+                );
+                if let Some(dataset) = storage.get_dataset(target_db) {
+                    if let Ok(regex) = regex::Regex::new(pattern) {
+                        for (table_name, table) in dataset.tables() {
+                            debug_eprintln!(
+                                "[executor::ddl::create] Checking table: {}, matches: {}",
+                                table_name,
+                                regex.is_match(&table_name)
+                            );
+                            if regex.is_match(&table_name) {
+                                schema = table.schema().clone();
+                                debug_eprintln!(
+                                    "[executor::ddl::create] Copied schema with fields: {:?}",
+                                    schema.fields().iter().map(|f| &f.name).collect::<Vec<_>>()
+                                );
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    debug_eprintln!("[executor::ddl::create] Dataset '{}' not found", target_db);
+                }
+            }
+        }
+
         if schema.fields().is_empty() {
             return Err(Error::InvalidQuery(
                 "CREATE TABLE requires at least one column".to_string(),
@@ -289,9 +406,8 @@ impl DdlExecutor for QueryExecutor {
 
             dataset.create_table(table_id.clone(), schema.clone())?;
 
-            let engine = parse_engine_from_sql(original_sql, create_table.order_by.as_ref());
             if let Some(table) = dataset.get_table_mut(&table_id) {
-                table.set_engine(engine);
+                table.set_engine(engine.clone());
             }
 
             for field in schema.fields() {

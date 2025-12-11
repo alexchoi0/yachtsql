@@ -134,6 +134,18 @@ impl CommonSubexpressionElimination {
             Expr::Subquery { .. } => "subquery".to_string(),
             Expr::Exists { .. } => "exists".to_string(),
             Expr::InSubquery { .. } => "in_subquery".to_string(),
+            Expr::InTable {
+                expr,
+                table_name,
+                negated,
+            } => {
+                format!(
+                    "intable:{}({},{})",
+                    if *negated { "not" } else { "" },
+                    Self::expr_signature(expr),
+                    table_name
+                )
+            }
             Expr::Wildcard | Expr::QualifiedWildcard { .. } => "wildcard".to_string(),
             Expr::Tuple(exprs) => {
                 let elem_sigs: Vec<_> = exprs.iter().map(Self::expr_signature).collect();
@@ -330,6 +342,9 @@ impl CommonSubexpressionElimination {
             Expr::InSubquery { expr, .. } => {
                 Self::count_subexpressions(expr, counts);
             }
+            Expr::InTable { expr, .. } => {
+                Self::count_subexpressions(expr, counts);
+            }
             Expr::WindowFunction {
                 args,
                 partition_by,
@@ -416,6 +431,7 @@ impl CommonSubexpressionElimination {
             | Expr::InList { .. }
             | Expr::TupleInList { .. }
             | Expr::TupleInSubquery { .. }
+            | Expr::InTable { .. }
             | Expr::Between { .. }
             | Expr::Cast { .. }
             | Expr::TryCast { .. }

@@ -113,6 +113,9 @@ impl ProjectionPushdown {
             Expr::InSubquery { expr, .. } => {
                 Self::collect_column_references(expr, refs);
             }
+            Expr::InTable { expr, .. } => {
+                Self::collect_column_references(expr, refs);
+            }
             Expr::WindowFunction {
                 args,
                 partition_by,

@@ -204,6 +204,7 @@ impl SortExec {
             }
             Expr::Exists { .. } => Ok(()),
             Expr::InSubquery { expr, .. } => Self::validate_expr_columns(expr, schema),
+            Expr::InTable { expr, .. } => Self::validate_expr_columns(expr, schema),
             Expr::TupleInList { tuple, list, .. } => {
                 for e in tuple {
                     Self::validate_expr_columns(e, schema)?;

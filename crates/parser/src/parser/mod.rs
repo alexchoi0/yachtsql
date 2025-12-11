@@ -39,6 +39,8 @@ lazy_static! {
         Regex::new(r"(?i)\bview\s*\(\s*(SELECT\s+[^)]+)\)").unwrap();
     static ref RE_INPUT_TABLE_FUNC: Regex =
         Regex::new(r"(?i)\binput\s*\(\s*'([^']+)'\s*\)\s+FORMAT\s+Values\s+(.*?)(?:;|$)").unwrap();
+    static ref RE_IN_TABLE: Regex =
+        Regex::new(r"(?i)\bIN\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
     static ref RE_PROC_PREFIX: Regex = Regex::new(
         r"(?is)(CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+\S+\s*\([^)]*\)\s*)AS\s+(\$[a-zA-Z_0-9]*\$)"
     )
@@ -175,10 +177,16 @@ impl Parser {
             sql_with_tuple_element_access
         };
 
-        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
-            Self::rewrite_pg_lock_clauses(&sql_with_view_rewritten)
+        let sql_with_in_table = if matches!(self.dialect_type, DialectType::ClickHouse) {
+            Self::rewrite_in_table(&sql_with_view_rewritten)
         } else {
             sql_with_view_rewritten
+        };
+
+        let sql_with_rewritten_locks = if matches!(self.dialect_type, DialectType::PostgreSQL) {
+            Self::rewrite_pg_lock_clauses(&sql_with_in_table)
+        } else {
+            sql_with_in_table
         };
 
         let sql_without_fk_match = if matches!(self.dialect_type, DialectType::PostgreSQL) {
@@ -2374,6 +2382,38 @@ impl Parser {
         }
 
         true
+    }
+
+    fn rewrite_in_table(sql: &str) -> String {
+        if !sql.to_uppercase().contains(" IN ") {
+            return sql.to_string();
+        }
+
+        let mut result = String::new();
+        let mut last_end = 0;
+
+        for caps in RE_IN_TABLE.captures_iter(sql) {
+            let full_match = caps.get(0).unwrap();
+            let match_start = full_match.start();
+            let match_end = full_match.end();
+
+            result.push_str(&sql[last_end..match_start]);
+
+            let remaining = &sql[match_end..];
+            let next_char = remaining.chars().next();
+
+            if next_char == Some('(') {
+                result.push_str(full_match.as_str());
+            } else {
+                let table_name = &caps[1];
+                result.push_str(&format!("IN (SELECT * FROM {})", table_name));
+            }
+
+            last_end = match_end;
+        }
+
+        result.push_str(&sql[last_end..]);
+        result
     }
 
     fn rewrite_view_table_function(sql: &str) -> String {

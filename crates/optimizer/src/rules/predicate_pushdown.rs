@@ -131,6 +131,7 @@ impl PredicatePushdown {
             Expr::Subquery { .. } => vec![],
             Expr::Exists { .. } => vec![],
             Expr::InSubquery { expr, .. } => Self::get_column_references(expr),
+            Expr::InTable { expr, .. } => Self::get_column_references(expr),
             Expr::WindowFunction {
                 args,
                 partition_by,

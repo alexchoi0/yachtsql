@@ -491,8 +491,8 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseCreateTableWithProjection { stripped, .. } => {
                     return self.execute_sql(stripped);
                 }
-                CustomStatement::ClickHouseCreateTablePassthrough { stripped, .. } => {
-                    return self.execute_sql(stripped);
+                CustomStatement::ClickHouseCreateTablePassthrough { original, stripped } => {
+                    return self.execute_create_table_passthrough(stripped, original);
                 }
                 CustomStatement::ClickHouseCreateTableAs {
                     new_table,
@@ -1905,6 +1905,27 @@ impl QueryExecutor {
             }
         }
         Ok(())
+    }
+
+    fn execute_create_table_passthrough(
+        &mut self,
+        stripped: &str,
+        original: &str,
+    ) -> Result<Table> {
+        let dialect = sqlparser::dialect::ClickHouseDialect {};
+        let statements = sqlparser::parser::Parser::parse_sql(&dialect, stripped)
+            .map_err(|e| Error::ParseError(e.to_string()))?;
+
+        if let Some(stmt) = statements.first() {
+            if let SqlStatement::CreateTable(_) = stmt {
+                self.execute_create_table(stmt, original)?;
+                return Self::empty_result();
+            }
+        }
+
+        Err(Error::InternalError(
+            "Failed to parse stripped CREATE TABLE statement".to_string(),
+        ))
     }
 
     fn execute_grant(&mut self, stmt: &SqlStatement) -> Result<()> {

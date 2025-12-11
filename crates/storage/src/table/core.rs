@@ -55,6 +55,17 @@ pub enum TableEngine {
         database: String,
         table: String,
     },
+    Null,
+    Set,
+    Merge {
+        database: String,
+        pattern: String,
+    },
+    GenerateRandom {
+        random_seed: Option<u64>,
+        max_string_length: Option<u64>,
+        max_array_length: Option<u64>,
+    },
 }
 
 pub struct Table {

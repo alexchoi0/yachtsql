@@ -216,7 +216,6 @@ fn test_replacing_merge_tree() {
     assert_table_eq!(result, []);
 }
 
-#[ignore = "Fix me!"]
 #[test]
 fn test_replacing_merge_tree_insert() {
     let mut executor = create_executor();
@@ -263,7 +262,6 @@ fn test_merge_tree_with_ttl() {
     assert_table_eq!(result, []);
 }
 
-#[ignore = "Fix me!"]
 #[test]
 fn test_merge_tree_with_partition() {
     let mut executor = create_executor();
