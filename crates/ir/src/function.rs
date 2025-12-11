@@ -1091,7 +1091,7 @@ impl FunctionName {
             "MAXIMUM" => Self::Maximum,
 
             "STRING_AGG" => Self::StringAgg,
-            "GROUP_CONCAT" => Self::GroupConcat,
+            "GROUP_CONCAT" | "GROUPCONCAT" => Self::GroupConcat,
             "LISTAGG" => Self::ListAgg,
             "ARRAY_AGG" => Self::ArrayAgg,
             "COLLECT" => Self::Collect,
