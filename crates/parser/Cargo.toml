@@ -25,6 +25,7 @@ rust_decimal = { version = "1.36", features = ["serde"] }
 # Utilities
 indexmap = { version = "2.12", features = ["serde"] }
 regex = "1"
+lazy_static = "1.5"
 
 # Date/Time parsing
 chrono = "0.4"

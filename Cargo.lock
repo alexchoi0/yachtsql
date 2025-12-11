@@ -4343,6 +4343,7 @@ dependencies = [
  "chrono",
  "debug_print",
  "indexmap",
+ "lazy_static",
  "regex",
  "rust_decimal",
  "serde",

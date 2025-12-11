@@ -8,6 +8,8 @@ use clickhouse_extensions::ClickHouseParser;
 pub use custom_statements::CustomStatementParser;
 use debug_print::debug_eprintln;
 pub use helpers::ParserHelpers;
+use lazy_static::lazy_static;
+use regex::Regex;
 use sqlparser::ast::Statement as SqlStatement;
 use sqlparser::dialect::{
     BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, PostgreSqlDialect,
@@ -22,6 +24,27 @@ use yachtsql_core::error::{Error, Result};
 
 use crate::sql_context::{SqlContext, SqlWalker};
 use crate::validator::StatementValidator;
+
+lazy_static! {
+    static ref RE_FINAL: Regex = Regex::new(r"(?i)\bFINAL\b").unwrap();
+    static ref RE_SETTINGS: Regex =
+        Regex::new(r"(?i)\bSETTINGS\s+\w+\s*=\s*'?[^']*'?(\s*,\s*\w+\s*=\s*'?[^']*'?)*").unwrap();
+    static ref RE_GLOBAL_IN: Regex = Regex::new(r"(?i)\bGLOBAL\s+IN\b").unwrap();
+    static ref RE_NO_KEY_UPDATE: Regex = Regex::new(r"(?i)\bFOR\s+NO\s+KEY\s+UPDATE\b").unwrap();
+    static ref RE_KEY_SHARE: Regex = Regex::new(r"(?i)\bFOR\s+KEY\s+SHARE\b").unwrap();
+    static ref RE_SKIP_LOCKED: Regex = Regex::new(r"(?i)\bSKIP\s+LOCKED\b").unwrap();
+    static ref RE_FK_MATCH: Regex = Regex::new(r"(?i)\bMATCH\s+(FULL|SIMPLE|PARTIAL)\b").unwrap();
+    static ref RE_NO_INHERIT: Regex = Regex::new(r"(?i)\bNO\s+INHERIT\b").unwrap();
+    static ref RE_VIEW_TABLE_FUNC: Regex =
+        Regex::new(r"(?i)\bview\s*\(\s*(SELECT\s+[^)]+)\)").unwrap();
+    static ref RE_INPUT_TABLE_FUNC: Regex =
+        Regex::new(r"(?i)\binput\s*\(\s*'([^']+)'\s*\)\s+FORMAT\s+Values\s+(.*?)(?:;|$)").unwrap();
+    static ref RE_PROC_PREFIX: Regex = Regex::new(
+        r"(?is)(CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+\S+\s*\([^)]*\)\s*)AS\s+(\$[a-zA-Z_0-9]*\$)"
+    )
+    .unwrap();
+    static ref RE_PROC_LANGUAGE: Regex = Regex::new(r"(?i)^\s*(LANGUAGE\s+\w+)").unwrap();
+}
 
 pub struct Parser {
     dialect: Box<dyn Dialect>,
@@ -532,11 +555,7 @@ impl Parser {
             return sql.to_string();
         }
 
-        let prefix_re =
-            regex::Regex::new(r"(?is)(CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+\S+\s*\([^)]*\)\s*)AS\s+(\$[a-zA-Z_0-9]*\$)")
-                .unwrap();
-
-        let Some(caps) = prefix_re.captures(sql) else {
+        let Some(caps) = RE_PROC_PREFIX.captures(sql) else {
             return sql.to_string();
         };
 
@@ -554,11 +573,10 @@ impl Parser {
         let body = &remaining[..closing_pos];
         let after_body = &remaining[closing_pos + closing_delimiter.len()..];
 
-        let language_re = regex::Regex::new(r"(?i)^\s*(LANGUAGE\s+\w+)").unwrap();
-        let language = language_re
+        let language = RE_PROC_LANGUAGE
             .captures(after_body)
             .map(|c| c.get(1).unwrap().as_str().to_string());
-        let after_language = if let Some(ref lang_caps) = language_re.captures(after_body) {
+        let after_language = if let Some(ref lang_caps) = RE_PROC_LANGUAGE.captures(after_body) {
             &after_body[lang_caps.get(0).unwrap().end()..]
         } else {
             after_body
@@ -654,20 +672,15 @@ impl Parser {
     }
 
     fn strip_final_modifier(sql: &str) -> String {
-        let re = regex::Regex::new(r"(?i)\bFINAL\b").unwrap();
-        re.replace_all(sql, "").to_string()
+        RE_FINAL.replace_all(sql, "").to_string()
     }
 
     fn strip_settings_clause(sql: &str) -> String {
-        let re =
-            regex::Regex::new(r"(?i)\bSETTINGS\s+\w+\s*=\s*'?[^']*'?(\s*,\s*\w+\s*=\s*'?[^']*'?)*")
-                .unwrap();
-        re.replace_all(sql, "").to_string()
+        RE_SETTINGS.replace_all(sql, "").to_string()
     }
 
     fn strip_global_keyword(sql: &str) -> String {
-        let re = regex::Regex::new(r"(?i)\bGLOBAL\s+IN\b").unwrap();
-        re.replace_all(sql, "IN").to_string()
+        RE_GLOBAL_IN.replace_all(sql, "IN").to_string()
     }
 
     fn rewrite_named_tuples(sql: &str) -> String {
@@ -908,24 +921,17 @@ impl Parser {
     }
 
     fn rewrite_pg_lock_clauses(sql: &str) -> String {
-        let re_no_key_update = regex::Regex::new(r"(?i)\bFOR\s+NO\s+KEY\s+UPDATE\b").unwrap();
-        let result = re_no_key_update.replace_all(sql, "FOR UPDATE");
-
-        let re_key_share = regex::Regex::new(r"(?i)\bFOR\s+KEY\s+SHARE\b").unwrap();
-        let result = re_key_share.replace_all(&result, "FOR SHARE");
-
-        let re_skip_locked = regex::Regex::new(r"(?i)\bSKIP\s+LOCKED\b").unwrap();
-        re_skip_locked.replace_all(&result, "").to_string()
+        let result = RE_NO_KEY_UPDATE.replace_all(sql, "FOR UPDATE");
+        let result = RE_KEY_SHARE.replace_all(&result, "FOR SHARE");
+        RE_SKIP_LOCKED.replace_all(&result, "").to_string()
     }
 
     fn strip_fk_match(sql: &str) -> String {
-        let re = regex::Regex::new(r"(?i)\bMATCH\s+(FULL|SIMPLE|PARTIAL)\b").unwrap();
-        re.replace_all(sql, "").to_string()
+        RE_FK_MATCH.replace_all(sql, "").to_string()
     }
 
     fn strip_no_inherit(sql: &str) -> String {
-        let re = regex::Regex::new(r"(?i)\bNO\s+INHERIT\b").unwrap();
-        re.replace_all(sql, "").to_string()
+        RE_NO_INHERIT.replace_all(sql, "").to_string()
     }
 
     fn strip_exclude_constraint(sql: &str) -> String {
@@ -2038,19 +2044,14 @@ impl Parser {
     }
 
     fn rewrite_view_table_function(sql: &str) -> String {
-        let view_re = regex::Regex::new(r"(?i)\bview\s*\(\s*(SELECT\s+[^)]+)\)").unwrap();
-        let sql_with_view = view_re
+        let sql_with_view = RE_VIEW_TABLE_FUNC
             .replace_all(sql, |caps: &regex::Captures| {
                 let subquery = &caps[1];
                 format!("({}) AS __view_subquery", subquery)
             })
             .to_string();
 
-        let input_re = regex::Regex::new(
-            r"(?i)\binput\s*\(\s*'([^']+)'\s*\)\s+FORMAT\s+Values\s+(.*?)(?:;|$)",
-        )
-        .unwrap();
-        input_re
+        RE_INPUT_TABLE_FUNC
             .replace_all(&sql_with_view, |caps: &regex::Captures| {
                 let schema = &caps[1];
                 let values = &caps[2];
