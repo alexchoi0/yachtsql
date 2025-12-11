@@ -1192,6 +1192,12 @@ impl DdlExecutor for QueryExecutor {
                     "RING" => Ok(DataType::GeoRing),
                     "POLYGON" => Ok(DataType::GeoPolygon),
                     "MULTIPOLYGON" => Ok(DataType::GeoMultiPolygon),
+                    "INT4RANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::Int4Range)),
+                    "INT8RANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::Int8Range)),
+                    "NUMRANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::NumRange)),
+                    "TSRANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::TsRange)),
+                    "TSTZRANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::TsTzRange)),
+                    "DATERANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::DateRange)),
 
                     _ => Ok(DataType::Custom(type_name)),
                 }

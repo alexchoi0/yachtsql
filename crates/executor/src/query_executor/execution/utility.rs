@@ -1551,9 +1551,28 @@ fn parse_range_bound(s: &str, range_type: &yachtsql_core::types::RangeType) -> R
                     DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z").map(|dt| dt.naive_utc())
                 })
                 .or_else(|_| {
-                    let s_no_tz =
-                        s.trim_end_matches(|c: char| c == '+' || c == '-' || c.is_numeric());
-                    NaiveDateTime::parse_from_str(s_no_tz.trim(), "%Y-%m-%d %H:%M:%S")
+                    DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%z").map(|dt| dt.naive_utc())
+                })
+                .or_else(|e| {
+                    if let Some((base, tz)) = s.rsplit_once('+') {
+                        let normalized = if tz.len() == 2 {
+                            format!("{}+{}00", base, tz)
+                        } else {
+                            s.to_string()
+                        };
+                        DateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%z")
+                            .map(|dt| dt.naive_utc())
+                    } else if let Some((base, tz)) = s.rsplit_once('-') {
+                        if tz.len() == 2 && tz.chars().all(|c| c.is_ascii_digit()) {
+                            let normalized = format!("{}-{}00", base, tz);
+                            DateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%z")
+                                .map(|dt| dt.naive_utc())
+                        } else {
+                            Err(e)
+                        }
+                    } else {
+                        Err(e)
+                    }
                 })
                 .map_err(|_| {
                     Error::InvalidOperation(format!("Invalid timestamp in range: '{}'", s))

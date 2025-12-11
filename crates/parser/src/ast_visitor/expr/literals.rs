@@ -180,13 +180,6 @@ impl LogicalPlanBuilder {
                 if let Some(hex_str) = s.strip_prefix("\\x") {
                     return Self::parse_hex_literal(hex_str);
                 }
-
-                if s.starts_with('[')
-                    && s.ends_with(']')
-                    && let Ok(vector_elements) = Self::parse_vector_literal_to_floats(s)
-                {
-                    return Ok(LiteralValue::Vector(vector_elements));
-                }
                 Ok(LiteralValue::String(s.clone()))
             }
             ast::Value::SingleQuotedRawStringLiteral(s)

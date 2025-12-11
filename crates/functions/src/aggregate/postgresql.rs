@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use yachtsql_core::error::{Error, Result};
-use yachtsql_core::types::{DataType, Value};
+use yachtsql_core::types::{DataType, RangeType, Value};
 
 use crate::aggregate::{Accumulator, AggregateFunction};
 
@@ -1391,5 +1391,154 @@ impl AggregateFunction for LeadFunction {
             self.offset,
             self.default_value.clone(),
         ))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RangeAggAccumulator {
+    ranges: Vec<Value>,
+}
+
+impl Accumulator for RangeAggAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if !value.is_null() && value.as_range().is_some() {
+            self.ranges.push(value.clone());
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &dyn Accumulator) -> Result<()> {
+        if let Some(other_acc) = other.as_any().downcast_ref::<RangeAggAccumulator>() {
+            self.ranges.extend(other_acc.ranges.clone());
+            Ok(())
+        } else {
+            Err(Error::InternalError(
+                "Cannot merge different accumulator types".to_string(),
+            ))
+        }
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.ranges.is_empty() {
+            return Ok(Value::null());
+        }
+
+        let mut result = self.ranges[0].clone();
+        for range in self.ranges.iter().skip(1) {
+            match crate::range::range_union(&result, range) {
+                Ok(merged) => result = merged,
+                Err(_) => continue,
+            }
+        }
+        Ok(result)
+    }
+
+    fn reset(&mut self) {
+        self.ranges.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RangeAggFunction;
+
+impl AggregateFunction for RangeAggFunction {
+    fn name(&self) -> &str {
+        "RANGE_AGG"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Range(RangeType::Int4Range)]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        if arg_types.is_empty() {
+            Ok(DataType::Range(RangeType::Int4Range))
+        } else {
+            Ok(arg_types[0].clone())
+        }
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(RangeAggAccumulator::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RangeIntersectAggAccumulator {
+    ranges: Vec<Value>,
+}
+
+impl Accumulator for RangeIntersectAggAccumulator {
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        if !value.is_null() && value.as_range().is_some() {
+            self.ranges.push(value.clone());
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &dyn Accumulator) -> Result<()> {
+        if let Some(other_acc) = other
+            .as_any()
+            .downcast_ref::<RangeIntersectAggAccumulator>()
+        {
+            self.ranges.extend(other_acc.ranges.clone());
+            Ok(())
+        } else {
+            Err(Error::InternalError(
+                "Cannot merge different accumulator types".to_string(),
+            ))
+        }
+    }
+
+    fn finalize(&self) -> Result<Value> {
+        if self.ranges.is_empty() {
+            return Ok(Value::null());
+        }
+
+        let mut result = self.ranges[0].clone();
+        for range in self.ranges.iter().skip(1) {
+            match crate::range::range_intersection(&result, range) {
+                Ok(intersected) => result = intersected,
+                Err(_) => return Ok(Value::null()),
+            }
+        }
+        Ok(result)
+    }
+
+    fn reset(&mut self) {
+        self.ranges.clear();
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RangeIntersectAggFunction;
+
+impl AggregateFunction for RangeIntersectAggFunction {
+    fn name(&self) -> &str {
+        "RANGE_INTERSECT_AGG"
+    }
+
+    fn arg_types(&self) -> &[DataType] {
+        &[DataType::Range(RangeType::Int4Range)]
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        if arg_types.is_empty() {
+            Ok(DataType::Range(RangeType::Int4Range))
+        } else {
+            Ok(arg_types[0].clone())
+        }
+    }
+
+    fn create_accumulator(&self) -> Box<dyn Accumulator> {
+        Box::new(RangeIntersectAggAccumulator::default())
     }
 }

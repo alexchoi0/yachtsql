@@ -55,8 +55,8 @@ use crate::aggregate::json_agg::{
 use crate::aggregate::postgresql::{
     FirstValueFunction, LagFunction, LastValueFunction, LeadFunction,
     ModeFunction as PgModeFunction, NthValueFunction, PercentileContFunction,
-    PercentileDiscFunction, RegrAvgXFunction, RegrAvgYFunction, RegrCountFunction, RegrSxxFunction,
-    RegrSxyFunction, RegrSyyFunction,
+    PercentileDiscFunction, RangeAggFunction, RangeIntersectAggFunction, RegrAvgXFunction,
+    RegrAvgYFunction, RegrCountFunction, RegrSxxFunction, RegrSxyFunction, RegrSyyFunction,
 };
 use crate::aggregate::statistical::{
     AvgFunction, AvgWeightedFunction, CorrFunction, CountFunction, CovarPopFunction,
@@ -290,6 +290,8 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
         Rc::new(LagFunction::default()),
         Rc::new(LeadFunction::default()),
         Rc::new(PgModeFunction),
+        Rc::new(RangeAggFunction),
+        Rc::new(RangeIntersectAggFunction),
     ];
 
     for func in postgresql_functions {
