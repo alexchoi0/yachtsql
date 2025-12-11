@@ -1,7 +1,6 @@
 use crate::assert_table_eq;
 use crate::common::create_executor;
 
-#[ignore = "Requires ReplacingMergeTree FINAL deduplication support"]
 #[test]
 fn test_final_replacing_merge_tree() {
     let mut executor = create_executor();
@@ -28,7 +27,6 @@ fn test_final_replacing_merge_tree() {
     assert_table_eq!(result, [[1, 2, "second"]]);
 }
 
-#[ignore = "Requires CollapsingMergeTree FINAL support"]
 #[test]
 fn test_final_collapsing_merge_tree() {
     let mut executor = create_executor();
@@ -58,7 +56,6 @@ fn test_final_collapsing_merge_tree() {
     assert_table_eq!(result, [[1, 200]]);
 }
 
-#[ignore = "Requires VersionedCollapsingMergeTree FINAL support"]
 #[test]
 fn test_final_versioned_collapsing() {
     let mut executor = create_executor();
@@ -89,7 +86,6 @@ fn test_final_versioned_collapsing() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Requires ReplacingMergeTree FINAL deduplication support"]
 #[test]
 fn test_final_with_where() {
     let mut executor = create_executor();
@@ -189,7 +185,6 @@ fn test_final_with_group_by() {
     assert!(result.num_rows() == 2); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Requires FINAL with JOIN support"]
 #[test]
 fn test_final_with_join() {
     let mut executor = create_executor();
@@ -219,7 +214,6 @@ fn test_final_with_join() {
     assert!(result.num_rows() == 1); // TODO: use table![[expected_values]]
 }
 
-#[ignore = "Requires FINAL in subquery support"]
 #[test]
 fn test_final_subquery() {
     let mut executor = create_executor();
@@ -237,12 +231,11 @@ fn test_final_subquery() {
         .unwrap();
 
     let result = executor
-        .execute_sql("SELECT COUNT(*) FROM (SELECT id FROM final_sub FINAL)")
+        .execute_sql("SELECT COUNT(*) FROM (SELECT id FROM final_sub FINAL) AS t")
         .unwrap();
     assert_table_eq!(result, [[2]]);
 }
 
-#[ignore = "Requires ReplacingMergeTree FINAL deduplication support"]
 #[test]
 fn test_final_multiple_versions() {
     let mut executor = create_executor();
@@ -271,7 +264,6 @@ fn test_final_multiple_versions() {
     assert_table_eq!(result, [[1, 5, "v5"]]);
 }
 
-#[ignore = "Requires SummingMergeTree FINAL support"]
 #[test]
 fn test_final_summing_merge_tree() {
     let mut executor = create_executor();
