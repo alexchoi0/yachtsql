@@ -453,7 +453,9 @@ impl QueryExecutor {
                 CustomStatement::ClickHouseMaterializedView { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseProjection { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseAlterUser { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseCreateUser { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseGrant { .. } => Self::empty_result(),
+                CustomStatement::ClickHouseSetDefaultRole { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseSystem { .. } => Self::empty_result(),
                 CustomStatement::ClickHouseCreateDictionary {
                     name,
@@ -712,14 +714,32 @@ impl QueryExecutor {
                         self.execute_drop_database(&stmt)?;
                         Self::empty_result()
                     }
-                    DdlOperation::CreateUser => Self::empty_result(),
-                    DdlOperation::DropUser => Self::empty_result(),
+                    DdlOperation::CreateUser => {
+                        self.execute_create_user(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::DropUser => {
+                        self.execute_drop_user(&stmt)?;
+                        Self::empty_result()
+                    }
                     DdlOperation::AlterUser => Self::empty_result(),
-                    DdlOperation::CreateRole => Self::empty_result(),
-                    DdlOperation::DropRole => Self::empty_result(),
+                    DdlOperation::CreateRole => {
+                        self.execute_create_role(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::DropRole => {
+                        self.execute_drop_role(&stmt)?;
+                        Self::empty_result()
+                    }
                     DdlOperation::AlterRole => Self::empty_result(),
-                    DdlOperation::Grant => Self::empty_result(),
-                    DdlOperation::Revoke => Self::empty_result(),
+                    DdlOperation::Grant => {
+                        self.execute_grant(&stmt)?;
+                        Self::empty_result()
+                    }
+                    DdlOperation::Revoke => {
+                        self.execute_revoke(&stmt)?;
+                        Self::empty_result()
+                    }
                     DdlOperation::SetRole => Self::empty_result(),
                     DdlOperation::SetDefaultRole => Self::empty_result(),
                     DdlOperation::CommentOn => {
@@ -1213,6 +1233,20 @@ impl QueryExecutor {
                 )]);
             return self.execute_show_columns(&obj_name);
         }
+        if statement_upper.starts_with("SHOW USERS") {
+            return self.execute_show_users();
+        }
+        if statement_upper.starts_with("SHOW ROLES") {
+            return self.execute_show_roles();
+        }
+        if statement_upper.starts_with("SHOW GRANTS FOR") {
+            let prefix_len = "SHOW GRANTS FOR".len();
+            let user_name = statement[prefix_len..].trim();
+            return self.execute_show_grants(Some(user_name));
+        }
+        if statement_upper.starts_with("SHOW GRANTS") {
+            return self.execute_show_grants(None);
+        }
         Self::empty_result()
     }
 
@@ -1568,27 +1602,168 @@ impl QueryExecutor {
         Ok(())
     }
     fn execute_show_users(&mut self) -> Result<Table> {
+        use yachtsql_core::types::Value;
+
         let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
             "name".to_string(),
             DataType::String,
         )]);
-        Table::from_values(schema, vec![])
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = storage
+            .users()
+            .map(|u| vec![Value::string(u.name.clone())])
+            .collect();
+        Table::from_values(schema, rows)
     }
 
     fn execute_show_roles(&mut self) -> Result<Table> {
+        use yachtsql_core::types::Value;
+
         let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
             "name".to_string(),
             DataType::String,
         )]);
-        Table::from_values(schema, vec![])
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = storage
+            .roles()
+            .map(|r| vec![Value::string(r.name.clone())])
+            .collect();
+        Table::from_values(schema, rows)
     }
 
-    fn execute_show_grants(&mut self, _user_name: Option<&str>) -> Result<Table> {
+    fn execute_show_grants(&mut self, user_name: Option<&str>) -> Result<Table> {
+        use yachtsql_core::types::Value;
+
         let schema = Schema::from_fields(vec![yachtsql_storage::Field::required(
             "grants".to_string(),
             DataType::String,
         )]);
-        Table::from_values(schema, vec![])
+        let storage = self.storage.borrow();
+        let rows: Vec<Vec<Value>> = match user_name {
+            Some(user) => storage
+                .grants_for_user(user)
+                .map(|g| vec![Value::string(format!("{} ON {}", g.privilege, g.object))])
+                .collect(),
+            None => storage
+                .grants()
+                .map(|g| {
+                    vec![Value::string(format!(
+                        "GRANT {} ON {} TO {}",
+                        g.privilege, g.object, g.grantee
+                    ))]
+                })
+                .collect(),
+        };
+        Table::from_values(schema, rows)
+    }
+
+    fn execute_create_user(&mut self, stmt: &SqlStatement) -> Result<()> {
+        if let SqlStatement::CreateUser(user_stmt) = stmt {
+            let name = user_stmt.name.to_string();
+            let mut storage = self.storage.borrow_mut();
+            if storage.has_user(&name) && user_stmt.if_not_exists {
+                return Ok(());
+            }
+            storage.add_user(name);
+        }
+        Ok(())
+    }
+
+    fn execute_drop_user(&mut self, stmt: &SqlStatement) -> Result<()> {
+        use sqlparser::ast::ObjectType;
+        if let SqlStatement::Drop {
+            object_type: ObjectType::User,
+            names,
+            ..
+        } = stmt
+        {
+            for name in names {
+                let name_str = name.0.first().map(|n| n.to_string()).unwrap_or_default();
+                self.storage.borrow_mut().remove_user(&name_str);
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_create_role(&mut self, stmt: &SqlStatement) -> Result<()> {
+        if let SqlStatement::CreateRole {
+            names,
+            if_not_exists,
+            ..
+        } = stmt
+        {
+            let mut storage = self.storage.borrow_mut();
+            for name in names {
+                let name_str = name.0.first().map(|n| n.to_string()).unwrap_or_default();
+                if storage.has_role(&name_str) && *if_not_exists {
+                    continue;
+                }
+                storage.add_role(name_str);
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_drop_role(&mut self, stmt: &SqlStatement) -> Result<()> {
+        use sqlparser::ast::ObjectType;
+        if let SqlStatement::Drop {
+            object_type: ObjectType::Role,
+            names,
+            ..
+        } = stmt
+        {
+            for name in names {
+                let name_str = name.0.first().map(|n| n.to_string()).unwrap_or_default();
+                self.storage.borrow_mut().remove_role(&name_str);
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_grant(&mut self, stmt: &SqlStatement) -> Result<()> {
+        if let SqlStatement::Grant {
+            privileges,
+            objects,
+            grantees,
+            ..
+        } = stmt
+        {
+            let priv_str = format!("{}", privileges);
+            let object = objects
+                .as_ref()
+                .map(|o| format!("{}", o))
+                .unwrap_or_default();
+            for grantee in grantees {
+                let grantee_name = grantee.to_string();
+                self.storage
+                    .borrow_mut()
+                    .add_grant(grantee_name, priv_str.clone(), object.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_revoke(&mut self, stmt: &SqlStatement) -> Result<()> {
+        if let SqlStatement::Revoke {
+            privileges,
+            objects,
+            grantees,
+            ..
+        } = stmt
+        {
+            let priv_str = format!("{}", privileges);
+            let object = objects
+                .as_ref()
+                .map(|o| format!("{}", o))
+                .unwrap_or_default();
+            for grantee in grantees {
+                let grantee_name = grantee.to_string();
+                self.storage
+                    .borrow_mut()
+                    .remove_grants(&grantee_name, &priv_str, &object);
+            }
+        }
+        Ok(())
     }
 
     fn execute_optimize_table(&mut self, table_name: &sqlparser::ast::ObjectName) -> Result<Table> {

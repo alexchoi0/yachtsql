@@ -276,6 +276,120 @@ impl ClickHouseStatementParser for GrantRoleParser {
     }
 }
 
+struct GrantRoleToUserParser;
+
+impl ClickHouseStatementParser for GrantRoleToUserParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::StartsWith(&["GRANT"])
+    }
+
+    fn parse(&self, tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        if !has_to_without_on(tokens) {
+            return Ok(None);
+        }
+        Ok(Some(CustomStatement::ClickHouseGrant {
+            statement: sql.to_string(),
+        }))
+    }
+}
+
+fn has_to_without_on(tokens: &[&Token]) -> bool {
+    let mut found_to = false;
+    let mut found_on = false;
+    for token in tokens.iter() {
+        if let Token::Word(w) = token {
+            if w.value.eq_ignore_ascii_case("TO") {
+                found_to = true;
+            }
+            if w.value.eq_ignore_ascii_case("ON") {
+                found_on = true;
+            }
+        }
+    }
+    found_to && !found_on
+}
+
+struct RevokeRoleFromUserParser;
+
+impl ClickHouseStatementParser for RevokeRoleFromUserParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::StartsWith(&["REVOKE"])
+    }
+
+    fn parse(&self, tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        if !has_from_without_on(tokens) {
+            return Ok(None);
+        }
+        Ok(Some(CustomStatement::ClickHouseGrant {
+            statement: sql.to_string(),
+        }))
+    }
+}
+
+fn has_from_without_on(tokens: &[&Token]) -> bool {
+    let mut found_from = false;
+    let mut found_on = false;
+    for token in tokens.iter() {
+        if let Token::Word(w) = token {
+            if w.value.eq_ignore_ascii_case("FROM") {
+                found_from = true;
+            }
+            if w.value.eq_ignore_ascii_case("ON") {
+                found_on = true;
+            }
+        }
+    }
+    found_from && !found_on
+}
+
+struct CreateUserIdentifiedParser;
+
+impl ClickHouseStatementParser for CreateUserIdentifiedParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::StartsWithAndContains {
+            prefix: &["CREATE", "USER"],
+            contains: "IDENTIFIED",
+        }
+    }
+
+    fn parse(&self, _tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        Ok(Some(CustomStatement::ClickHouseCreateUser {
+            statement: sql.to_string(),
+        }))
+    }
+}
+
+struct AlterUserIdentifiedParser;
+
+impl ClickHouseStatementParser for AlterUserIdentifiedParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::StartsWithAndContains {
+            prefix: &["ALTER", "USER"],
+            contains: "IDENTIFIED",
+        }
+    }
+
+    fn parse(&self, _tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        Ok(Some(CustomStatement::ClickHouseAlterUser {
+            statement: sql.to_string(),
+        }))
+    }
+}
+
+struct SetDefaultRoleParser;
+
+impl ClickHouseStatementParser for SetDefaultRoleParser {
+    fn pattern(&self) -> KeywordPattern {
+        KeywordPattern::Consecutive(&["SET", "DEFAULT", "ROLE"])
+    }
+
+    fn parse(&self, _tokens: &[&Token], sql: &str) -> Result<Option<CustomStatement>> {
+        Ok(Some(CustomStatement::ClickHouseSetDefaultRole {
+            statement: sql.to_string(),
+        }))
+    }
+}
+
 struct FunctionParser;
 
 impl ClickHouseStatementParser for FunctionParser {
@@ -1020,6 +1134,11 @@ static ALTER_TTL_PARSER: AlterTableTtlParser = AlterTableTtlParser;
 static SYSTEM_PARSER: SystemCommandParser = SystemCommandParser;
 static CREATE_DICT_PARSER: CreateDictionaryParser = CreateDictionaryParser;
 static GRANT_ROLE_PARSER: GrantRoleParser = GrantRoleParser;
+static GRANT_ROLE_TO_USER_PARSER: GrantRoleToUserParser = GrantRoleToUserParser;
+static REVOKE_ROLE_FROM_USER_PARSER: RevokeRoleFromUserParser = RevokeRoleFromUserParser;
+static CREATE_USER_IDENTIFIED_PARSER: CreateUserIdentifiedParser = CreateUserIdentifiedParser;
+static ALTER_USER_IDENTIFIED_PARSER: AlterUserIdentifiedParser = AlterUserIdentifiedParser;
+static SET_DEFAULT_ROLE_PARSER: SetDefaultRoleParser = SetDefaultRoleParser;
 static FUNCTION_PARSER: FunctionParser = FunctionParser;
 static CREATE_DATABASE_ENGINE_PARSER: CreateDatabaseEngineParser = CreateDatabaseEngineParser;
 static CREATE_DATABASE_COMMENT_PARSER: CreateDatabaseCommentParser = CreateDatabaseCommentParser;
@@ -1105,11 +1224,14 @@ static PARSERS: &[&dyn ClickHouseStatementParser] = &[
     &CREATE_INDEX_PARSER,
     &CREATE_DATABASE_ENGINE_PARSER,
     &CREATE_DATABASE_COMMENT_PARSER,
+    &CREATE_USER_IDENTIFIED_PARSER,
     &PASSTHROUGH_RENAME_DATABASE,
     &USE_PARSER,
+    &ALTER_USER_IDENTIFIED_PARSER,
     &ALTER_CODEC_PARSER,
     &ALTER_TTL_PARSER,
     &SYSTEM_PARSER,
+    &SET_DEFAULT_ROLE_PARSER,
     &PASSTHROUGH_QUOTA,
     &PASSTHROUGH_ROW_POLICY,
     &PASSTHROUGH_SETTINGS_PROFILE,
@@ -1128,6 +1250,8 @@ static PARSERS: &[&dyn ClickHouseStatementParser] = &[
     &PASSTHROUGH_PROJECTION,
     &PASSTHROUGH_ALTER_USER,
     &GRANT_ROLE_PARSER,
+    &GRANT_ROLE_TO_USER_PARSER,
+    &REVOKE_ROLE_FROM_USER_PARSER,
 ];
 
 pub struct ClickHouseParser;

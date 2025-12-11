@@ -208,7 +208,15 @@ pub enum CustomStatement {
         statement: String,
     },
 
+    ClickHouseCreateUser {
+        statement: String,
+    },
+
     ClickHouseGrant {
+        statement: String,
+    },
+
+    ClickHouseSetDefaultRole {
         statement: String,
     },
 
@@ -641,6 +649,14 @@ impl StatementValidator {
             }
             CustomStatement::ClickHouseGrant { .. } => {
                 self.require_clickhouse("GRANT/REVOKE")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseCreateUser { .. } => {
+                self.require_clickhouse("CREATE USER")?;
+                Ok(())
+            }
+            CustomStatement::ClickHouseSetDefaultRole { .. } => {
+                self.require_clickhouse("SET DEFAULT ROLE")?;
                 Ok(())
             }
             CustomStatement::ClickHouseSystem { .. } => {

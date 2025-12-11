@@ -90,6 +90,23 @@ pub struct SettingsProfileMetadata {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UserMetadata {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RoleMetadata {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GrantMetadata {
+    pub grantee: String,
+    pub privilege: String,
+    pub object: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Storage {
     datasets: IndexMap<String, Dataset>,
@@ -97,6 +114,9 @@ pub struct Storage {
     quotas: IndexMap<String, QuotaMetadata>,
     row_policies: IndexMap<String, RowPolicyMetadata>,
     settings_profiles: IndexMap<String, SettingsProfileMetadata>,
+    users: IndexMap<String, UserMetadata>,
+    roles: IndexMap<String, RoleMetadata>,
+    grants: Vec<GrantMetadata>,
 }
 
 impl Default for Storage {
@@ -107,6 +127,9 @@ impl Default for Storage {
             quotas: IndexMap::new(),
             row_policies: IndexMap::new(),
             settings_profiles: IndexMap::new(),
+            users: IndexMap::new(),
+            roles: IndexMap::new(),
+            grants: Vec::new(),
         }
     }
 }
@@ -123,6 +146,9 @@ impl Storage {
             quotas: IndexMap::new(),
             row_policies: IndexMap::new(),
             settings_profiles: IndexMap::new(),
+            users: IndexMap::new(),
+            roles: IndexMap::new(),
+            grants: Vec::new(),
         }
     }
 
@@ -168,6 +194,59 @@ impl Storage {
 
     pub fn settings_profiles(&self) -> impl Iterator<Item = &SettingsProfileMetadata> {
         self.settings_profiles.values()
+    }
+
+    pub fn add_user(&mut self, name: String) {
+        self.users.insert(name.clone(), UserMetadata { name });
+    }
+
+    pub fn remove_user(&mut self, name: &str) -> bool {
+        self.users.shift_remove(name).is_some()
+    }
+
+    pub fn users(&self) -> impl Iterator<Item = &UserMetadata> {
+        self.users.values()
+    }
+
+    pub fn has_user(&self, name: &str) -> bool {
+        self.users.contains_key(name)
+    }
+
+    pub fn add_role(&mut self, name: String) {
+        self.roles.insert(name.clone(), RoleMetadata { name });
+    }
+
+    pub fn remove_role(&mut self, name: &str) -> bool {
+        self.roles.shift_remove(name).is_some()
+    }
+
+    pub fn roles(&self) -> impl Iterator<Item = &RoleMetadata> {
+        self.roles.values()
+    }
+
+    pub fn has_role(&self, name: &str) -> bool {
+        self.roles.contains_key(name)
+    }
+
+    pub fn add_grant(&mut self, grantee: String, privilege: String, object: String) {
+        self.grants.push(GrantMetadata {
+            grantee,
+            privilege,
+            object,
+        });
+    }
+
+    pub fn grants(&self) -> impl Iterator<Item = &GrantMetadata> {
+        self.grants.iter()
+    }
+
+    pub fn grants_for_user(&self, user: &str) -> impl Iterator<Item = &GrantMetadata> {
+        self.grants.iter().filter(move |g| g.grantee == user)
+    }
+
+    pub fn remove_grants(&mut self, grantee: &str, privilege: &str, object: &str) {
+        self.grants
+            .retain(|g| !(g.grantee == grantee && g.privilege == privilege && g.object == object));
     }
 
     pub fn create_dataset(&mut self, dataset_id: String) -> Result<()> {
