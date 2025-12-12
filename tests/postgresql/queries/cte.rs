@@ -29,7 +29,6 @@ fn test_simple_cte() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_column_aliases() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -70,7 +69,6 @@ fn test_cte_used_multiple_times() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_join() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -139,7 +137,6 @@ fn test_cte_with_aggregation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_in_subquery() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -154,7 +151,6 @@ fn test_cte_in_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_insert() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -177,14 +173,13 @@ fn test_cte_with_insert() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_update() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
 
     executor
         .execute_sql(
-            "WITH low_earners AS (SELECT id FROM employees WHERE salary < 100000) UPDATE employees SET salary = salary * 1.1 WHERE id IN (SELECT id FROM low_earners)",
+            "WITH low_earners AS (SELECT id FROM employees WHERE salary < 100000) UPDATE employees SET salary = CAST(salary * 1.1 AS INTEGER) WHERE id IN (SELECT id FROM low_earners)",
         )
         .unwrap();
 
@@ -196,7 +191,6 @@ fn test_cte_with_update() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_delete() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
