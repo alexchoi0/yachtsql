@@ -91,6 +91,10 @@ ecb = "0.1"
 # Roaring bitmaps
 roaring = "0.10"
 
+# Parquet file support
+arrow = { version = "54", default-features = false, features = ["prettyprint"] }
+parquet = { version = "54", default-features = false, features = ["arrow"] }
+
 # Network operations
 ipnetwork = "0.20"
 url = "2.5"
@@ -123,5 +127,10 @@ yachtsql = { path = "../.." }
 yachtsql-test-utils = { path = "../test-utils" }
 mockall = "0.13"
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.14"
+
+[[bench]]
+name = "parquet_loading"
+harness = false
 
 
