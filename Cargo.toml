@@ -87,6 +87,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "time"] }
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 sqlparser = "0.59"
+arrow = { version = "54", default-features = false }
+parquet = { version = "54", default-features = false, features = ["arrow"] }
+tempfile = "3.14"
+yachtsql-test-utils = { path = "crates/test-utils" }
 
 [features]
 # Benchmark configuration features
