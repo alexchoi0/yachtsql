@@ -1,5 +1,3 @@
-#![allow(clippy::approx_constant)]
-
 #[allow(dead_code)]
 mod common;
 mod data_types;
