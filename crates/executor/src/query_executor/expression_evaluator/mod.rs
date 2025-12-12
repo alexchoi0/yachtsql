@@ -6681,6 +6681,14 @@ impl<'a> ExpressionEvaluator<'a> {
                 let arg = self.evaluate_function_arg(&args[0], row)?;
                 yachtsql_functions::array::array_distinct(arg)
             }
+            "UNNEST" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "UNNEST() requires exactly 1 argument".to_string(),
+                    ));
+                }
+                self.evaluate_function_arg(&args[0], row)
+            }
             "GENERATE_ARRAY" => {
                 if args.len() < 2 || args.len() > 3 {
                     return Err(Error::InvalidQuery(

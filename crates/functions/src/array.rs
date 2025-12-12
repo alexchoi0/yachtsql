@@ -18,6 +18,90 @@ pub fn array_length(array: &Value) -> Result<Value> {
     }
 }
 
+pub fn array_length_dim(array: &Value, dimension: &Value) -> Result<Value> {
+    if array.is_null() || dimension.is_null() {
+        return Ok(Value::null());
+    }
+
+    let dim = dimension.as_i64().ok_or_else(|| Error::TypeMismatch {
+        expected: "INT64".to_string(),
+        actual: dimension.data_type().to_string(),
+    })?;
+
+    if dim != 1 {
+        return Ok(Value::null());
+    }
+
+    let arr = array.as_array().ok_or_else(|| Error::TypeMismatch {
+        expected: "ARRAY".to_string(),
+        actual: array.data_type().to_string(),
+    })?;
+
+    if arr.is_empty() {
+        return Ok(Value::null());
+    }
+
+    Ok(Value::int64(arr.len() as i64))
+}
+
+pub fn cardinality(array: &Value) -> Result<Value> {
+    if array.is_null() {
+        return Ok(Value::null());
+    }
+
+    fn count_elements(arr: &[Value]) -> i64 {
+        let mut count = 0i64;
+        for elem in arr {
+            if let Some(nested) = elem.as_array() {
+                count += count_elements(nested);
+            } else {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    let arr = array.as_array().ok_or_else(|| Error::TypeMismatch {
+        expected: "ARRAY".to_string(),
+        actual: array.data_type().to_string(),
+    })?;
+
+    Ok(Value::int64(count_elements(arr)))
+}
+
+pub fn array_dims(array: &Value) -> Result<Value> {
+    if array.is_null() {
+        return Ok(Value::null());
+    }
+
+    let arr = array.as_array().ok_or_else(|| Error::TypeMismatch {
+        expected: "ARRAY".to_string(),
+        actual: array.data_type().to_string(),
+    })?;
+
+    if arr.is_empty() {
+        return Ok(Value::null());
+    }
+
+    fn get_dims(arr: &[Value]) -> Vec<usize> {
+        let mut dims = vec![arr.len()];
+        if let Some(first) = arr.first() {
+            if let Some(nested) = first.as_array() {
+                dims.extend(get_dims(nested));
+            }
+        }
+        dims
+    }
+
+    let dims = get_dims(arr);
+    let dims_str = dims
+        .iter()
+        .map(|&d| format!("[1:{}]", d))
+        .collect::<String>();
+
+    Ok(Value::string(dims_str))
+}
+
 pub fn array_concat(arrays: &[Value]) -> Result<Value> {
     let mut result = Vec::new();
 

@@ -280,6 +280,21 @@ impl LogicalPlanBuilder {
         let from_plan = self.tables_to_plan(&select.from)?;
 
         let mut plan = from_plan;
+
+        if select.from.is_empty()
+            && let Some((unnest_arg, alias)) =
+                self.extract_unnest_from_projection(&select.projection)
+        {
+            let array_expr = self.sql_expr_to_expr(&unnest_arg)?;
+            return Ok(LogicalPlan::new(PlanNode::Unnest {
+                array_expr,
+                alias: None,
+                column_alias: alias,
+                with_offset: false,
+                offset_alias: None,
+            }));
+        }
+
         let alias_scope = self.collect_table_aliases(&select.from);
         let _alias_guard = AliasScopeGuard::new(self, alias_scope);
 
@@ -2297,6 +2312,46 @@ impl LogicalPlanBuilder {
                     })
             })
             .collect()
+    }
+
+    fn extract_unnest_from_projection(
+        &self,
+        projection: &[ast::SelectItem],
+    ) -> Option<(ast::Expr, Option<String>)> {
+        if projection.len() != 1 {
+            return None;
+        }
+
+        match &projection[0] {
+            ast::SelectItem::UnnamedExpr(ast::Expr::Function(func)) => {
+                let func_name = func.name.to_string().to_uppercase();
+                if func_name == "UNNEST"
+                    && let ast::FunctionArguments::List(ast::FunctionArgumentList { args, .. }) =
+                        &func.args
+                    && args.len() == 1
+                    && let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(expr)) = &args[0]
+                {
+                    return Some((expr.clone(), None));
+                }
+                None
+            }
+            ast::SelectItem::ExprWithAlias {
+                expr: ast::Expr::Function(func),
+                alias,
+            } => {
+                let func_name = func.name.to_string().to_uppercase();
+                if func_name == "UNNEST"
+                    && let ast::FunctionArguments::List(ast::FunctionArgumentList { args, .. }) =
+                        &func.args
+                    && args.len() == 1
+                    && let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(expr)) = &args[0]
+                {
+                    return Some((expr.clone(), Some(alias.value.clone())));
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     fn tables_to_plan(&self, from: &[ast::TableWithJoins]) -> Result<LogicalPlan> {

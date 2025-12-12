@@ -659,6 +659,7 @@ impl ProjectionWithExprExec {
             name,
             FunctionName::ArrayLength
                 | FunctionName::Cardinality
+                | FunctionName::ArrayDims
                 | FunctionName::ArrayConcat
                 | FunctionName::ArrayCat
                 | FunctionName::ArrayReverse
@@ -675,6 +676,7 @@ impl ProjectionWithExprExec {
                 | FunctionName::GenerateArray
                 | FunctionName::GenerateDateArray
                 | FunctionName::GenerateTimestampArray
+                | FunctionName::Unnest
         ) {
             return Self::evaluate_array_function(func_name, args, batch, row_idx);
         }

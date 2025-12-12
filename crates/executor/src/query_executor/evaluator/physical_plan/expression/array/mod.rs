@@ -49,11 +49,31 @@ impl ProjectionWithExprExec {
             "GENERATE_TIMESTAMP_ARRAY" => {
                 Self::evaluate_generate_timestamp_array(args, batch, row_idx)
             }
+            "CARDINALITY" => Self::evaluate_cardinality(args, batch, row_idx),
+            "ARRAY_DIMS" => Self::evaluate_array_dims(args, batch, row_idx),
+            "UNNEST" => Self::evaluate_unnest(args, batch, row_idx),
             _ => Err(Error::unsupported_feature(format!(
                 "Unknown array function: {}",
                 name
             ))),
         }
+    }
+
+    fn evaluate_cardinality(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        Self::validate_arg_count("CARDINALITY", args, 1)?;
+        let arr_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        yachtsql_functions::array::cardinality(&arr_val)
+    }
+
+    fn evaluate_array_dims(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        Self::validate_arg_count("ARRAY_DIMS", args, 1)?;
+        let arr_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+        yachtsql_functions::array::array_dims(&arr_val)
+    }
+
+    fn evaluate_unnest(args: &[Expr], batch: &Table, row_idx: usize) -> Result<Value> {
+        Self::validate_arg_count("UNNEST", args, 1)?;
+        Self::evaluate_expr(&args[0], batch, row_idx)
     }
 }
 

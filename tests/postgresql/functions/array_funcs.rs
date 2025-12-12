@@ -2,7 +2,6 @@ use crate::assert_table_eq;
 use crate::common::create_executor;
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_length() {
     let mut executor = create_executor();
     let result = executor
@@ -12,7 +11,6 @@ fn test_array_length() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_length_empty() {
     let mut executor = create_executor();
     let result = executor
@@ -22,7 +20,6 @@ fn test_array_length_empty() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cardinality() {
     let mut executor = create_executor();
     let result = executor
@@ -118,7 +115,6 @@ fn test_array_agg() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_unnest() {
     let mut executor = create_executor();
     let result = executor
@@ -128,7 +124,6 @@ fn test_unnest() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_to_string() {
     let mut executor = create_executor();
     let result = executor
@@ -147,7 +142,6 @@ fn test_string_to_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_dims() {
     let mut executor = create_executor();
     let result = executor
