@@ -17,6 +17,7 @@ pub struct AggregateExec {
     group_by: Vec<Expr>,
     aggregates: Vec<(Expr, Option<String>)>,
     having: Option<Expr>,
+    input_source_tables: Vec<String>,
 }
 
 impl AggregateExec {
@@ -81,6 +82,8 @@ impl AggregateExec {
         let mut fields = Vec::new();
 
         let input_schema = input.schema();
+        let input_source_tables = Self::extract_source_tables_from_schema(input_schema);
+
         for (idx, group_expr) in group_by.iter().enumerate() {
             let field_name = if let Expr::Column { name, .. } = group_expr {
                 name.clone()
@@ -112,7 +115,18 @@ impl AggregateExec {
             group_by,
             aggregates,
             having,
+            input_source_tables,
         })
+    }
+
+    fn extract_source_tables_from_schema(schema: &Schema) -> Vec<String> {
+        let mut tables: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for field in schema.fields() {
+            if let Some(st) = &field.source_table {
+                tables.insert(st.clone());
+            }
+        }
+        tables.into_iter().collect()
     }
 
     fn compute_group_key(&self, batch: &Table, row_idx: usize) -> Result<Vec<Value>> {
@@ -791,7 +805,12 @@ impl ExecutionPlan for AggregateExec {
 
         let mut groups: HashMap<Vec<u8>, (Vec<Value>, Vec<Vec<Value>>)> = HashMap::new();
 
-        let outer_table_aliases = self.extract_outer_table_aliases_from_aggregates();
+        let mut outer_table_aliases = self.extract_outer_table_aliases_from_aggregates();
+        for st in &self.input_source_tables {
+            if !outer_table_aliases.contains(st) {
+                outer_table_aliases.push(st.clone());
+            }
+        }
 
         debug_print::debug_eprintln!(
             "[executor::aggregate] outer_table_aliases: {:?}",
@@ -3178,6 +3197,7 @@ pub struct SortAggregateExec {
     group_by: Vec<Expr>,
     aggregates: Vec<(Expr, Option<String>)>,
     having: Option<Expr>,
+    input_source_tables: Vec<String>,
 }
 
 impl SortAggregateExec {
@@ -3204,6 +3224,8 @@ impl SortAggregateExec {
         let mut fields = Vec::new();
 
         let input_schema = input.schema();
+        let input_source_tables = AggregateExec::extract_source_tables_from_schema(input_schema);
+
         for (idx, group_expr) in group_by.iter().enumerate() {
             let field_name = if let Expr::Column { name, .. } = group_expr {
                 name.clone()
@@ -3236,6 +3258,7 @@ impl SortAggregateExec {
             group_by,
             aggregates,
             having,
+            input_source_tables,
         })
     }
 
@@ -5292,7 +5315,12 @@ impl ExecutionPlan for SortAggregateExec {
         let mut current_group_key: Option<Vec<Value>> = None;
         let mut current_group_agg_inputs: Vec<Vec<Value>> = Vec::new();
 
-        let outer_table_aliases = self.extract_outer_table_aliases_from_aggregates();
+        let mut outer_table_aliases = self.extract_outer_table_aliases_from_aggregates();
+        for st in &self.input_source_tables {
+            if !outer_table_aliases.contains(st) {
+                outer_table_aliases.push(st.clone());
+            }
+        }
 
         for input_batch in &input_batches {
             let num_rows = input_batch.num_rows();

@@ -81,7 +81,7 @@ impl SubqueryExecutorImpl {
         match plan {
             PlanNode::Scan {
                 table_name,
-                alias: _,
+                alias,
                 projection: _,
                 ..
             } => {
@@ -90,7 +90,11 @@ impl SubqueryExecutorImpl {
                 let cte_table_name = format!("__cte_{}", table_name);
                 if let Some(cte_tables) = get_cte_from_context(&cte_table_name) {
                     if let Some(first_table) = cte_tables.into_iter().next() {
-                        return first_table.to_column_format();
+                        let table = first_table.to_column_format()?;
+                        let source_table = alias.as_ref().unwrap_or(table_name);
+                        let new_schema = table.schema().with_source_table(source_table);
+                        let columns = table.columns().map(|c| c.to_vec()).unwrap_or_default();
+                        return Table::new(new_schema, columns);
                     }
                 }
 
@@ -1593,7 +1597,11 @@ impl SubqueryExecutor for SubqueryExecutorImpl {
             }
         })?;
 
+        let saved_ctx = CORRELATION_CONTEXT.with(|ctx| ctx.borrow().clone());
         let batch = self.execute_plan(&bound_plan)?;
+        CORRELATION_CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = saved_ctx;
+        });
 
         if batch.num_rows() == 0 {
             let result = Value::null();
