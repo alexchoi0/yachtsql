@@ -5962,7 +5962,7 @@ impl QueryExecutor {
                             (self.evaluate_sequence_function(&func_name, func)?, false)
                         } else if matches!(
                             func_name.as_str(),
-                            "SKEYS" | "SVALS" | "JSON_OBJECT_KEYS" | "JSONB_OBJECT_KEYS"
+                            "SKEYS" | "SVALS" | "JSON_OBJECT_KEYS" | "JSONB_OBJECT_KEYS" | "UNNEST"
                         ) {
                             (evaluator.evaluate_expr(expr, &dummy_row)?, true)
                         } else {

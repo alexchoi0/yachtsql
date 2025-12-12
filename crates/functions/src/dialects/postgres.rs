@@ -93,6 +93,7 @@ pub fn postgres_scalar_functions() -> Vec<&'static str> {
         "STRING_TO_ARRAY",
         "CARDINALITY",
         "UNNEST",
+        "ARRAY_DIMS",
         "ARRAY_REVERSE",
         "ARRAY_DISTINCT",
         "ENCODE",

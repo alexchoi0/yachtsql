@@ -1,4 +1,4 @@
-use yachtsql_core::error::Result;
+use yachtsql_core::error::{Error, Result};
 use yachtsql_core::types::Value;
 use yachtsql_optimizer::expr::Expr;
 
@@ -11,9 +11,20 @@ impl ProjectionWithExprExec {
         batch: &Table,
         row_idx: usize,
     ) -> Result<Value> {
-        Self::validate_arg_count("ARRAY_LENGTH", args, 1)?;
-        let arr_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
-        crate::functions::array::array_length(&arr_val)
+        match args.len() {
+            1 => {
+                let arr_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                crate::functions::array::array_length(&arr_val)
+            }
+            2 => {
+                let arr_val = Self::evaluate_expr(&args[0], batch, row_idx)?;
+                let dim_val = Self::evaluate_expr(&args[1], batch, row_idx)?;
+                crate::functions::array::array_length_dim(&arr_val, &dim_val)
+            }
+            _ => Err(Error::invalid_query(
+                "ARRAY_LENGTH requires 1 or 2 arguments".to_string(),
+            )),
+        }
     }
 }
 

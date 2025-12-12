@@ -264,6 +264,7 @@ pub enum FunctionName {
 
     ArrayLength,
     Cardinality,
+    ArrayDims,
     ArrayConcat,
     ArrayCat,
     ArrayContains,
@@ -1365,6 +1366,7 @@ impl FunctionName {
             "ARRAY_CAT" => Self::ArrayCat,
             "ARRAY_CONTAINS" | "HAS" => Self::ArrayContains,
             "ARRAY_CONTAINS_ALL" => Self::ArrayContainsAll,
+            "ARRAY_DIMS" => Self::ArrayDims,
             "UNNEST" => Self::Unnest,
             "EXPLODE" => Self::Explode,
             "FLATTEN" => Self::Flatten,
@@ -2567,6 +2569,7 @@ impl FunctionName {
             Self::ArrayCat => "ARRAY_CAT",
             Self::ArrayContains => "ARRAY_CONTAINS",
             Self::ArrayContainsAll => "ARRAY_CONTAINS_ALL",
+            Self::ArrayDims => "ARRAY_DIMS",
             Self::Unnest => "UNNEST",
             Self::Explode => "EXPLODE",
             Self::Flatten => "FLATTEN",
