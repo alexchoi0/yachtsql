@@ -47,6 +47,9 @@ pub enum Expr {
     QualifiedWildcard {
         qualifier: String,
     },
+    ExpressionWildcard {
+        expr: Box<Expr>,
+    },
     Tuple(Vec<Expr>),
     Cast {
         expr: Box<Expr>,
@@ -558,6 +561,8 @@ impl Expr {
             Expr::Lambda { body, .. } => body.contains_subquery(),
 
             Expr::InTable { expr, .. } => expr.contains_subquery(),
+            Expr::ExpressionWildcard { expr } => expr.contains_subquery(),
+
             Expr::Column { .. }
             | Expr::Literal(_)
             | Expr::Wildcard
@@ -590,6 +595,9 @@ impl Expr {
     }
 
     pub fn is_wildcard(&self) -> bool {
-        matches!(self, Expr::Wildcard | Expr::QualifiedWildcard { .. })
+        matches!(
+            self,
+            Expr::Wildcard | Expr::QualifiedWildcard { .. } | Expr::ExpressionWildcard { .. }
+        )
     }
 }
