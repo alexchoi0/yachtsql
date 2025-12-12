@@ -75,6 +75,8 @@ pub enum FunctionName {
     BitAnd,
     BitOr,
     BitXor,
+    RangeAgg,
+    RangeIntersectAgg,
 
     ApproxCountDistinct,
     ApproxDistinct,
@@ -1172,6 +1174,8 @@ impl FunctionName {
             "BIT_AND" => Self::BitAnd,
             "BIT_OR" => Self::BitOr,
             "BIT_XOR" => Self::BitXor,
+            "RANGE_AGG" => Self::RangeAgg,
+            "RANGE_INTERSECT_AGG" => Self::RangeIntersectAgg,
 
             "APPROX_COUNT_DISTINCT" => Self::ApproxCountDistinct,
             "APPROX_DISTINCT" => Self::ApproxDistinct,
@@ -2380,6 +2384,8 @@ impl FunctionName {
             Self::BitAnd => "BIT_AND",
             Self::BitOr => "BIT_OR",
             Self::BitXor => "BIT_XOR",
+            Self::RangeAgg => "RANGE_AGG",
+            Self::RangeIntersectAgg => "RANGE_INTERSECT_AGG",
 
             Self::ApproxCountDistinct => "APPROX_COUNT_DISTINCT",
             Self::ApproxDistinct => "APPROX_DISTINCT",
@@ -3468,6 +3474,8 @@ impl FunctionName {
                 | Self::BitAnd
                 | Self::BitOr
                 | Self::BitXor
+                | Self::RangeAgg
+                | Self::RangeIntersectAgg
                 | Self::ApproxCountDistinct
                 | Self::ApproxDistinct
                 | Self::ApproxQuantiles

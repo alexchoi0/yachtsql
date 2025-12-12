@@ -304,7 +304,44 @@ impl PhysicalPlanner {
         array_expr: &yachtsql_optimizer::expr::Expr,
         with_offset: bool,
     ) -> Result<Rc<dyn ExecutionPlan>> {
-        let element_type = yachtsql_core::types::DataType::String;
+        use yachtsql_core::types::{DataType, RangeType};
+        use yachtsql_optimizer::expr::{CastDataType, Expr};
+
+        let element_type = if let Expr::Cast { data_type, .. } = array_expr {
+            match data_type {
+                CastDataType::Int4Multirange => DataType::Range(RangeType::Int4Range),
+                CastDataType::Int8Multirange => DataType::Range(RangeType::Int8Range),
+                CastDataType::NumMultirange => DataType::Range(RangeType::NumRange),
+                CastDataType::TsMultirange => DataType::Range(RangeType::TsRange),
+                CastDataType::TsTzMultirange => DataType::Range(RangeType::TsTzRange),
+                CastDataType::DateMultirange => DataType::Range(RangeType::DateRange),
+                CastDataType::Custom(name, fields)
+                    if fields.is_empty()
+                        && matches!(
+                            name.to_uppercase().as_str(),
+                            "INT4MULTIRANGE"
+                                | "INT8MULTIRANGE"
+                                | "NUMMULTIRANGE"
+                                | "TSMULTIRANGE"
+                                | "TSTZMULTIRANGE"
+                                | "DATEMULTIRANGE"
+                        ) =>
+                {
+                    match name.to_uppercase().as_str() {
+                        "INT4MULTIRANGE" => DataType::Range(RangeType::Int4Range),
+                        "INT8MULTIRANGE" => DataType::Range(RangeType::Int8Range),
+                        "NUMMULTIRANGE" => DataType::Range(RangeType::NumRange),
+                        "TSMULTIRANGE" => DataType::Range(RangeType::TsRange),
+                        "TSTZMULTIRANGE" => DataType::Range(RangeType::TsTzRange),
+                        "DATEMULTIRANGE" => DataType::Range(RangeType::DateRange),
+                        _ => DataType::String,
+                    }
+                }
+                _ => DataType::String,
+            }
+        } else {
+            DataType::String
+        };
         let mut fields = vec![Field::nullable("element".to_string(), element_type)];
 
         if with_offset {

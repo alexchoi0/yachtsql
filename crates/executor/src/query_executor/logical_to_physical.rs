@@ -768,6 +768,12 @@ impl LogicalToPhysicalPlanner {
                             "TSRANGE" => CastDataType::TsRange,
                             "TSTZRANGE" => CastDataType::TsTzRange,
                             "DATERANGE" => CastDataType::DateRange,
+                            "INT4MULTIRANGE" => CastDataType::Int4Multirange,
+                            "INT8MULTIRANGE" => CastDataType::Int8Multirange,
+                            "NUMMULTIRANGE" => CastDataType::NumMultirange,
+                            "TSMULTIRANGE" => CastDataType::TsMultirange,
+                            "TSTZMULTIRANGE" => CastDataType::TsTzMultirange,
+                            "DATEMULTIRANGE" => CastDataType::DateMultirange,
                             "POINT" => CastDataType::Point,
                             "BOX" => CastDataType::PgBox,
                             "CIRCLE" => CastDataType::Circle,
@@ -2412,7 +2418,31 @@ impl LogicalToPhysicalPlanner {
 
             Expr::Literal(yachtsql_ir::expr::LiteralValue::Null) => DataType::Unknown,
 
-            Expr::Cast { data_type, .. } => self.cast_data_type_to_data_type(data_type),
+            Expr::Cast { data_type, .. } => {
+                use yachtsql_core::types::RangeType;
+                use yachtsql_ir::expr::CastDataType;
+
+                match data_type {
+                    CastDataType::Int4Multirange => DataType::Range(RangeType::Int4Range),
+                    CastDataType::Int8Multirange => DataType::Range(RangeType::Int8Range),
+                    CastDataType::NumMultirange => DataType::Range(RangeType::NumRange),
+                    CastDataType::TsMultirange => DataType::Range(RangeType::TsRange),
+                    CastDataType::TsTzMultirange => DataType::Range(RangeType::TsTzRange),
+                    CastDataType::DateMultirange => DataType::Range(RangeType::DateRange),
+                    CastDataType::Custom(name, fields) if fields.is_empty() => {
+                        match name.to_uppercase().as_str() {
+                            "INT4MULTIRANGE" => DataType::Range(RangeType::Int4Range),
+                            "INT8MULTIRANGE" => DataType::Range(RangeType::Int8Range),
+                            "NUMMULTIRANGE" => DataType::Range(RangeType::NumRange),
+                            "TSMULTIRANGE" => DataType::Range(RangeType::TsRange),
+                            "TSTZMULTIRANGE" => DataType::Range(RangeType::TsTzRange),
+                            "DATEMULTIRANGE" => DataType::Range(RangeType::DateRange),
+                            _ => self.cast_data_type_to_data_type(data_type),
+                        }
+                    }
+                    _ => self.cast_data_type_to_data_type(data_type),
+                }
+            }
 
             Expr::Column { .. } => DataType::Unknown,
 
@@ -2469,6 +2499,24 @@ impl LogicalToPhysicalPlanner {
             CastDataType::Cid => DataType::Cid,
             CastDataType::Oid => DataType::Oid,
             CastDataType::Custom(_, fields) => DataType::Struct(fields.clone()),
+            CastDataType::Int4Multirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::Int4Multirange)
+            }
+            CastDataType::Int8Multirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::Int8Multirange)
+            }
+            CastDataType::NumMultirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::NumMultirange)
+            }
+            CastDataType::TsMultirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::TsMultirange)
+            }
+            CastDataType::TsTzMultirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::TsTzMultirange)
+            }
+            CastDataType::DateMultirange => {
+                DataType::Multirange(yachtsql_core::types::MultirangeType::DateMultirange)
+            }
         }
     }
 

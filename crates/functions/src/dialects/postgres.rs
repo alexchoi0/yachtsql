@@ -346,5 +346,7 @@ pub fn postgres_aggregate_functions() -> Vec<&'static str> {
         "BIT_AND",
         "BIT_OR",
         "BIT_XOR",
+        "RANGE_AGG",
+        "RANGE_INTERSECT_AGG",
     ]
 }

@@ -1550,19 +1550,75 @@ impl UnnestExec {
             }
 
 
-            Expr::Cast { expr, .. } => match expr.as_ref() {
-                Expr::Literal(lit) if matches!(lit, LiteralValue::Array(_)) => {
-                    if let LiteralValue::Array(elements) = lit {
-                        self.evaluate_element_list(elements)
+            Expr::Cast { expr, data_type } => {
+                use yachtsql_optimizer::expr::CastDataType;
+
+                let is_multirange = matches!(
+                    data_type,
+                    CastDataType::Int4Multirange
+                        | CastDataType::Int8Multirange
+                        | CastDataType::NumMultirange
+                        | CastDataType::TsMultirange
+                        | CastDataType::TsTzMultirange
+                        | CastDataType::DateMultirange
+                ) || matches!(data_type, CastDataType::Custom(name, fields) if fields.is_empty() && matches!(
+                    name.to_uppercase().as_str(),
+                    "INT4MULTIRANGE" | "INT8MULTIRANGE" | "NUMMULTIRANGE" |
+                    "TSMULTIRANGE" | "TSTZMULTIRANGE" | "DATEMULTIRANGE"
+                ));
+
+                if is_multirange {
+                    let resolved_type = match data_type {
+                        CastDataType::Custom(name, _) => match name.to_uppercase().as_str() {
+                            "INT4MULTIRANGE" => CastDataType::Int4Multirange,
+                            "INT8MULTIRANGE" => CastDataType::Int8Multirange,
+                            "NUMMULTIRANGE" => CastDataType::NumMultirange,
+                            "TSMULTIRANGE" => CastDataType::TsMultirange,
+                            "TSTZMULTIRANGE" => CastDataType::TsTzMultirange,
+                            "DATEMULTIRANGE" => CastDataType::DateMultirange,
+                            _ => data_type.clone(),
+                        },
+                        _ => data_type.clone(),
+                    };
+
+                    if let Expr::Literal(LiteralValue::String(s)) = expr.as_ref() {
+                        let multirange_value = crate::query_executor::execution::perform_cast(
+                            &crate::types::Value::string(s.clone()),
+                            &resolved_type,
+                        )?;
+                        if let Some(mr) = multirange_value.as_multirange() {
+                            Ok(mr
+                                .ranges
+                                .iter()
+                                .map(|r| crate::types::Value::range(r.clone()))
+                                .collect())
+                        } else {
+                            Ok(Self::empty_array())
+                        }
+                    } else if let Expr::Literal(LiteralValue::Null) = expr.as_ref() {
+                        Ok(Self::empty_array())
                     } else {
-                        unreachable!()
+                        Err(Error::unsupported_feature(
+                            "UNNEST multirange CAST only supports string literals or NULL"
+                                .to_string(),
+                        ))
+                    }
+                } else {
+                    match expr.as_ref() {
+                        Expr::Literal(lit) if matches!(lit, LiteralValue::Array(_)) => {
+                            if let LiteralValue::Array(elements) = lit {
+                                self.evaluate_element_list(elements)
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        Expr::Literal(LiteralValue::Null) => Ok(Self::empty_array()),
+                        _ => Err(Error::unsupported_feature(
+                            "UNNEST CAST only supports ARRAY[...] literals or NULL".to_string(),
+                        )),
                     }
                 }
-                Expr::Literal(LiteralValue::Null) => Ok(Self::empty_array()),
-                _ => Err(Error::unsupported_feature(
-                    "UNNEST CAST only supports ARRAY[...] literals or NULL".to_string(),
-                )),
-            },
+            }
 
             _ => Err(Error::unsupported_feature(
                 "UNNEST only supports ARRAY[...] literals, ARRAY(...) functions, GENERATE_ARRAY, or CAST expressions"
@@ -1967,6 +2023,42 @@ impl TableValuedFunctionExec {
                     CastDataType::DateRange => ast::DataType::Custom(
                         ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
                             "daterange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Int4Multirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "int4multirange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::Int8Multirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "int8multirange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::NumMultirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "nummultirange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::TsMultirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "tsmultirange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::TsTzMultirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "tstzmultirange",
+                        ))]),
+                        vec![],
+                    ),
+                    CastDataType::DateMultirange => ast::DataType::Custom(
+                        ast::ObjectName(vec![ast::ObjectNamePart::Identifier(ast::Ident::new(
+                            "datemultirange",
                         ))]),
                         vec![],
                     ),

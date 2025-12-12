@@ -34,7 +34,6 @@ fn test_tsrange_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_tstzrange_literal() {
     let mut executor = create_executor();
     let result = executor
@@ -53,7 +52,6 @@ fn test_daterange_literal() {
 }
 
 #[test]
-#[ignore = "Parser treats '[1,10]' as a vector instead of a range"]
 fn test_range_inclusive_exclusive() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT '[1,10]'::INT4RANGE").unwrap();
@@ -265,7 +263,6 @@ fn test_range_merge_function() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_column() {
     let mut executor = create_executor();
     executor
@@ -280,7 +277,6 @@ fn test_range_column() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_index_gist() {
     let mut executor = create_executor();
     executor
@@ -332,7 +328,6 @@ fn test_range_comparison_not_equal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_agg() {
     let mut executor = create_executor();
     executor
@@ -349,7 +344,6 @@ fn test_range_agg() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_range_intersect_agg() {
     let mut executor = create_executor();
     executor
@@ -366,7 +360,6 @@ fn test_range_intersect_agg() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_multirange_literal() {
     let mut executor = create_executor();
     let result = executor
@@ -376,11 +369,10 @@ fn test_multirange_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_multirange_unnest() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT UNNEST('{[1,5), [8,12)}'::INT4MULTIRANGE)")
+        .execute_sql("SELECT * FROM UNNEST('{[1,5), [8,12)}'::INT4MULTIRANGE)")
         .unwrap();
     assert_eq!(result.num_rows(), 2);
 }

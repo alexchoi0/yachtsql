@@ -44,6 +44,7 @@ pub enum DataType {
     Vector(usize),
     Interval,
     Range(RangeType),
+    Multirange(MultirangeType),
     Inet,
     Cidr,
     Point,
@@ -82,6 +83,29 @@ pub enum RangeType {
     TsRange,
     TsTzRange,
     DateRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MultirangeType {
+    Int4Multirange,
+    Int8Multirange,
+    NumMultirange,
+    TsMultirange,
+    TsTzMultirange,
+    DateMultirange,
+}
+
+impl MultirangeType {
+    pub fn element_range_type(&self) -> RangeType {
+        match self {
+            MultirangeType::Int4Multirange => RangeType::Int4Range,
+            MultirangeType::Int8Multirange => RangeType::Int8Range,
+            MultirangeType::NumMultirange => RangeType::NumRange,
+            MultirangeType::TsMultirange => RangeType::TsRange,
+            MultirangeType::TsTzMultirange => RangeType::TsTzRange,
+            MultirangeType::DateMultirange => RangeType::DateRange,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,6 +165,14 @@ impl fmt::Display for DataType {
                 RangeType::TsRange => write!(f, "TSRANGE"),
                 RangeType::TsTzRange => write!(f, "TSTZRANGE"),
                 RangeType::DateRange => write!(f, "DATERANGE"),
+            },
+            DataType::Multirange(mr_type) => match mr_type {
+                MultirangeType::Int4Multirange => write!(f, "INT4MULTIRANGE"),
+                MultirangeType::Int8Multirange => write!(f, "INT8MULTIRANGE"),
+                MultirangeType::NumMultirange => write!(f, "NUMMULTIRANGE"),
+                MultirangeType::TsMultirange => write!(f, "TSMULTIRANGE"),
+                MultirangeType::TsTzMultirange => write!(f, "TSTZMULTIRANGE"),
+                MultirangeType::DateMultirange => write!(f, "DATEMULTIRANGE"),
             },
             DataType::Inet => write!(f, "INET"),
             DataType::Cidr => write!(f, "CIDR"),
@@ -1269,6 +1301,7 @@ fn unescape_hstore(s: &str) -> String {
 const TAG_MACADDR: u8 = 146;
 const TAG_MACADDR8: u8 = 147;
 const TAG_MAP: u8 = 148;
+const TAG_MULTIRANGE: u8 = 149;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Interval {
@@ -1423,6 +1456,12 @@ pub struct Range {
     pub lower_inclusive: bool,
 
     pub upper_inclusive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Multirange {
+    pub multirange_type: MultirangeType,
+    pub ranges: Vec<Range>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1983,6 +2022,21 @@ impl Value {
     }
 
     #[inline]
+    pub fn multirange(multirange: Multirange) -> Self {
+        let rc = Rc::new(multirange);
+        let ptr = Rc::into_raw(rc) as *mut u8;
+        Self {
+            inner: ValueInner {
+                heap: std::mem::ManuallyDrop::new(HeapValue {
+                    tag: TAG_MULTIRANGE,
+                    _pad: [0; 7],
+                    ptr,
+                }),
+            },
+        }
+    }
+
+    #[inline]
     pub fn hstore(map: IndexMap<String, Option<String>>) -> Self {
         let rc = Rc::new(map);
         let ptr = Rc::into_raw(rc) as *mut u8;
@@ -2460,6 +2514,12 @@ impl Value {
                         let range = &*range_ptr;
                         DataType::Range(range.range_type.clone())
                     }
+                    TAG_MULTIRANGE => {
+                        let heap = self.as_heap();
+                        let multirange_ptr = heap.ptr as *const Multirange;
+                        let multirange = &*multirange_ptr;
+                        DataType::Multirange(multirange.multirange_type.clone())
+                    }
                     TAG_MACADDR => DataType::MacAddr,
                     TAG_MACADDR8 => DataType::MacAddr8,
                     TAG_DEFAULT => DataType::Unknown,
@@ -2840,6 +2900,18 @@ impl Value {
         }
     }
 
+    pub fn as_multirange(&self) -> Option<&Multirange> {
+        unsafe {
+            if self.tag() == TAG_MULTIRANGE {
+                let heap = self.as_heap();
+                let multirange_ptr = heap.ptr as *const Multirange;
+                Some(&*multirange_ptr)
+            } else {
+                None
+            }
+        }
+    }
+
     pub fn as_inet(&self) -> Option<&network::InetAddr> {
         unsafe {
             if self.tag() == TAG_INET {
@@ -3105,6 +3177,9 @@ impl Drop for Value {
                     TAG_RANGE => {
                         let _ = Rc::from_raw(heap.ptr as *const Range);
                     }
+                    TAG_MULTIRANGE => {
+                        let _ = Rc::from_raw(heap.ptr as *const Multirange);
+                    }
                     TAG_INET => {
                         let _ = Rc::from_raw(heap.ptr as *const network::InetAddr);
                     }
@@ -3341,6 +3416,22 @@ impl Clone for Value {
                             inner: ValueInner {
                                 heap: std::mem::ManuallyDrop::new(HeapValue {
                                     tag: TAG_RANGE,
+                                    _pad: [0; 7],
+                                    ptr,
+                                }),
+                            },
+                        }
+                    }
+                    TAG_MULTIRANGE => {
+                        let arc_ptr = heap.ptr as *const Multirange;
+                        let rc = Rc::from_raw(arc_ptr);
+                        let cloned_arc = Rc::clone(&rc);
+                        let _ = Rc::into_raw(rc);
+                        let ptr = Rc::into_raw(cloned_arc) as *mut u8;
+                        Self {
+                            inner: ValueInner {
+                                heap: std::mem::ManuallyDrop::new(HeapValue {
+                                    tag: TAG_MULTIRANGE,
                                     _pad: [0; 7],
                                     ptr,
                                 }),
@@ -3750,6 +3841,11 @@ impl PartialEq for Value {
                         let other_range = &*(other_heap.ptr as *const Range);
                         self_range == other_range
                     }
+                    TAG_MULTIRANGE => {
+                        let self_multirange = &*(self_heap.ptr as *const Multirange);
+                        let other_multirange = &*(other_heap.ptr as *const Multirange);
+                        self_multirange == other_multirange
+                    }
                     TAG_INET => {
                         let self_inet = &*(self_heap.ptr as *const network::InetAddr);
                         let other_inet = &*(other_heap.ptr as *const network::InetAddr);
@@ -3972,6 +4068,11 @@ impl std::hash::Hash for Value {
                             range.hash(state);
                         }
                     }
+                    TAG_MULTIRANGE => {
+                        if let Some(multirange) = self.as_multirange() {
+                            multirange.hash(state);
+                        }
+                    }
                     TAG_INET => {
                         if let Some(inet) = self.as_inet() {
                             inet.hash(state);
@@ -4153,6 +4254,10 @@ impl std::fmt::Debug for Value {
                     TAG_RANGE => {
                         let range = &*(heap.ptr as *const Range);
                         write!(f, "Value::range({:?})", range)
+                    }
+                    TAG_MULTIRANGE => {
+                        let multirange = &*(heap.ptr as *const Multirange);
+                        write!(f, "Value::multirange({:?})", multirange)
                     }
                     TAG_INET => {
                         let inet = &*(heap.ptr as *const network::InetAddr);
@@ -4661,6 +4766,33 @@ impl fmt::Display for Value {
                             "{}{},{}{}",
                             lower_bound, lower_val, upper_val, upper_bound
                         )
+                    }
+                    TAG_MULTIRANGE => {
+                        let multirange = &*(heap.ptr as *const Multirange);
+                        write!(f, "{{")?;
+                        for (i, range) in multirange.ranges.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ",")?;
+                            }
+                            let lower_bound = if range.lower_inclusive { "[" } else { "(" };
+                            let upper_bound = if range.upper_inclusive { "]" } else { ")" };
+                            let lower_val = range
+                                .lower
+                                .as_ref()
+                                .map(|v| format!("{}", v))
+                                .unwrap_or_default();
+                            let upper_val = range
+                                .upper
+                                .as_ref()
+                                .map(|v| format!("{}", v))
+                                .unwrap_or_default();
+                            write!(
+                                f,
+                                "{}{},{}{}",
+                                lower_bound, lower_val, upper_val, upper_bound
+                            )?;
+                        }
+                        write!(f, "}}")
                     }
                     TAG_INET => {
                         let inet = &*(heap.ptr as *const network::InetAddr);

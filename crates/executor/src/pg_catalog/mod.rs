@@ -29,6 +29,7 @@ fn data_type_to_oid(dt: &DataType) -> i64 {
         DataType::Serial | DataType::BigSerial => 23,
         DataType::Vector(_) => 16389,
         DataType::Range(_) => 3904,
+        DataType::Multirange(_) => 4451,
         DataType::Inet | DataType::Cidr => 869,
         DataType::Point => 600,
         DataType::PgBox => 603,

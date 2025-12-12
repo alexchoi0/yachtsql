@@ -162,6 +162,12 @@ pub enum Column {
         range_type: yachtsql_core::types::RangeType,
     },
 
+    Multirange {
+        data: Vec<yachtsql_core::types::Multirange>,
+        nulls: NullBitmap,
+        multirange_type: yachtsql_core::types::MultirangeType,
+    },
+
     IPv4 {
         data: Vec<yachtsql_core::types::IPv4Addr>,
         nulls: NullBitmap,
@@ -356,6 +362,11 @@ impl Column {
                 nulls: NullBitmap::new_valid(0),
                 range_type: range_type.clone(),
             },
+            DataType::Multirange(multirange_type) => Column::Multirange {
+                data: Vec::with_capacity(capacity),
+                nulls: NullBitmap::new_valid(0),
+                multirange_type: multirange_type.clone(),
+            },
             DataType::IPv4 => Column::IPv4 {
                 data: Vec::with_capacity(capacity),
                 nulls: NullBitmap::new_valid(0),
@@ -458,6 +469,9 @@ impl Column {
                 ..
             } => DataType::Map(Box::new(key_type.clone()), Box::new(value_type.clone())),
             Column::Range { range_type, .. } => DataType::Range(range_type.clone()),
+            Column::Multirange {
+                multirange_type, ..
+            } => DataType::Multirange(multirange_type.clone()),
             Column::IPv4 { .. } => DataType::IPv4,
             Column::IPv6 { .. } => DataType::IPv6,
             Column::Date32 { .. } => DataType::Date32,
@@ -512,6 +526,7 @@ impl Column {
             Column::GeoPolygon { nulls, .. } => nulls.len(),
             Column::GeoMultiPolygon { nulls, .. } => nulls.len(),
             Column::FixedString { nulls, .. } => nulls.len(),
+            Column::Multirange { nulls, .. } => nulls.len(),
         }
     }
 
@@ -562,6 +577,7 @@ impl Column {
             Column::GeoPolygon { nulls, .. } => nulls,
             Column::GeoMultiPolygon { nulls, .. } => nulls,
             Column::FixedString { nulls, .. } => nulls,
+            Column::Multirange { nulls, .. } => nulls,
         }
     }
 
@@ -1233,6 +1249,19 @@ impl Column {
                     )))
                 }
             }
+            Column::Multirange { data, nulls, .. } => {
+                if let Some(v) = value.as_multirange() {
+                    data.push(v.clone());
+                    nulls.push(true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
         }
     }
 
@@ -1438,6 +1467,17 @@ impl Column {
                 length,
             } => {
                 data.push(FixedStringData::new(vec![], *length));
+                nulls.push(false);
+            }
+            Column::Multirange {
+                data,
+                nulls,
+                multirange_type,
+            } => {
+                data.push(yachtsql_core::types::Multirange {
+                    multirange_type: multirange_type.clone(),
+                    ranges: Vec::new(),
+                });
                 nulls.push(false);
             }
         }
@@ -2040,6 +2080,19 @@ impl Column {
                     )))
                 }
             }
+            Column::Multirange { data, nulls, .. } => {
+                if let Some(v) = value.as_multirange() {
+                    data[index] = v.clone();
+                    nulls.set(index, true);
+                    Ok(())
+                } else {
+                    Err(Error::invalid_query(format!(
+                        "type mismatch: expected {}, got {}",
+                        self.data_type(),
+                        value.data_type()
+                    )))
+                }
+            }
         }
     }
 
@@ -2242,6 +2295,17 @@ impl Column {
                 data[index] = FixedStringData::new(vec![], *length);
                 nulls.set(index, false);
             }
+            Column::Multirange {
+                data,
+                nulls,
+                multirange_type,
+            } => {
+                data[index] = yachtsql_core::types::Multirange {
+                    multirange_type: multirange_type.clone(),
+                    ranges: Vec::new(),
+                };
+                nulls.set(index, false);
+            }
         }
         Ok(())
     }
@@ -2411,6 +2475,10 @@ impl Column {
                 data.clear();
                 *nulls = NullBitmap::new_valid(0);
             }
+            Column::Multirange { data, nulls, .. } => {
+                data.clear();
+                *nulls = NullBitmap::new_valid(0);
+            }
         }
     }
 
@@ -2472,6 +2540,7 @@ impl Column {
                 Ok(Value::geo_multipolygon(data[index].clone()))
             }
             Column::FixedString { data, .. } => Ok(Value::fixed_string(data[index].clone())),
+            Column::Multirange { data, .. } => Ok(Value::multirange(data[index].clone())),
         }
     }
 
@@ -2685,6 +2754,15 @@ impl Column {
                 nulls,
                 length: *length,
             }),
+            Column::Multirange {
+                data,
+                multirange_type,
+                ..
+            } => Ok(Column::Multirange {
+                data: data[start..start + len].to_vec(),
+                nulls,
+                multirange_type: multirange_type.clone(),
+            }),
         }
     }
 
@@ -2841,6 +2919,18 @@ impl Column {
                     data: gathered_data,
                     nulls,
                     length: *length,
+                })
+            }
+            Column::Multirange {
+                data,
+                multirange_type,
+                ..
+            } => {
+                let gathered_data = indices.iter().map(|&idx| data[idx].clone()).collect();
+                Ok(Column::Multirange {
+                    data: gathered_data,
+                    nulls,
+                    multirange_type: multirange_type.clone(),
                 })
             }
         }

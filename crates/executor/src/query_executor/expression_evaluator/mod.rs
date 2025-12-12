@@ -10518,6 +10518,7 @@ impl<'a> ExpressionEvaluator<'a> {
             DataType::Json => Some("json"),
             DataType::Vector(_) => Some("vector"),
             DataType::Range(_) => Some("range"),
+            DataType::Multirange(_) => Some("multirange"),
             DataType::Struct(_) => Some("struct"),
             DataType::Geography => Some("geography"),
             DataType::Point

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use yachtsql_core::error::{Error, Result};
-use yachtsql_core::types::{DataType, Value};
+use yachtsql_core::types::{DataType, MultirangeType, Value};
 use yachtsql_parser::DialectType;
 use yachtsql_storage::{Field, Row, Schema, Storage, TableIndexOps};
 
@@ -58,6 +58,14 @@ pub fn data_type_to_postgres_name(data_type: &DataType) -> String {
             RangeType::TsRange => "TSRANGE".to_string(),
             RangeType::TsTzRange => "TSTZRANGE".to_string(),
             RangeType::DateRange => "DATERANGE".to_string(),
+        },
+        DataType::Multirange(mr_type) => match mr_type {
+            MultirangeType::Int4Multirange => "INT4MULTIRANGE".to_string(),
+            MultirangeType::Int8Multirange => "INT8MULTIRANGE".to_string(),
+            MultirangeType::NumMultirange => "NUMMULTIRANGE".to_string(),
+            MultirangeType::TsMultirange => "TSMULTIRANGE".to_string(),
+            MultirangeType::TsTzMultirange => "TSTZMULTIRANGE".to_string(),
+            MultirangeType::DateMultirange => "DATEMULTIRANGE".to_string(),
         },
         DataType::Geography => "GEOGRAPHY".to_string(),
         DataType::Unknown => "UNKNOWN".to_string(),

@@ -45,6 +45,12 @@ impl ProjectionWithExprExec {
                 | CastDataType::TsRange
                 | CastDataType::TsTzRange
                 | CastDataType::DateRange
+                | CastDataType::Int4Multirange
+                | CastDataType::Int8Multirange
+                | CastDataType::NumMultirange
+                | CastDataType::TsMultirange
+                | CastDataType::TsTzMultirange
+                | CastDataType::DateMultirange
                 | CastDataType::Point
                 | CastDataType::PgBox
                 | CastDataType::Circle
@@ -197,6 +203,12 @@ impl ProjectionWithExprExec {
                     "TSRANGE" => CastDataType::TsRange,
                     "TSTZRANGE" => CastDataType::TsTzRange,
                     "DATERANGE" => CastDataType::DateRange,
+                    "INT4MULTIRANGE" => CastDataType::Int4Multirange,
+                    "INT8MULTIRANGE" => CastDataType::Int8Multirange,
+                    "NUMMULTIRANGE" => CastDataType::NumMultirange,
+                    "TSMULTIRANGE" => CastDataType::TsMultirange,
+                    "TSTZMULTIRANGE" => CastDataType::TsTzMultirange,
+                    "DATEMULTIRANGE" => CastDataType::DateMultirange,
                     "POINT" => CastDataType::Point,
                     "BOX" => CastDataType::PgBox,
                     "CIRCLE" => CastDataType::Circle,

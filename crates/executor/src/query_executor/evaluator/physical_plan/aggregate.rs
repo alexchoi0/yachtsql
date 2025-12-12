@@ -394,6 +394,24 @@ impl AggregateExec {
                     CastDataType::DateRange => {
                         DataType::Range(yachtsql_core::types::RangeType::DateRange)
                     }
+                    CastDataType::Int4Multirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::Int4Multirange)
+                    }
+                    CastDataType::Int8Multirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::Int8Multirange)
+                    }
+                    CastDataType::NumMultirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::NumMultirange)
+                    }
+                    CastDataType::TsMultirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::TsMultirange)
+                    }
+                    CastDataType::TsTzMultirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::TsTzMultirange)
+                    }
+                    CastDataType::DateMultirange => {
+                        DataType::Multirange(yachtsql_core::types::MultirangeType::DateMultirange)
+                    }
                     CastDataType::Point => DataType::Point,
                     CastDataType::PgBox => DataType::PgBox,
                     CastDataType::Circle => DataType::Circle,
