@@ -228,6 +228,8 @@ pub enum FunctionName {
 
     Coalesce,
     Nullif,
+    Nullifzero,
+    Zeroifnull,
     Ifnull,
     Nvl,
     Isnull,
@@ -1323,6 +1325,8 @@ impl FunctionName {
 
             "COALESCE" => Self::Coalesce,
             "NULLIF" => Self::Nullif,
+            "NULLIFZERO" => Self::Nullifzero,
+            "ZEROIFNULL" => Self::Zeroifnull,
             "IFNULL" => Self::Ifnull,
             "NVL" => Self::Nvl,
             "ISNULL" => Self::Isnull,
@@ -2529,6 +2533,8 @@ impl FunctionName {
 
             Self::Coalesce => "COALESCE",
             Self::Nullif => "NULLIF",
+            Self::Nullifzero => "NULLIFZERO",
+            Self::Zeroifnull => "ZEROIFNULL",
             Self::Ifnull => "IFNULL",
             Self::Nvl => "NVL",
             Self::Isnull => "ISNULL",

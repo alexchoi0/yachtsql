@@ -3677,7 +3677,7 @@ impl QueryExecutor {
         }
     }
 
-    fn evaluate_constant_expr(&self, expr: &sqlparser::ast::Expr) -> Result<Value> {
+    fn evaluate_constant_expr(&mut self, expr: &sqlparser::ast::Expr) -> Result<Value> {
         use sqlparser::ast::{
             BinaryOperator, Expr as SqlExpr, UnaryOperator, Value as SqlValue, ValueWithSpan,
         };
@@ -3772,6 +3772,19 @@ impl QueryExecutor {
             }
             SqlExpr::Nested(inner) => self.evaluate_constant_expr(inner),
             SqlExpr::Subquery(query) => self.evaluate_scalar_subquery(query),
+            SqlExpr::Function(_) => {
+                let sql = format!("SELECT {}", expr);
+                let result = self.execute_sql(&sql)?;
+                if result.num_rows() == 0 {
+                    return Err(Error::internal(
+                        "Function expression returned no rows".to_string(),
+                    ));
+                }
+                let column = result.column(0).ok_or_else(|| {
+                    Error::internal("Function expression returned no columns".to_string())
+                })?;
+                column.get(0)
+            }
             _ => Err(Error::unsupported_feature(format!(
                 "Unsupported expression type for constant evaluation: {:?}",
                 expr

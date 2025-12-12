@@ -10,6 +10,7 @@ pub(super) fn register(registry: &mut FunctionRegistry) {
     register_sql_standard(registry);
     register_oracle_functions(registry);
     register_mysql_functions(registry);
+    register_bigquery_functions(registry);
     register_predicates(registry);
 }
 
@@ -152,6 +153,63 @@ fn register_mysql_functions(registry: &mut FunctionRegistry) {
                     Ok(Value::bool_val(args[0].is_null()))
                 } else if args[0].is_null() {
                     Ok(args[1].clone())
+                } else {
+                    Ok(args[0].clone())
+                }
+            },
+        }),
+    );
+}
+
+fn register_bigquery_functions(registry: &mut FunctionRegistry) {
+    registry.register_scalar(
+        "NULLIFZERO".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "NULLIFZERO".to_string(),
+            arg_types: vec![],
+            return_type: DataType::Unknown,
+            variadic: false,
+            evaluator: |args| {
+                if args.len() != 1 {
+                    return Err(Error::invalid_query(
+                        "NULLIFZERO requires exactly 1 argument".to_string(),
+                    ));
+                }
+
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(i) = args[0].as_i64() {
+                    if i == 0 {
+                        return Ok(Value::null());
+                    }
+                }
+                if let Some(f) = args[0].as_f64() {
+                    if f == 0.0 {
+                        return Ok(Value::null());
+                    }
+                }
+                Ok(args[0].clone())
+            },
+        }),
+    );
+
+    registry.register_scalar(
+        "ZEROIFNULL".to_string(),
+        Rc::new(ScalarFunctionImpl {
+            name: "ZEROIFNULL".to_string(),
+            arg_types: vec![],
+            return_type: DataType::Unknown,
+            variadic: false,
+            evaluator: |args| {
+                if args.len() != 1 {
+                    return Err(Error::invalid_query(
+                        "ZEROIFNULL requires exactly 1 argument".to_string(),
+                    ));
+                }
+
+                if args[0].is_null() {
+                    Ok(Value::int64(0))
                 } else {
                     Ok(args[0].clone())
                 }
