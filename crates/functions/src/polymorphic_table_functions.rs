@@ -63,14 +63,17 @@ impl PolymorphicTableFunction for UnnestFunction {
                 if val.as_array().is_some() {
                     columns.push(format!("col{}", i + 1));
                     types.push(DataType::Unknown);
+                } else if let Some(mr) = val.as_multirange() {
+                    columns.push(format!("col{}", i + 1));
+                    types.push(DataType::Range(mr.multirange_type.element_range_type()));
                 } else {
                     return Err(Error::InvalidQuery(
-                        "UNNEST requires array arguments".to_string(),
+                        "UNNEST requires array or multirange arguments".to_string(),
                     ));
                 }
             } else {
                 return Err(Error::InvalidQuery(
-                    "UNNEST requires array arguments".to_string(),
+                    "UNNEST requires array or multirange arguments".to_string(),
                 ));
             }
         }
@@ -91,14 +94,18 @@ impl PolymorphicTableFunction for UnnestFunction {
             if let PTFArgument::Scalar(val) = arg {
                 if let Some(arr) = val.as_array() {
                     arrays.push(arr.to_vec());
+                } else if let Some(mr) = val.as_multirange() {
+                    let range_values: Vec<Value> =
+                        mr.ranges.iter().map(|r| Value::range(r.clone())).collect();
+                    arrays.push(range_values);
                 } else {
                     return Err(Error::InvalidQuery(
-                        "UNNEST requires array arguments".to_string(),
+                        "UNNEST requires array or multirange arguments".to_string(),
                     ));
                 }
             } else {
                 return Err(Error::InvalidQuery(
-                    "UNNEST requires array arguments".to_string(),
+                    "UNNEST requires array or multirange arguments".to_string(),
                 ));
             }
         }

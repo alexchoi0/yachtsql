@@ -387,6 +387,24 @@ fn cast_data_type_to_data_type(cast_type: &yachtsql_optimizer::expr::CastDataTyp
         yachtsql_optimizer::expr::CastDataType::DateRange => {
             DataType::Range(yachtsql_core::types::RangeType::DateRange)
         }
+        yachtsql_optimizer::expr::CastDataType::Int4Multirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::Int4Multirange)
+        }
+        yachtsql_optimizer::expr::CastDataType::Int8Multirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::Int8Multirange)
+        }
+        yachtsql_optimizer::expr::CastDataType::NumMultirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::NumMultirange)
+        }
+        yachtsql_optimizer::expr::CastDataType::TsMultirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::TsMultirange)
+        }
+        yachtsql_optimizer::expr::CastDataType::TsTzMultirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::TsTzMultirange)
+        }
+        yachtsql_optimizer::expr::CastDataType::DateMultirange => {
+            DataType::Multirange(yachtsql_core::types::MultirangeType::DateMultirange)
+        }
         yachtsql_optimizer::expr::CastDataType::Point => DataType::Point,
         yachtsql_optimizer::expr::CastDataType::PgBox => DataType::PgBox,
         yachtsql_optimizer::expr::CastDataType::Circle => DataType::Circle,
@@ -1289,6 +1307,90 @@ pub fn perform_cast(
                 })
             }
         }
+        CastDataType::Int4Multirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(
+                    s,
+                    yachtsql_core::types::MultirangeType::Int4Multirange,
+                )
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "INT4MULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
+        CastDataType::Int8Multirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(
+                    s,
+                    yachtsql_core::types::MultirangeType::Int8Multirange,
+                )
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "INT8MULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
+        CastDataType::NumMultirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(s, yachtsql_core::types::MultirangeType::NumMultirange)
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "NUMMULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
+        CastDataType::TsMultirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(s, yachtsql_core::types::MultirangeType::TsMultirange)
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "TSMULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
+        CastDataType::TsTzMultirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(
+                    s,
+                    yachtsql_core::types::MultirangeType::TsTzMultirange,
+                )
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "TSTZMULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
+        CastDataType::DateMultirange => {
+            if let Some(multirange) = value.as_multirange() {
+                Ok(Value::multirange(multirange.clone()))
+            } else if let Some(s) = value.as_str() {
+                parse_multirange_from_string(
+                    s,
+                    yachtsql_core::types::MultirangeType::DateMultirange,
+                )
+            } else {
+                Err(Error::TypeMismatch {
+                    expected: "DATEMULTIRANGE".to_string(),
+                    actual: format!("{:?}", value.data_type()),
+                })
+            }
+        }
         CastDataType::Point => {
             if value.as_point().is_some() {
                 Ok(value.clone())
@@ -1580,6 +1682,125 @@ fn parse_range_bound(s: &str, range_type: &yachtsql_core::types::RangeType) -> R
             Ok(Value::timestamp(Utc.from_utc_datetime(&dt)))
         }
     }
+}
+
+fn parse_multirange_from_string(
+    s: &str,
+    multirange_type: yachtsql_core::types::MultirangeType,
+) -> Result<Value> {
+    use yachtsql_core::types::{Multirange, Range};
+
+    let s = s.trim();
+
+    if s == "{}" || s.is_empty() {
+        return Ok(Value::multirange(Multirange {
+            multirange_type,
+            ranges: vec![],
+        }));
+    }
+
+    if !s.starts_with('{') || !s.ends_with('}') {
+        return Err(Error::InvalidOperation(format!(
+            "Invalid multirange format (must start with {{ and end with }}): '{}'",
+            s
+        )));
+    }
+
+    let inner = &s[1..s.len() - 1];
+    let range_type = multirange_type.element_range_type();
+    let mut ranges = Vec::new();
+    let mut current_range = String::new();
+    let mut depth = 0;
+
+    for c in inner.chars() {
+        match c {
+            '[' | '(' => {
+                depth += 1;
+                current_range.push(c);
+            }
+            ']' | ')' => {
+                current_range.push(c);
+                depth -= 1;
+            }
+            ',' if depth == 0 => {
+                if !current_range.is_empty() {
+                    let range = parse_single_range(&current_range.trim(), range_type.clone())?;
+                    ranges.push(range);
+                    current_range.clear();
+                }
+            }
+            _ => {
+                current_range.push(c);
+            }
+        }
+    }
+
+    if !current_range.is_empty() {
+        let range = parse_single_range(&current_range.trim(), range_type)?;
+        ranges.push(range);
+    }
+
+    Ok(Value::multirange(Multirange {
+        multirange_type,
+        ranges,
+    }))
+}
+
+fn parse_single_range(
+    s: &str,
+    range_type: yachtsql_core::types::RangeType,
+) -> Result<yachtsql_core::types::Range> {
+    use yachtsql_core::types::Range;
+
+    let s = s.trim();
+
+    if s == "empty" || s.is_empty() {
+        return Ok(Range {
+            range_type,
+            lower: None,
+            upper: None,
+            lower_inclusive: false,
+            upper_inclusive: false,
+        });
+    }
+
+    if s.len() < 3 {
+        return Err(Error::InvalidOperation(format!(
+            "Invalid range format: '{}'",
+            s
+        )));
+    }
+
+    let lower_inclusive = s.starts_with('[');
+    let upper_inclusive = s.ends_with(']');
+
+    let inner = &s[1..s.len() - 1];
+    let comma_pos = inner.find(',').ok_or_else(|| {
+        Error::InvalidOperation(format!("Invalid range format (no comma): '{}'", s))
+    })?;
+
+    let lower_str = inner[..comma_pos].trim();
+    let upper_str = inner[comma_pos + 1..].trim();
+
+    let lower = if lower_str.is_empty() {
+        None
+    } else {
+        Some(parse_range_bound(lower_str, &range_type)?)
+    };
+
+    let upper = if upper_str.is_empty() {
+        None
+    } else {
+        Some(parse_range_bound(upper_str, &range_type)?)
+    };
+
+    Ok(Range {
+        range_type,
+        lower,
+        upper,
+        lower_inclusive,
+        upper_inclusive,
+    })
 }
 
 pub fn parse_vector_from_string(s: &str) -> Result<Value> {

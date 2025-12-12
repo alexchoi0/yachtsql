@@ -1198,6 +1198,24 @@ impl DdlExecutor for QueryExecutor {
                     "TSRANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::TsRange)),
                     "TSTZRANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::TsTzRange)),
                     "DATERANGE" => Ok(DataType::Range(yachtsql_core::types::RangeType::DateRange)),
+                    "INT4MULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::Int4Multirange,
+                    )),
+                    "INT8MULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::Int8Multirange,
+                    )),
+                    "NUMMULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::NumMultirange,
+                    )),
+                    "TSMULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::TsMultirange,
+                    )),
+                    "TSTZMULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::TsTzMultirange,
+                    )),
+                    "DATEMULTIRANGE" => Ok(DataType::Multirange(
+                        yachtsql_core::types::MultirangeType::DateMultirange,
+                    )),
 
                     _ => Ok(DataType::Custom(type_name)),
                 }

@@ -360,7 +360,6 @@ fn test_range_intersect_agg() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_multirange_literal() {
     let mut executor = create_executor();
     let result = executor
@@ -370,11 +369,10 @@ fn test_multirange_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_multirange_unnest() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT UNNEST('{[1,5), [8,12)}'::INT4MULTIRANGE)")
+        .execute_sql("SELECT * FROM UNNEST('{[1,5), [8,12)}'::INT4MULTIRANGE)")
         .unwrap();
     assert_eq!(result.num_rows(), 2);
 }
