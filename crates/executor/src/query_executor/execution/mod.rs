@@ -616,6 +616,9 @@ impl QueryExecutor {
                 CustomStatement::DisableRowMovement { table_name } => {
                     self.execute_disable_row_movement(table_name)
                 }
+                CustomStatement::CreateRule { .. }
+                | CustomStatement::DropRule { .. }
+                | CustomStatement::AlterRuleRename { .. } => Self::empty_result(),
             };
         }
 

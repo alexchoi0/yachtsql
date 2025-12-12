@@ -362,6 +362,24 @@ impl Parser {
             return Ok(Some(Statement::Custom(custom_stmt)));
         }
 
+        if self.dialect_type == DialectType::PostgreSQL
+            && let Some(custom_stmt) = CustomStatementParser::parse_create_rule(sql)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.dialect_type == DialectType::PostgreSQL
+            && let Some(custom_stmt) = CustomStatementParser::parse_drop_rule(sql)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
+        if self.dialect_type == DialectType::PostgreSQL
+            && let Some(custom_stmt) = CustomStatementParser::parse_alter_rule(sql)?
+        {
+            return Ok(Some(Statement::Custom(custom_stmt)));
+        }
+
         let tokens = Tokenizer::new(&*self.dialect, sql)
             .tokenize()
             .map_err(|e| Error::parse_error(format!("Tokenization error: {}", e)))?;
@@ -1916,6 +1934,22 @@ impl Parser {
 
     fn is_drop_snapshot_table(&self, tokens: &[&Token]) -> bool {
         self.matches_keyword_sequence(tokens, &["DROP", "SNAPSHOT", "TABLE"])
+    }
+
+    #[allow(dead_code)]
+    fn is_create_rule(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["CREATE", "RULE"])
+            || self.matches_keyword_sequence(tokens, &["CREATE", "OR", "REPLACE", "RULE"])
+    }
+
+    #[allow(dead_code)]
+    fn is_drop_rule(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["DROP", "RULE"])
+    }
+
+    #[allow(dead_code)]
+    fn is_alter_rule(&self, tokens: &[&Token]) -> bool {
+        self.matches_keyword_sequence(tokens, &["ALTER", "RULE"])
     }
 
     fn rewrite_json_item_methods(&self, sql: &str) -> Result<String> {
