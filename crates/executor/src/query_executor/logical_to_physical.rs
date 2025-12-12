@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use regex::Regex;
 use yachtsql_core::error::{Error, Result};
+use yachtsql_core::types::DataType;
 use yachtsql_functions::dialects::clickhouse::clickhouse_aggregate_functions;
 use yachtsql_functions::dialects::core_aggregate_functions;
 use yachtsql_ir::FunctionName;
@@ -971,8 +972,8 @@ impl LogicalToPhysicalPlanner {
                             }
                         }
                         "UNTUPLE" => {
-                            if let Some(arg) = args.first() {
-                                let expanded = Self::expand_untuple(arg);
+                            if let Some(tuple_arg) = args.first() {
+                                let expanded = Self::expand_untuple(tuple_arg, schema);
                                 result.extend(expanded);
                             } else {
                                 result.push((expr.clone(), alias.clone()));
@@ -1041,43 +1042,55 @@ impl LogicalToPhysicalPlanner {
         result
     }
 
-    fn expand_untuple(expr: &Expr) -> Vec<(Expr, Option<String>)> {
-        match expr {
-            Expr::Tuple(elements) => elements
-                .iter()
-                .enumerate()
-                .map(|(i, e)| (e.clone(), Some(format!("_{}", i + 1))))
-                .collect(),
-            Expr::Function {
-                name: FunctionName::NamedTuple,
-                args,
-            } => {
-                let mut result = Vec::new();
-                let mut iter = args.iter();
-                while let (Some(name_expr), Some(value_expr)) = (iter.next(), iter.next()) {
-                    let alias = if let Expr::Literal(LiteralValue::String(name)) = name_expr {
-                        Some(name.clone())
-                    } else {
-                        None
-                    };
-                    result.push((value_expr.clone(), alias));
+    fn expand_untuple(
+        tuple_arg: &Expr,
+        schema: &yachtsql_storage::Schema,
+    ) -> Vec<(Expr, Option<String>)> {
+        let mut result = Vec::new();
+
+        match tuple_arg {
+            Expr::Tuple(elements) => {
+                for (i, elem) in elements.iter().enumerate() {
+                    result.push((elem.clone(), Some(format!("{}", i + 1))));
                 }
-                result
             }
             Expr::Column { name, table } => {
-                vec![(
-                    Expr::Function {
-                        name: FunctionName::Untuple,
-                        args: vec![Expr::Column {
-                            name: name.clone(),
-                            table: table.clone(),
-                        }],
-                    },
-                    None,
-                )]
+                if let Some(field) = schema.fields().iter().find(|f| &f.name == name) {
+                    if let DataType::Struct(fields) = &field.data_type {
+                        for (i, struct_field) in fields.iter().enumerate() {
+                            let tuple_element_expr = Expr::Function {
+                                name: FunctionName::TupleElement,
+                                args: vec![
+                                    tuple_arg.clone(),
+                                    Expr::Literal(LiteralValue::Int64((i + 1) as i64)),
+                                ],
+                            };
+                            result.push((tuple_element_expr, Some(struct_field.name.clone())));
+                        }
+                    }
+                }
             }
-            _ => vec![(expr.clone(), None)],
+            _ => {
+                if let Some(tuple_type) =
+                    ProjectionWithExprExec::infer_expr_type_with_schema(tuple_arg, schema)
+                {
+                    if let DataType::Struct(fields) = tuple_type {
+                        for (i, struct_field) in fields.iter().enumerate() {
+                            let tuple_element_expr = Expr::Function {
+                                name: FunctionName::TupleElement,
+                                args: vec![
+                                    tuple_arg.clone(),
+                                    Expr::Literal(LiteralValue::Int64((i + 1) as i64)),
+                                ],
+                            };
+                            result.push((tuple_element_expr, Some(struct_field.name.clone())));
+                        }
+                    }
+                }
+            }
         }
+
+        result
     }
 
     fn expand_columns_regex(
