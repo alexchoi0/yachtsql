@@ -2238,9 +2238,42 @@ impl QueryExecutor {
             _ => {
                 if let Some(proc_def) = self.session.get_procedure(name).cloned() {
                     debug_eprintln!("[procedure] Executing user-defined procedure: {}", name);
+
+                    let param_map: std::collections::HashMap<String, String> = proc_def
+                        .parameters
+                        .iter()
+                        .zip(args.iter())
+                        .map(|(param, arg)| {
+                            let value_str = match arg {
+                                sqlparser::ast::Value::Number(n, _) => n.clone(),
+                                sqlparser::ast::Value::SingleQuotedString(s) => {
+                                    format!("'{}'", s)
+                                }
+                                sqlparser::ast::Value::DoubleQuotedString(s) => {
+                                    format!("\"{}\"", s)
+                                }
+                                sqlparser::ast::Value::Boolean(b) => b.to_string(),
+                                sqlparser::ast::Value::Null => "NULL".to_string(),
+                                _ => arg.to_string(),
+                            };
+                            (param.name.to_uppercase(), value_str)
+                        })
+                        .collect();
+
                     let mut last_result = Self::empty_result()?;
                     for stmt in &proc_def.body {
-                        let sql = stmt.to_string();
+                        let mut sql = stmt.to_string();
+
+                        for (param_name, value) in &param_map {
+                            let pattern = regex::Regex::new(&format!(
+                                r"(?i)\b{}\b",
+                                regex::escape(param_name)
+                            ))
+                            .unwrap();
+                            sql = pattern.replace_all(&sql, value.as_str()).to_string();
+                        }
+
+                        debug_eprintln!("[procedure] Executing SQL: {}", sql);
                         last_result = self.execute_sql(&sql)?;
                     }
                     Ok(last_result)

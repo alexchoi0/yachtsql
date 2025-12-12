@@ -49,6 +49,9 @@ lazy_static! {
     static ref RE_COLUMNS_APPLY: Regex =
         Regex::new(r"(?i)COLUMNS\s*\(\s*'([^']+)'\s*\)((?:\s+APPLY\s+(?:\([^)]+\)|\S+))+)").unwrap();
     static ref RE_APPLY_PART: Regex = Regex::new(r"(?i)\bAPPLY\s+((?:\([^)]+\)|\S+))").unwrap();
+    static ref RE_BIGQUERY_PROC_BEGIN: Regex = Regex::new(
+        r"(?is)(CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+\S+\s*\([^)]*\)\s*)(BEGIN\b)"
+    ).unwrap();
 }
 
 pub struct Parser {
@@ -216,11 +219,10 @@ impl Parser {
             sql_without_no_inherit
         };
 
-        let sql_with_rewritten_procedures = if matches!(self.dialect_type, DialectType::PostgreSQL)
-        {
-            Self::rewrite_procedure_dollar_quotes(&sql_without_exclude)
-        } else {
-            sql_without_exclude
+        let sql_with_rewritten_procedures = match self.dialect_type {
+            DialectType::PostgreSQL => Self::rewrite_procedure_dollar_quotes(&sql_without_exclude),
+            DialectType::BigQuery => Self::rewrite_bigquery_procedure_begin(&sql_without_exclude),
+            DialectType::ClickHouse => sql_without_exclude,
         };
 
         let rewritten_sql = self.rewrite_json_item_methods(&sql_with_rewritten_procedures)?;
@@ -644,6 +646,12 @@ impl Parser {
             }
             None => format!("{} AS {}{}", prefix.trim(), body_trimmed, after_language),
         }
+    }
+
+    fn rewrite_bigquery_procedure_begin(sql: &str) -> String {
+        RE_BIGQUERY_PROC_BEGIN
+            .replace_all(sql, "${1}AS ${2}")
+            .to_string()
     }
 
     fn strip_codec_clauses(sql: &str) -> String {
