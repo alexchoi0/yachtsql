@@ -2,6 +2,10 @@ mod cursor;
 mod ddl;
 mod dispatcher;
 mod dml;
+pub mod json_reader;
+pub mod json_writer;
+pub mod parquet_reader;
+pub mod parquet_writer;
 mod query;
 mod session;
 mod transaction;
@@ -4298,7 +4302,7 @@ impl QueryExecutor {
         _overwrite: bool,
         _header: bool,
         _field_delimiter: Option<char>,
-        _compression: Option<String>,
+        compression: Option<String>,
         query: &str,
     ) -> Result<Table> {
         use yachtsql_parser::validator::ExportFormat;
@@ -4310,22 +4314,46 @@ impl QueryExecutor {
             query
         );
 
-        let _query_result = self.execute_sql(query)?;
+        let query_result = self.execute_sql(query)?;
 
-        let format_str = match format {
-            ExportFormat::Csv => "CSV",
-            ExportFormat::Json => "JSON",
-            ExportFormat::Parquet => "PARQUET",
-            ExportFormat::Avro => "AVRO",
+        let rows_exported = match format {
+            ExportFormat::Parquet => {
+                let path = parquet_writer::normalize_uri_to_path(uri)?;
+                debug_eprintln!("[executor::export_data] Writing parquet to: {}", path);
+                parquet_writer::write_parquet_file(&path, &query_result, compression.as_deref())?
+            }
+            ExportFormat::Csv => {
+                debug_eprintln!("[executor::export_data] CSV export (stub) to: {}", uri);
+                query_result.num_rows()
+            }
+            ExportFormat::Json => {
+                let path = json_writer::normalize_uri_to_path(uri)?;
+                debug_eprintln!("[executor::export_data] Writing JSON to: {}", path);
+                json_writer::write_json_file(&path, &query_result)?
+            }
+            ExportFormat::Avro => {
+                debug_eprintln!("[executor::export_data] AVRO export (stub) to: {}", uri);
+                query_result.num_rows()
+            }
         };
 
         debug_eprintln!(
-            "[executor::export_data] Exported data to {} in {} format",
-            uri,
-            format_str
+            "[executor::export_data] Exported {} rows to {}",
+            rows_exported,
+            uri
         );
 
-        Self::empty_result()
+        let schema =
+            yachtsql_storage::Schema::from_fields(vec![yachtsql_storage::Field::required(
+                "rows_exported".to_string(),
+                DataType::Int64,
+            )]);
+        Table::from_rows(
+            schema,
+            vec![yachtsql_storage::Row::from_values(vec![Value::int64(
+                rows_exported as i64,
+            )])],
+        )
     }
 
     fn execute_load_data(
@@ -4374,21 +4402,111 @@ impl QueryExecutor {
             let _ = self.execute_sql(&truncate_sql);
         }
 
-        let format_str = match format {
-            ExportFormat::Csv => "CSV",
-            ExportFormat::Json => "JSON",
-            ExportFormat::Parquet => "PARQUET",
-            ExportFormat::Avro => "AVRO",
-        };
+        let mut total_rows = 0usize;
 
-        debug_eprintln!(
-            "[executor::load_data] Would load {} file(s) in {} format into {}",
-            uris.len(),
-            format_str,
-            table_str
-        );
+        match format {
+            ExportFormat::Parquet => {
+                let (dataset_opt, tbl_name) = self.parse_table_name(&table_str);
+                let dataset_name = dataset_opt.unwrap_or_else(|| "default".to_string());
 
-        Self::empty_result()
+                for uri in uris {
+                    debug_eprintln!("[executor::load_data] Loading parquet file: {}", uri);
+
+                    let target_schema = {
+                        let storage = self.storage.borrow();
+                        let dataset = storage.get_dataset(&dataset_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Dataset '{}' not found", dataset_name))
+                        })?;
+                        let table = dataset.get_table(&tbl_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Table '{}' not found", tbl_name))
+                        })?;
+                        table.schema().clone()
+                    };
+
+                    let rows = parquet_reader::load_parquet_into_table(uri, &target_schema)?;
+                    let rows_count = rows.len();
+
+                    {
+                        let mut storage = self.storage.borrow_mut();
+                        let dataset = storage.get_dataset_mut(&dataset_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Dataset '{}' not found", dataset_name))
+                        })?;
+                        let table = dataset.get_table_mut(&tbl_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Table '{}' not found", tbl_name))
+                        })?;
+                        table.insert_rows(rows)?;
+                    }
+
+                    debug_eprintln!(
+                        "[executor::load_data] Loaded {} rows from {}",
+                        rows_count,
+                        uri
+                    );
+                    total_rows += rows_count;
+                }
+            }
+            ExportFormat::Csv => {
+                return Err(Error::unsupported_feature("CSV format loading"));
+            }
+            ExportFormat::Json => {
+                let (dataset_opt, tbl_name) = self.parse_table_name(&table_str);
+                let dataset_name = dataset_opt.unwrap_or_else(|| "default".to_string());
+
+                for uri in uris {
+                    debug_eprintln!("[executor::load_data] Loading JSON file: {}", uri);
+
+                    let target_schema = {
+                        let storage = self.storage.borrow();
+                        let dataset = storage.get_dataset(&dataset_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Dataset '{}' not found", dataset_name))
+                        })?;
+                        let table = dataset.get_table(&tbl_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Table '{}' not found", tbl_name))
+                        })?;
+                        table.schema().clone()
+                    };
+
+                    let rows = json_reader::load_json_into_table(uri, &target_schema)?;
+                    let rows_count = rows.len();
+
+                    {
+                        let mut storage = self.storage.borrow_mut();
+                        let dataset = storage.get_dataset_mut(&dataset_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Dataset '{}' not found", dataset_name))
+                        })?;
+                        let table = dataset.get_table_mut(&tbl_name).ok_or_else(|| {
+                            Error::TableNotFound(format!("Table '{}' not found", tbl_name))
+                        })?;
+                        table.insert_rows(rows)?;
+                    }
+
+                    debug_eprintln!(
+                        "[executor::load_data] Loaded {} rows from {}",
+                        rows_count,
+                        uri
+                    );
+                    total_rows += rows_count;
+                }
+            }
+            ExportFormat::Avro => {
+                return Err(Error::unsupported_feature("AVRO format loading"));
+            }
+        }
+
+        debug_eprintln!("[executor::load_data] Total rows loaded: {}", total_rows);
+
+        let schema =
+            yachtsql_storage::Schema::from_fields(vec![yachtsql_storage::Field::required(
+                "rows_loaded".to_string(),
+                DataType::Int64,
+            )]);
+        let result_table = Table::from_rows(
+            schema,
+            vec![yachtsql_storage::Row::from_values(vec![Value::int64(
+                total_rows as i64,
+            )])],
+        )?;
+        Ok(result_table)
     }
 }
 
