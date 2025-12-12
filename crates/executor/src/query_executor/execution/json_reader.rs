@@ -487,7 +487,12 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(schema.fields().len(), 3);
 
-        let tags = rows[0].values()[1].as_array().unwrap();
+        let tags_idx = schema
+            .fields()
+            .iter()
+            .position(|f| f.name == "tags")
+            .unwrap();
+        let tags = rows[0].values()[tags_idx].as_array().unwrap();
         assert_eq!(tags.len(), 2);
     }
 
