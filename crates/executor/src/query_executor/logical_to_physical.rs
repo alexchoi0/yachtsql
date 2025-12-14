@@ -1792,20 +1792,14 @@ impl LogicalToPhysicalPlanner {
                 let input_exec = self.plan_node_to_exec(input)?;
                 let input_schema = Rc::new(input_exec.schema().clone());
 
-                eprintln!("[logical_to_physical] Input expressions: {:?}", expressions);
                 let expanded_expressions =
                     Self::expand_columns_in_expressions(expressions, &input_schema);
-                eprintln!(
-                    "[logical_to_physical] Expanded expressions: {:?}",
-                    expanded_expressions
-                );
                 let resolved_expressions =
                     self.resolve_custom_type_in_expressions(&expanded_expressions);
 
                 let has_aggregates = resolved_expressions
                     .iter()
                     .any(|(e, _)| matches!(e, Expr::Aggregate { .. }));
-                eprintln!("[logical_to_physical] has_aggregates: {}", has_aggregates);
 
                 let final_input =
                     if has_aggregates && !matches!(input.as_ref(), PlanNode::Aggregate { .. }) {
@@ -1826,14 +1820,6 @@ impl LogicalToPhysicalPlanner {
 
                 let validation_schema: Rc<yachtsql_storage::Schema> =
                     if has_aggregates && !matches!(input.as_ref(), PlanNode::Aggregate { .. }) {
-                        eprintln!(
-                            "[logical_to_physical] Using input_schema for validation: {:?}",
-                            input_schema
-                                .fields()
-                                .iter()
-                                .map(|f| f.name.clone())
-                                .collect::<Vec<_>>()
-                        );
                         input_schema.clone()
                     } else {
                         Rc::new(final_input.schema().clone())

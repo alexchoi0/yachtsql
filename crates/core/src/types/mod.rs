@@ -5195,19 +5195,7 @@ mod tests {
     #[test]
     fn test_value_size() {
         use std::mem;
-        let value_size = mem::size_of::<Value>();
         let small_value_size = mem::size_of::<crate::types::small_value::SmallValue>();
-
-        eprintln!(
-            "[core::types] Current Value enum size: {} bytes",
-            value_size
-        );
-        eprintln!("[core::types] SmallValue size: {} bytes", small_value_size);
-        eprintln!(
-            "[core::types] Potential savings: {} bytes ({:.1}%)",
-            value_size.saturating_sub(small_value_size),
-            (value_size.saturating_sub(small_value_size) as f64 / value_size as f64) * 100.0
-        );
 
         assert_eq!(small_value_size, 16);
     }

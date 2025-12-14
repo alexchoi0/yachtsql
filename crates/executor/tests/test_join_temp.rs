@@ -22,7 +22,5 @@ fn main() {
         .execute_sql("INSERT INTO scores VALUES (1, 100), (2, NULL), (3, 150)")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT u.name, s.score FROM users u JOIN scores s ON u.id = s.user_id ORDER BY s.score DESC");
-
-    println!("Result: {:?}", result);
+    let _result = executor.execute_sql("SELECT u.name, s.score FROM users u JOIN scores s ON u.id = s.user_id ORDER BY s.score DESC");
 }

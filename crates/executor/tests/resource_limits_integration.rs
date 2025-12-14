@@ -212,13 +212,6 @@ fn test_end_to_end_query_with_resource_tracking() {
     assert!(result.is_ok(), "Query should succeed");
     let batch = result.unwrap();
 
-    println!(
-        "Query completed in {:.3}s: {} rows, {} cols",
-        elapsed.as_secs_f64(),
-        batch.num_rows(),
-        batch.num_columns()
-    );
-
     assert_eq!(batch.num_rows(), 500, "Should return 500 rows");
     assert!(elapsed.as_secs() < 5, "Should complete quickly");
 }
@@ -246,11 +239,6 @@ fn test_end_to_end_memory_with_large_strings() {
 
     match result {
         Ok(batch) => {
-            println!(
-                "Query succeeded: {} rows, {} cols",
-                batch.num_rows(),
-                batch.num_columns()
-            );
             assert!(batch.num_rows() <= 100);
         }
         Err(e) => {

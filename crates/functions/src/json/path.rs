@@ -815,12 +815,7 @@ mod tests {
     fn test_item_method_type() {
         let json = json!({"value": 42});
         let path = JsonPath::parse("$.value.type()").unwrap();
-        eprintln!(
-            "[functions::json::path] Parsed path segments: {:?}",
-            path.segments
-        );
         let result = path.evaluate(&json).unwrap();
-        eprintln!("[functions::json::path] Result: {:?}", result);
         assert_eq!(result, vec![json!("number")]);
 
         let json = json!({"value": "hello"});

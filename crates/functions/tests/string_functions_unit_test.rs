@@ -72,8 +72,6 @@ fn test_basic_string_functions() {
         .evaluate(&[Value::string("hello".to_string())])
         .unwrap();
     assert_eq!(result.as_str(), Some("olleh"));
-
-    println!("✓ All basic string function tests passed!");
 }
 
 #[test]
@@ -112,8 +110,6 @@ fn test_trim_chars_functions() {
         ])
         .unwrap();
     assert_eq!(result.as_str(), Some("hello"));
-
-    println!("✓ All TRIM_CHARS function tests passed!");
 }
 
 #[test]
@@ -147,8 +143,6 @@ fn test_substring_functions() {
         ])
         .unwrap();
     assert_eq!(result.as_str(), Some("world"));
-
-    println!("✓ All substring function tests passed!");
 }
 
 #[test]
@@ -174,8 +168,6 @@ fn test_character_functions() {
         .evaluate(&[Value::string("hello".to_string())])
         .unwrap();
     assert_eq!(result.as_i64(), Some(5));
-
-    println!("✓ All character function tests passed!");
 }
 
 #[test]
@@ -203,8 +195,6 @@ fn test_search_functions() {
         ])
         .unwrap();
     assert_eq!(result.as_i64(), Some(7));
-
-    println!("✓ All search function tests passed!");
 }
 
 #[test]
@@ -237,6 +227,4 @@ fn test_formatting_functions() {
         .evaluate(&[Value::string("hello".to_string())])
         .unwrap();
     assert_eq!(result.as_str(), Some("'hello'"));
-
-    println!("✓ All formatting function tests passed!");
 }

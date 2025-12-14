@@ -408,8 +408,6 @@ mod tests {
     #[test]
     fn test_backend_info() {
         let (name, width) = backend_info();
-        println!("SIMD Backend: {}", name);
-        println!("Vector Width: {} bytes", width);
 
         #[cfg(target_arch = "aarch64")]
         {

@@ -4059,12 +4059,7 @@ impl QueryExecutor {
     }
 
     fn has_aggregate_functions(&self, projection: &[SelectItem]) -> bool {
-        eprintln!(
-            "[has_aggregate_functions] checking {} items",
-            projection.len()
-        );
         for item in projection {
-            eprintln!("[has_aggregate_functions] item: {:?}", item);
             match item {
                 SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
                     if let Expr::Function(func) = expr {
@@ -4099,7 +4094,6 @@ impl QueryExecutor {
                 _ => {}
             }
         }
-        eprintln!("[has_aggregate_functions] -> no aggregates found");
         false
     }
 
@@ -4107,7 +4101,6 @@ impl QueryExecutor {
         match expr {
             Expr::Function(func) => {
                 let func_name = func.name.to_string().to_uppercase();
-                eprintln!("[is_aggregate_function_expr] func_name = {}", func_name);
                 matches!(
                     func_name.as_str(),
                     "COUNT"

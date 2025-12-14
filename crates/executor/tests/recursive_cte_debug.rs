@@ -17,15 +17,9 @@ fn test_debug_fibonacci_simplified() {
 
     match result {
         Ok(r) => {
-            println!("Rows: {}", r.num_rows());
-            for i in 0..r.num_rows() {
-                let col_a = r.column(0).unwrap().get(i).unwrap();
-                let col_b = r.column(1).unwrap().get(i).unwrap();
-                println!("Row {}: a={:?}, b={:?}", i, col_a, col_b);
-            }
+            assert!(r.num_rows() > 0);
         }
         Err(e) => {
-            println!("Error: {:?}", e);
             panic!("Test failed: {:?}", e);
         }
     }
@@ -46,7 +40,6 @@ fn test_debug_cte_reference() {
 
     match result {
         Ok(r) => {
-            println!("Success! Rows: {}", r.num_rows());
             assert_eq!(r.num_rows(), 3);
         }
         Err(e) => {
