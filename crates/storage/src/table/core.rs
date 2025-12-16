@@ -201,6 +201,70 @@ impl Table {
             ))
         }
     }
+
+    pub fn set_column_not_null(&mut self, col_name: &str) -> Result<()> {
+        let upper = col_name.to_uppercase();
+        let found = self
+            .schema
+            .fields()
+            .iter()
+            .any(|f| f.name.to_uppercase() == upper);
+        if !found {
+            return Err(yachtsql_common::error::Error::ColumnNotFound(
+                col_name.to_string(),
+            ));
+        }
+        let fields: Vec<_> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| {
+                if f.name.to_uppercase() == upper {
+                    crate::Field::new(
+                        f.name.clone(),
+                        f.data_type.clone(),
+                        crate::FieldMode::Required,
+                    )
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        self.schema = Schema::from_fields(fields);
+        Ok(())
+    }
+
+    pub fn set_column_nullable(&mut self, col_name: &str) -> Result<()> {
+        let upper = col_name.to_uppercase();
+        let found = self
+            .schema
+            .fields()
+            .iter()
+            .any(|f| f.name.to_uppercase() == upper);
+        if !found {
+            return Err(yachtsql_common::error::Error::ColumnNotFound(
+                col_name.to_string(),
+            ));
+        }
+        let fields: Vec<_> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| {
+                if f.name.to_uppercase() == upper {
+                    crate::Field::new(
+                        f.name.clone(),
+                        f.data_type.clone(),
+                        crate::FieldMode::Nullable,
+                    )
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        self.schema = Schema::from_fields(fields);
+        Ok(())
+    }
 }
 
 pub trait TableSchemaOps {

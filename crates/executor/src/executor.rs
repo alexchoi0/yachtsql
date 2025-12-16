@@ -5041,13 +5041,22 @@ impl QueryExecutor {
                 ast::AlterTableOperation::AddColumn { column_def, .. } => {
                     let col_name = column_def.name.value.clone();
                     let data_type = self.sql_type_to_data_type(&column_def.data_type)?;
+
+                    let default_value = column_def.options.iter().find_map(|opt| {
+                        if let ast::ColumnOption::Default(expr) = &opt.option {
+                            self.evaluate_literal_expr(expr).ok()
+                        } else {
+                            None
+                        }
+                    });
+
                     let table_data = self
                         .catalog
                         .get_table_mut(&table_name)
                         .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
 
                     let field = Field::nullable(col_name, data_type);
-                    TableSchemaOps::add_column(table_data, field, None)?;
+                    TableSchemaOps::add_column(table_data, field, default_value)?;
                 }
                 ast::AlterTableOperation::DropColumn { column_names, .. } => {
                     let column_name = column_names.first().ok_or_else(|| {
@@ -5074,9 +5083,35 @@ impl QueryExecutor {
                 ast::AlterTableOperation::RenameTable {
                     table_name: new_name,
                 } => {
-                    let new_table_name = new_name.to_string();
+                    let new_table_name = match new_name {
+                        ast::RenameTableNameKind::To(name) => name.to_string(),
+                        ast::RenameTableNameKind::As(name) => name.to_string(),
+                    };
                     self.catalog.rename_table(&table_name, &new_table_name)?;
                 }
+                ast::AlterTableOperation::AddConstraint { .. } => {}
+                ast::AlterTableOperation::AlterColumn { column_name, op } => match op {
+                    ast::AlterColumnOperation::SetNotNull => {
+                        let table_data = self
+                            .catalog
+                            .get_table_mut(&table_name)
+                            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+                        table_data.set_column_not_null(&column_name.value)?;
+                    }
+                    ast::AlterColumnOperation::DropNotNull => {
+                        let table_data = self
+                            .catalog
+                            .get_table_mut(&table_name)
+                            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+                        table_data.set_column_nullable(&column_name.value)?;
+                    }
+                    _ => {
+                        return Err(Error::UnsupportedFeature(format!(
+                            "ALTER COLUMN operation not supported: {:?}",
+                            op
+                        )));
+                    }
+                },
                 _ => {
                     return Err(Error::UnsupportedFeature(format!(
                         "ALTER TABLE operation not supported: {:?}",
