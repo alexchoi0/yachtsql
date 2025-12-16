@@ -1058,7 +1058,7 @@ impl QueryExecutor {
                     return false;
                 }
                 let name = func.name.to_string().to_uppercase();
-                matches!(
+                if matches!(
                     name.as_str(),
                     "COUNT"
                         | "SUM"
@@ -1074,6 +1074,9 @@ impl QueryExecutor {
                         | "VARIANCE"
                         | "VAR_POP"
                         | "VAR_SAMP"
+                        | "COVAR_POP"
+                        | "COVAR_SAMP"
+                        | "CORR"
                         | "BIT_AND"
                         | "BIT_OR"
                         | "BIT_XOR"
@@ -1081,7 +1084,20 @@ impl QueryExecutor {
                         | "BOOL_OR"
                         | "EVERY"
                         | "ANY_VALUE"
-                )
+                ) {
+                    return true;
+                }
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg
+                        {
+                            if self.expr_has_aggregate(arg_expr) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
             }
             Expr::BinaryOp { left, right, .. } => {
                 self.expr_has_aggregate(left) || self.expr_has_aggregate(right)
@@ -1281,8 +1297,24 @@ impl QueryExecutor {
                 if self.is_aggregate_function(&name) {
                     return self.compute_aggregate(&name, func, input_schema, group_rows);
                 }
+                let mut evaluated_args = Vec::new();
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg
+                        {
+                            let val = self.evaluate_aggregate_expr(
+                                arg_expr,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                group_by,
+                            )?;
+                            evaluated_args.push(val);
+                        }
+                    }
+                }
                 if let Some(row) = group_rows.first() {
-                    evaluator.evaluate(expr, row)
+                    evaluator.evaluate_function(&name, &evaluated_args, func, row)
                 } else {
                     Ok(Value::null())
                 }
@@ -1412,6 +1444,9 @@ impl QueryExecutor {
                 | "VARIANCE"
                 | "VAR_POP"
                 | "VAR_SAMP"
+                | "COVAR_POP"
+                | "COVAR_SAMP"
+                | "CORR"
                 | "BIT_AND"
                 | "BIT_OR"
                 | "BIT_XOR"
@@ -1623,6 +1658,292 @@ impl QueryExecutor {
                     evaluator.evaluate(&expr, row)
                 } else {
                     Ok(Value::null())
+                }
+            }
+            "STDDEV" | "STDDEV_SAMP" => {
+                let expr = arg_expr
+                    .ok_or_else(|| Error::InvalidQuery(format!("{} requires an argument", name)))?;
+                let mut n: u64 = 0;
+                let mut mean: f64 = 0.0;
+                let mut m2: f64 = 0.0;
+
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    let x = match val.as_f64() {
+                        Some(f) => f,
+                        None => match val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let delta = x - mean;
+                    mean += delta / n as f64;
+                    let delta2 = x - mean;
+                    m2 += delta * delta2;
+                }
+
+                if n < 2 {
+                    Ok(Value::null())
+                } else {
+                    let variance = m2 / (n - 1) as f64;
+                    Ok(Value::float64(variance.sqrt()))
+                }
+            }
+            "STDDEV_POP" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("STDDEV_POP requires an argument".to_string())
+                })?;
+                let mut n: u64 = 0;
+                let mut mean: f64 = 0.0;
+                let mut m2: f64 = 0.0;
+
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    let x = match val.as_f64() {
+                        Some(f) => f,
+                        None => match val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let delta = x - mean;
+                    mean += delta / n as f64;
+                    let delta2 = x - mean;
+                    m2 += delta * delta2;
+                }
+
+                if n == 0 {
+                    Ok(Value::null())
+                } else {
+                    let variance = m2 / n as f64;
+                    Ok(Value::float64(variance.sqrt()))
+                }
+            }
+            "VARIANCE" | "VAR_SAMP" => {
+                let expr = arg_expr
+                    .ok_or_else(|| Error::InvalidQuery(format!("{} requires an argument", name)))?;
+                let mut n: u64 = 0;
+                let mut mean: f64 = 0.0;
+                let mut m2: f64 = 0.0;
+
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    let x = match val.as_f64() {
+                        Some(f) => f,
+                        None => match val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let delta = x - mean;
+                    mean += delta / n as f64;
+                    let delta2 = x - mean;
+                    m2 += delta * delta2;
+                }
+
+                if n < 2 {
+                    Ok(Value::null())
+                } else {
+                    let variance = m2 / (n - 1) as f64;
+                    Ok(Value::float64(variance))
+                }
+            }
+            "VAR_POP" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("VAR_POP requires an argument".to_string())
+                })?;
+                let mut n: u64 = 0;
+                let mut mean: f64 = 0.0;
+                let mut m2: f64 = 0.0;
+
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    let x = match val.as_f64() {
+                        Some(f) => f,
+                        None => match val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let delta = x - mean;
+                    mean += delta / n as f64;
+                    let delta2 = x - mean;
+                    m2 += delta * delta2;
+                }
+
+                if n == 0 {
+                    Ok(Value::null())
+                } else {
+                    let variance = m2 / n as f64;
+                    Ok(Value::float64(variance))
+                }
+            }
+            "COVAR_POP" => {
+                let x_expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("COVAR_POP requires two arguments".to_string())
+                })?;
+                let y_expr = self.extract_second_function_arg(func).ok_or_else(|| {
+                    Error::InvalidQuery("COVAR_POP requires two arguments".to_string())
+                })?;
+
+                let mut n: u64 = 0;
+                let mut mean_x: f64 = 0.0;
+                let mut mean_y: f64 = 0.0;
+                let mut co_moment: f64 = 0.0;
+
+                for row in group_rows {
+                    let x_val = evaluator.evaluate(&x_expr, row)?;
+                    let y_val = evaluator.evaluate(&y_expr, row)?;
+                    if x_val.is_null() || y_val.is_null() {
+                        continue;
+                    }
+                    let x = match x_val.as_f64() {
+                        Some(f) => f,
+                        None => match x_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    let y = match y_val.as_f64() {
+                        Some(f) => f,
+                        None => match y_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let dx = x - mean_x;
+                    mean_x += dx / n as f64;
+                    mean_y += (y - mean_y) / n as f64;
+                    co_moment += dx * (y - mean_y);
+                }
+
+                if n == 0 {
+                    Ok(Value::null())
+                } else {
+                    Ok(Value::float64(co_moment / n as f64))
+                }
+            }
+            "COVAR_SAMP" => {
+                let x_expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("COVAR_SAMP requires two arguments".to_string())
+                })?;
+                let y_expr = self.extract_second_function_arg(func).ok_or_else(|| {
+                    Error::InvalidQuery("COVAR_SAMP requires two arguments".to_string())
+                })?;
+
+                let mut n: u64 = 0;
+                let mut mean_x: f64 = 0.0;
+                let mut mean_y: f64 = 0.0;
+                let mut co_moment: f64 = 0.0;
+
+                for row in group_rows {
+                    let x_val = evaluator.evaluate(&x_expr, row)?;
+                    let y_val = evaluator.evaluate(&y_expr, row)?;
+                    if x_val.is_null() || y_val.is_null() {
+                        continue;
+                    }
+                    let x = match x_val.as_f64() {
+                        Some(f) => f,
+                        None => match x_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    let y = match y_val.as_f64() {
+                        Some(f) => f,
+                        None => match y_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let dx = x - mean_x;
+                    mean_x += dx / n as f64;
+                    mean_y += (y - mean_y) / n as f64;
+                    co_moment += dx * (y - mean_y);
+                }
+
+                if n < 2 {
+                    Ok(Value::null())
+                } else {
+                    Ok(Value::float64(co_moment / (n - 1) as f64))
+                }
+            }
+            "CORR" => {
+                let x_expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("CORR requires two arguments".to_string())
+                })?;
+                let y_expr = self.extract_second_function_arg(func).ok_or_else(|| {
+                    Error::InvalidQuery("CORR requires two arguments".to_string())
+                })?;
+
+                let mut n: u64 = 0;
+                let mut mean_x: f64 = 0.0;
+                let mut mean_y: f64 = 0.0;
+                let mut m2_x: f64 = 0.0;
+                let mut m2_y: f64 = 0.0;
+                let mut co_moment: f64 = 0.0;
+
+                for row in group_rows {
+                    let x_val = evaluator.evaluate(&x_expr, row)?;
+                    let y_val = evaluator.evaluate(&y_expr, row)?;
+                    if x_val.is_null() || y_val.is_null() {
+                        continue;
+                    }
+                    let x = match x_val.as_f64() {
+                        Some(f) => f,
+                        None => match x_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    let y = match y_val.as_f64() {
+                        Some(f) => f,
+                        None => match y_val.as_i64() {
+                            Some(i) => i as f64,
+                            None => continue,
+                        },
+                    };
+                    n += 1;
+                    let dx = x - mean_x;
+                    let dy = y - mean_y;
+                    mean_x += dx / n as f64;
+                    mean_y += dy / n as f64;
+                    let dx2 = x - mean_x;
+                    let dy2 = y - mean_y;
+                    m2_x += dx * dx2;
+                    m2_y += dy * dy2;
+                    co_moment += dx * dy2;
+                }
+
+                if n < 2 {
+                    Ok(Value::null())
+                } else {
+                    let stddev_x = (m2_x / n as f64).sqrt();
+                    let stddev_y = (m2_y / n as f64).sqrt();
+                    if stddev_x == 0.0 || stddev_y == 0.0 {
+                        Ok(Value::null())
+                    } else {
+                        let covar = co_moment / n as f64;
+                        Ok(Value::float64(covar / (stddev_x * stddev_y)))
+                    }
                 }
             }
             _ => Err(Error::UnsupportedFeature(format!(
