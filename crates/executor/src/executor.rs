@@ -7027,27 +7027,36 @@ impl QueryExecutor {
                 Ok(Expr::IsNotNull(Box::new(resolved)))
             }
             Expr::Function(func) => {
-                let new_args = match &func.args {
-                    ast::FunctionArguments::None => ast::FunctionArguments::None,
-                    ast::FunctionArguments::Subquery(q) => {
-                        let result = self.execute_query(q)?;
-                        let rows = result.to_records()?;
-                        if rows.len() != 1 || result.schema().field_count() != 1 {
+                let func_name = func.name.to_string().to_uppercase();
+                if let ast::FunctionArguments::Subquery(q) = &func.args {
+                    let mut merged_ctes = cte_tables.clone();
+                    let inner_ctes = self.materialize_ctes(&q.with)?;
+                    merged_ctes.extend(inner_ctes);
+                    let result = self.execute_query_with_ctes(q, &merged_ctes)?;
+                    let rows = result.to_records()?;
+                    if func_name == "ARRAY" {
+                        if result.schema().field_count() != 1 {
                             return Err(Error::InvalidQuery(
-                                "Scalar subquery must return exactly one row and one column"
-                                    .to_string(),
+                                "ARRAY() subquery must return exactly one column".to_string(),
                             ));
                         }
-                        let value = rows[0].values()[0].clone();
-                        let resolved_expr = self.value_to_expr(&value);
-                        ast::FunctionArguments::List(ast::FunctionArgumentList {
-                            duplicate_treatment: None,
-                            args: vec![ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
-                                resolved_expr,
-                            ))],
-                            clauses: vec![],
-                        })
+                        let values: Vec<Value> =
+                            rows.iter().map(|r| r.values()[0].clone()).collect();
+                        let array_val = Value::array(values);
+                        return Ok(self.value_to_expr(&array_val));
                     }
+                    if rows.len() != 1 || result.schema().field_count() != 1 {
+                        return Err(Error::InvalidQuery(
+                            "Scalar subquery must return exactly one row and one column"
+                                .to_string(),
+                        ));
+                    }
+                    let value = rows[0].values()[0].clone();
+                    return Ok(self.value_to_expr(&value));
+                }
+                let new_args = match &func.args {
+                    ast::FunctionArguments::None => ast::FunctionArguments::None,
+                    ast::FunctionArguments::Subquery(_) => unreachable!(),
                     ast::FunctionArguments::List(list) => {
                         let new_list_args: Vec<ast::FunctionArg> = list
                             .args
