@@ -597,24 +597,7 @@ impl<'a> Evaluator<'a> {
                 expr,
                 array_expr,
                 negated,
-            } => {
-                let val = self.evaluate(expr, record)?;
-                let array_val = self.evaluate(array_expr, record)?;
-
-                let found = match &array_val {
-                    Value::Array(arr) => arr.iter().any(|item| item == &val),
-                    Value::Null => return Ok(Value::null()),
-                    _ => {
-                        return Err(Error::TypeMismatch {
-                            expected: "ARRAY".to_string(),
-                            actual: array_val.data_type().to_string(),
-                        });
-                    }
-                };
-
-                let result = if *negated { !found } else { found };
-                Ok(Value::Bool(result))
-            }
+            } => self.evaluate_in_unnest(expr, array_expr, *negated, record),
 
             Expr::Subquery(_) => Err(Error::UnsupportedFeature(
                 "Subquery not yet supported in evaluator".to_string(),
@@ -1216,10 +1199,75 @@ impl<'a> Evaluator<'a> {
         let mut found = false;
         let mut has_null = false;
         for item in list {
+            if let Expr::Function(func) = item {
+                if func.name.to_string().to_uppercase() == "UNNEST" {
+                    if let sqlparser::ast::FunctionArguments::List(arg_list) = &func.args {
+                        if let Some(sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(inner),
+                        )) = arg_list.args.first()
+                        {
+                            let arr_val = self.evaluate(inner, record)?;
+                            if let Some(arr) = arr_val.as_array() {
+                                for arr_item in arr {
+                                    if arr_item.is_null() {
+                                        has_null = true;
+                                    } else if val == *arr_item {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if found {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             let item_val = self.evaluate(item, record)?;
             if item_val.is_null() {
                 has_null = true;
             } else if val == item_val {
+                found = true;
+                break;
+            }
+        }
+        let result = if found {
+            true
+        } else if has_null {
+            return Ok(Value::null());
+        } else {
+            false
+        };
+        Ok(Value::bool_val(if negated { !result } else { result }))
+    }
+
+    fn evaluate_in_unnest(
+        &self,
+        expr: &Expr,
+        array_expr: &Expr,
+        negated: bool,
+        record: &Record,
+    ) -> Result<Value> {
+        let val = self.evaluate(expr, record)?;
+        if val.is_null() {
+            return Ok(Value::null());
+        }
+        let arr_val = self.evaluate(array_expr, record)?;
+        if arr_val.is_null() {
+            return Ok(Value::null());
+        }
+        let arr = arr_val.as_array().ok_or_else(|| Error::TypeMismatch {
+            expected: "ARRAY".to_string(),
+            actual: arr_val.data_type().to_string(),
+        })?;
+        let mut found = false;
+        let mut has_null = false;
+        for arr_item in arr {
+            if arr_item.is_null() {
+                has_null = true;
+            } else if val == *arr_item {
                 found = true;
                 break;
             }
@@ -3562,6 +3610,55 @@ impl<'a> Evaluator<'a> {
                 let last_day = next_month.unwrap() - chrono::Duration::days(1);
                 Ok(Value::date(last_day))
             }
+            "GENERATE_DATE_ARRAY" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "GENERATE_DATE_ARRAY requires 2 or 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let start = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let end = args[1].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let step_days = if args.len() == 3 {
+                    if args[2].is_null() {
+                        return Ok(Value::null());
+                    }
+                    args[2]
+                        .as_interval()
+                        .map(|iv| iv.days as i64)
+                        .or_else(|| args[2].as_i64())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
+                if step_days == 0 {
+                    return Err(Error::InvalidQuery(
+                        "GENERATE_DATE_ARRAY step cannot be 0".to_string(),
+                    ));
+                }
+                let mut result = Vec::new();
+                let mut curr = start;
+                if step_days > 0 {
+                    while curr <= end {
+                        result.push(Value::date(curr));
+                        curr += chrono::Duration::days(step_days);
+                    }
+                } else {
+                    while curr >= end {
+                        result.push(Value::date(curr));
+                        curr += chrono::Duration::days(step_days);
+                    }
+                }
+                Ok(Value::array(result))
+            }
             "TIMESTAMP_ADD" => {
                 if args.len() != 2 {
                     return Err(Error::InvalidQuery(
@@ -4234,6 +4331,12 @@ impl<'a> Evaluator<'a> {
                         "OFFSET requires 1 argument".to_string(),
                     ));
                 }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(i) = args[0].as_i64() {
+                    return Ok(Value::int64(i + 1));
+                }
                 Ok(args[0].clone())
             }
             "SAFE_ORDINAL" | "ORDINAL" => {
@@ -4241,12 +4344,6 @@ impl<'a> Evaluator<'a> {
                     return Err(Error::InvalidQuery(
                         "ORDINAL requires 1 argument".to_string(),
                     ));
-                }
-                if args[0].is_null() {
-                    return Ok(Value::null());
-                }
-                if let Some(i) = args[0].as_i64() {
-                    return Ok(Value::int64(i - 1));
                 }
                 Ok(args[0].clone())
             }
@@ -4397,6 +4494,29 @@ impl<'a> Evaluator<'a> {
                     }
                 }
                 Ok(Value::array(result))
+            }
+            "ARRAY_SLICE" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "ARRAY_SLICE requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let arr = args[0].as_array().ok_or_else(|| Error::TypeMismatch {
+                    expected: "ARRAY".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let start = args[1].as_i64().unwrap_or(1);
+                let end = args[2].as_i64().unwrap_or(0);
+                if start < 1 || end < start {
+                    return Ok(Value::array(vec![]));
+                }
+                let start_idx = (start - 1) as usize;
+                let end_idx = (end as usize).min(arr.len());
+                let slice: Vec<Value> = arr[start_idx..end_idx].to_vec();
+                Ok(Value::array(slice))
             }
             "ST_GEOGFROMTEXT" | "ST_GEOGRAPHYFROMTEXT" => {
                 if args.is_empty() || args[0].is_null() {

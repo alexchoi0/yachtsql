@@ -84,7 +84,6 @@ fn test_array_length_null() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_slice() {
     let mut executor = create_executor();
     let result = executor
@@ -214,7 +213,6 @@ fn test_array_concat_multiple() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_first() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT [1, 2, 3][OFFSET(0)]").unwrap();
@@ -231,7 +229,6 @@ fn test_array_safe_offset() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_ordinal() {
     let mut executor = create_executor();
     let result = executor
@@ -250,7 +247,6 @@ fn test_array_safe_ordinal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_generate_date_array() {
     let mut executor = create_executor();
     let result = executor
@@ -269,7 +265,6 @@ fn test_generate_date_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_filter() {
     let mut executor = create_executor();
     let result = executor
@@ -281,7 +276,6 @@ fn test_array_filter() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_transform() {
     let mut executor = create_executor();
     let result = executor
