@@ -208,7 +208,7 @@ impl<'a> Evaluator<'a> {
 
             Expr::Nested(inner) => self.evaluate(inner, record),
 
-            Expr::Function(func) => self.evaluate_function(func, record),
+            Expr::Function(func) => self.evaluate_function_internal(func, record),
 
             Expr::Case {
                 operand,
@@ -1335,11 +1335,33 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn evaluate_function(&self, func: &sqlparser::ast::Function, record: &Record) -> Result<Value> {
+    pub fn evaluate_function(
+        &self,
+        name: &str,
+        args: &[Value],
+        func: &sqlparser::ast::Function,
+        _record: &Record,
+    ) -> Result<Value> {
+        self.evaluate_function_impl(name, args.to_vec(), func)
+    }
+
+    fn evaluate_function_internal(
+        &self,
+        func: &sqlparser::ast::Function,
+        record: &Record,
+    ) -> Result<Value> {
         let name = func.name.to_string().to_uppercase();
         let args = self.extract_function_args(func, record)?;
+        self.evaluate_function_impl(&name, args, func)
+    }
 
-        match name.as_str() {
+    fn evaluate_function_impl(
+        &self,
+        name: &str,
+        args: Vec<Value>,
+        func: &sqlparser::ast::Function,
+    ) -> Result<Value> {
+        match name {
             "COALESCE" => {
                 for val in args {
                     if !val.is_null() {
@@ -1762,7 +1784,7 @@ impl<'a> Evaluator<'a> {
                     _ => Ok(Value::null()),
                 }
             }
-            "SAFE_ADD" | "SAFE_SUBTRACT" | "SAFE_MULTIPLY" | "SAFE_NEGATE" => match name.as_str() {
+            "SAFE_ADD" | "SAFE_SUBTRACT" | "SAFE_MULTIPLY" | "SAFE_NEGATE" => match name {
                 "SAFE_ADD" => {
                     if args.len() != 2 || args[0].is_null() || args[1].is_null() {
                         return Ok(Value::null());
