@@ -815,43 +815,72 @@ impl QueryExecutor {
                 }
             }
             ast::SetOperator::Intersect => {
-                let right_set: std::collections::HashSet<String> = right_rows
-                    .iter()
-                    .map(|row| format!("{:?}", row.values()))
-                    .collect();
-                left_rows.retain(|row| {
-                    let key = format!("{:?}", row.values());
-                    right_set.contains(&key)
-                });
-                match set_quantifier {
-                    ast::SetQuantifier::All | ast::SetQuantifier::ByName => {}
-                    _ => {
-                        let mut seen = std::collections::HashSet::new();
-                        left_rows.retain(|row| {
-                            let key = format!("{:?}", row.values());
-                            seen.insert(key)
-                        });
+                let is_all = matches!(
+                    set_quantifier,
+                    ast::SetQuantifier::All | ast::SetQuantifier::ByName
+                );
+                if is_all {
+                    let mut right_counts: HashMap<String, usize> = HashMap::new();
+                    for row in &right_rows {
+                        let key = format!("{:?}", row.values());
+                        *right_counts.entry(key).or_insert(0) += 1;
                     }
+                    let mut result_rows = Vec::new();
+                    for row in left_rows {
+                        let key = format!("{:?}", row.values());
+                        if let Some(count) = right_counts.get_mut(&key) {
+                            if *count > 0 {
+                                result_rows.push(row);
+                                *count -= 1;
+                            }
+                        }
+                    }
+                    left_rows = result_rows;
+                } else {
+                    let right_set: std::collections::HashSet<String> = right_rows
+                        .iter()
+                        .map(|row| format!("{:?}", row.values()))
+                        .collect();
+                    let mut seen = std::collections::HashSet::new();
+                    left_rows.retain(|row| {
+                        let key = format!("{:?}", row.values());
+                        right_set.contains(&key) && seen.insert(key)
+                    });
                 }
             }
             ast::SetOperator::Except | ast::SetOperator::Minus => {
-                let right_set: std::collections::HashSet<String> = right_rows
-                    .iter()
-                    .map(|row| format!("{:?}", row.values()))
-                    .collect();
-                left_rows.retain(|row| {
-                    let key = format!("{:?}", row.values());
-                    !right_set.contains(&key)
-                });
-                match set_quantifier {
-                    ast::SetQuantifier::All | ast::SetQuantifier::ByName => {}
-                    _ => {
-                        let mut seen = std::collections::HashSet::new();
-                        left_rows.retain(|row| {
-                            let key = format!("{:?}", row.values());
-                            seen.insert(key)
-                        });
+                let is_all = matches!(
+                    set_quantifier,
+                    ast::SetQuantifier::All | ast::SetQuantifier::ByName
+                );
+                if is_all {
+                    let mut right_counts: HashMap<String, usize> = HashMap::new();
+                    for row in &right_rows {
+                        let key = format!("{:?}", row.values());
+                        *right_counts.entry(key).or_insert(0) += 1;
                     }
+                    let mut result_rows = Vec::new();
+                    for row in left_rows {
+                        let key = format!("{:?}", row.values());
+                        if let Some(count) = right_counts.get_mut(&key) {
+                            if *count > 0 {
+                                *count -= 1;
+                                continue;
+                            }
+                        }
+                        result_rows.push(row);
+                    }
+                    left_rows = result_rows;
+                } else {
+                    let right_set: std::collections::HashSet<String> = right_rows
+                        .iter()
+                        .map(|row| format!("{:?}", row.values()))
+                        .collect();
+                    let mut seen = std::collections::HashSet::new();
+                    left_rows.retain(|row| {
+                        let key = format!("{:?}", row.values());
+                        !right_set.contains(&key) && seen.insert(key)
+                    });
                 }
             }
         }
@@ -2014,18 +2043,49 @@ impl QueryExecutor {
         select: &Select,
     ) -> Result<(Schema, Vec<Record>)> {
         let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
+        let group_exprs = self.extract_group_by_exprs(&select.group_by);
+        let grouping_sets = self.extract_grouping_sets(&select.group_by);
 
-        let group_by_is_empty =
-            matches!(&select.group_by, ast::GroupByExpr::Expressions(v, _) if v.is_empty());
-        let groups: Vec<(Vec<Value>, Vec<&Record>)> = if group_by_is_empty {
-            vec![(vec![], rows.iter().collect())]
+        let group_by_is_empty = group_exprs.is_empty() && grouping_sets.is_none();
+
+        let groups: Vec<(Vec<Value>, Vec<&Record>, Vec<usize>)> = if group_by_is_empty {
+            vec![(vec![], rows.iter().collect(), vec![])]
+        } else if let Some(sets) = grouping_sets {
+            let mut all_groups = Vec::new();
+            for grouping_set in &sets {
+                let active_indices: Vec<usize> = grouping_set.clone();
+                let mut group_map: HashMap<String, (Vec<Value>, Vec<&Record>)> = HashMap::new();
+
+                for row in rows {
+                    let mut group_key_values = Vec::new();
+                    for (i, group_expr) in group_exprs.iter().enumerate() {
+                        if active_indices.contains(&i) {
+                            let val = evaluator.evaluate(group_expr, row)?;
+                            group_key_values.push(val);
+                        } else {
+                            group_key_values.push(Value::null());
+                        }
+                    }
+                    let key = format!("{:?}", group_key_values);
+                    group_map
+                        .entry(key)
+                        .or_insert_with(|| (group_key_values.clone(), Vec::new()))
+                        .1
+                        .push(row);
+                }
+                for (group_key, group_rows) in group_map.into_values() {
+                    all_groups.push((group_key, group_rows, active_indices.clone()));
+                }
+            }
+            all_groups
         } else {
             let mut group_map: HashMap<String, (Vec<Value>, Vec<&Record>)> = HashMap::new();
+            let all_indices: Vec<usize> = (0..group_exprs.len()).collect();
 
             for row in rows {
                 let mut group_key_values = Vec::new();
-                for group_expr in self.extract_group_by_exprs(&select.group_by) {
-                    let val = evaluator.evaluate(&group_expr, row)?;
+                for group_expr in &group_exprs {
+                    let val = evaluator.evaluate(group_expr, row)?;
                     group_key_values.push(val);
                 }
                 let key = format!("{:?}", group_key_values);
@@ -2035,40 +2095,41 @@ impl QueryExecutor {
                     .1
                     .push(row);
             }
-            group_map.into_values().collect()
+            group_map
+                .into_values()
+                .map(|(k, v)| (k, v, all_indices.clone()))
+                .collect()
         };
-
-        if let Some(having) = &select.having {
-            let _ = having;
-        }
 
         let mut result_rows = Vec::new();
         let mut output_fields: Option<Vec<Field>> = None;
 
-        for (group_key, group_rows) in &groups {
+        for (group_key, group_rows, active_indices) in &groups {
             let mut row_values = Vec::new();
             let mut field_names = Vec::new();
 
             for (idx, item) in select.projection.iter().enumerate() {
                 match item {
                     SelectItem::UnnamedExpr(expr) => {
-                        let val = self.evaluate_aggregate_expr(
+                        let val = self.evaluate_aggregate_expr_with_grouping(
                             expr,
                             input_schema,
                             group_rows,
                             group_key,
-                            &select.group_by,
+                            &group_exprs,
+                            active_indices,
                         )?;
                         field_names.push(self.expr_to_alias(expr, idx));
                         row_values.push(val);
                     }
                     SelectItem::ExprWithAlias { expr, alias } => {
-                        let val = self.evaluate_aggregate_expr(
+                        let val = self.evaluate_aggregate_expr_with_grouping(
                             expr,
                             input_schema,
                             group_rows,
                             group_key,
-                            &select.group_by,
+                            &group_exprs,
+                            active_indices,
                         )?;
                         field_names.push(alias.value.clone());
                         row_values.push(val);
@@ -2103,11 +2164,9 @@ impl QueryExecutor {
         let schema = Schema::from_fields(output_fields.unwrap_or_default());
 
         if let Some(having) = &select.having {
-            let having_evaluator =
-                Evaluator::with_user_functions(&schema, self.catalog.get_functions());
+            let field_names: Vec<String> = schema.fields().iter().map(|f| f.name.clone()).collect();
             result_rows.retain(|row| {
-                having_evaluator
-                    .evaluate_to_bool(having, row)
+                self.evaluate_having_expr(having, row, &field_names)
                     .unwrap_or(false)
             });
         }
@@ -2117,8 +2176,258 @@ impl QueryExecutor {
 
     fn extract_group_by_exprs(&self, group_by: &ast::GroupByExpr) -> Vec<Expr> {
         match group_by {
-            ast::GroupByExpr::Expressions(exprs, _) => exprs.clone(),
+            ast::GroupByExpr::Expressions(exprs, _) => {
+                let mut result = Vec::new();
+                for expr in exprs {
+                    match expr {
+                        Expr::Rollup(rollup_exprs) => {
+                            for inner in rollup_exprs {
+                                result.extend(inner.clone());
+                            }
+                        }
+                        Expr::Cube(cube_exprs) => {
+                            for inner in cube_exprs {
+                                result.extend(inner.clone());
+                            }
+                        }
+                        Expr::GroupingSets(sets_exprs) => {
+                            for set in sets_exprs {
+                                result.extend(set.clone());
+                            }
+                        }
+                        _ => result.push(expr.clone()),
+                    }
+                }
+                let mut seen = HashMap::new();
+                result
+                    .into_iter()
+                    .filter(|e| {
+                        let key = self.expr_key(e);
+                        if let std::collections::hash_map::Entry::Vacant(entry) = seen.entry(key) {
+                            entry.insert(true);
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect()
+            }
             ast::GroupByExpr::All(_) => vec![],
+        }
+    }
+
+    fn extract_grouping_sets(&self, group_by: &ast::GroupByExpr) -> Option<Vec<Vec<usize>>> {
+        match group_by {
+            ast::GroupByExpr::Expressions(exprs, _) => {
+                let mut all_exprs: Vec<Expr> = Vec::new();
+                let mut expr_indices: HashMap<String, usize> = HashMap::new();
+                let mut grouping_sets: Vec<Vec<usize>> = Vec::new();
+                let mut has_grouping_modifier = false;
+                let mut regular_indices: Vec<usize> = Vec::new();
+
+                for expr in exprs {
+                    match expr {
+                        Expr::Rollup(rollup_exprs) => {
+                            has_grouping_modifier = true;
+                            let flat_exprs: Vec<Expr> =
+                                rollup_exprs.iter().flatten().cloned().collect();
+                            let indices = self.add_exprs_to_index_map(
+                                &mut all_exprs,
+                                &mut expr_indices,
+                                &flat_exprs,
+                            );
+                            let sets = self.expand_rollup_indices(&indices);
+                            grouping_sets.extend(sets);
+                        }
+                        Expr::Cube(cube_exprs) => {
+                            has_grouping_modifier = true;
+                            let flat_exprs: Vec<Expr> =
+                                cube_exprs.iter().flatten().cloned().collect();
+                            let indices = self.add_exprs_to_index_map(
+                                &mut all_exprs,
+                                &mut expr_indices,
+                                &flat_exprs,
+                            );
+                            let sets = self.expand_cube_indices(&indices);
+                            grouping_sets.extend(sets);
+                        }
+                        Expr::GroupingSets(sets_exprs) => {
+                            has_grouping_modifier = true;
+                            for set_vec in sets_exprs {
+                                let indices = self.add_exprs_to_index_map(
+                                    &mut all_exprs,
+                                    &mut expr_indices,
+                                    set_vec,
+                                );
+                                grouping_sets.push(indices);
+                            }
+                        }
+                        _ => {
+                            let idx =
+                                self.add_expr_to_index_map(&mut all_exprs, &mut expr_indices, expr);
+                            regular_indices.push(idx);
+                        }
+                    }
+                }
+
+                if has_grouping_modifier {
+                    if !regular_indices.is_empty() {
+                        let mut expanded_sets = Vec::new();
+                        for set in grouping_sets {
+                            let mut new_set = regular_indices.clone();
+                            new_set.extend(set);
+                            expanded_sets.push(new_set);
+                        }
+                        grouping_sets = expanded_sets;
+                    }
+                    Some(grouping_sets)
+                } else {
+                    None
+                }
+            }
+            ast::GroupByExpr::All(_) => None,
+        }
+    }
+
+    fn expr_key(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Identifier(ident) => ident.value.to_uppercase(),
+            Expr::CompoundIdentifier(parts) => parts
+                .iter()
+                .map(|p| p.value.to_uppercase())
+                .collect::<Vec<_>>()
+                .join("."),
+            _ => format!("{:?}", expr),
+        }
+    }
+
+    fn add_expr_to_index_map(
+        &self,
+        all_exprs: &mut Vec<Expr>,
+        expr_indices: &mut HashMap<String, usize>,
+        expr: &Expr,
+    ) -> usize {
+        let key = self.expr_key(expr);
+        if let Some(&idx) = expr_indices.get(&key) {
+            return idx;
+        }
+        let idx = all_exprs.len();
+        all_exprs.push(expr.clone());
+        expr_indices.insert(key, idx);
+        idx
+    }
+
+    fn add_exprs_to_index_map(
+        &self,
+        all_exprs: &mut Vec<Expr>,
+        expr_indices: &mut HashMap<String, usize>,
+        exprs: &[Expr],
+    ) -> Vec<usize> {
+        exprs
+            .iter()
+            .map(|e| self.add_expr_to_index_map(all_exprs, expr_indices, e))
+            .collect()
+    }
+
+    fn expand_rollup_indices(&self, indices: &[usize]) -> Vec<Vec<usize>> {
+        let mut sets = Vec::new();
+        for i in (0..=indices.len()).rev() {
+            sets.push(indices[..i].to_vec());
+        }
+        sets
+    }
+
+    fn expand_cube_indices(&self, indices: &[usize]) -> Vec<Vec<usize>> {
+        let n = indices.len();
+        let mut sets = Vec::new();
+        for mask in (0..(1 << n)).rev() {
+            let mut set = Vec::new();
+            for (i, &idx) in indices.iter().enumerate() {
+                if mask & (1 << i) != 0 {
+                    set.push(idx);
+                }
+            }
+            sets.push(set);
+        }
+        sets
+    }
+
+    fn evaluate_having_expr(
+        &self,
+        expr: &Expr,
+        row: &Record,
+        field_names: &[String],
+    ) -> Result<bool> {
+        match self.evaluate_having_value(expr, row, field_names)? {
+            Value::Bool(b) => Ok(b),
+            _ => Ok(false),
+        }
+    }
+
+    fn evaluate_having_value(
+        &self,
+        expr: &Expr,
+        row: &Record,
+        field_names: &[String],
+    ) -> Result<Value> {
+        match expr {
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = self.evaluate_having_value(left, row, field_names)?;
+                let right_val = self.evaluate_having_value(right, row, field_names)?;
+                match op {
+                    ast::BinaryOperator::Gt => Ok(Value::Bool(
+                        self.compare_values(&left_val, &right_val) == std::cmp::Ordering::Greater,
+                    )),
+                    ast::BinaryOperator::Lt => Ok(Value::Bool(
+                        self.compare_values(&left_val, &right_val) == std::cmp::Ordering::Less,
+                    )),
+                    ast::BinaryOperator::GtEq => Ok(Value::Bool(
+                        self.compare_values(&left_val, &right_val) != std::cmp::Ordering::Less,
+                    )),
+                    ast::BinaryOperator::LtEq => Ok(Value::Bool(
+                        self.compare_values(&left_val, &right_val) != std::cmp::Ordering::Greater,
+                    )),
+                    ast::BinaryOperator::Eq => Ok(Value::Bool(left_val == right_val)),
+                    ast::BinaryOperator::NotEq => Ok(Value::Bool(left_val != right_val)),
+                    ast::BinaryOperator::And => {
+                        let l = left_val.as_bool().unwrap_or(false);
+                        let r = right_val.as_bool().unwrap_or(false);
+                        Ok(Value::Bool(l && r))
+                    }
+                    ast::BinaryOperator::Or => {
+                        let l = left_val.as_bool().unwrap_or(false);
+                        let r = right_val.as_bool().unwrap_or(false);
+                        Ok(Value::Bool(l || r))
+                    }
+                    _ => Ok(Value::null()),
+                }
+            }
+            Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if let Some(idx) = field_names
+                    .iter()
+                    .position(|f| f.to_uppercase() == name || f.to_uppercase().contains(&name))
+                {
+                    return Ok(row.values()[idx].clone());
+                }
+                for (idx, field_name) in field_names.iter().enumerate() {
+                    if let Some(val) = row.values().get(idx) {
+                        if val.as_i64().is_some() || val.as_f64().is_some() {
+                            return Ok(val.clone());
+                        }
+                    }
+                }
+                Ok(Value::null())
+            }
+            Expr::Identifier(ident) => {
+                let name = ident.value.to_uppercase();
+                if let Some(idx) = field_names.iter().position(|f| f.to_uppercase() == name) {
+                    return Ok(row.values()[idx].clone());
+                }
+                Ok(Value::null())
+            }
+            Expr::Value(v) => self.sql_value_to_value(&v.value),
+            _ => Ok(Value::null()),
         }
     }
 
@@ -2266,6 +2575,229 @@ impl QueryExecutor {
                 }
             }
         }
+    }
+
+    fn evaluate_aggregate_expr_with_grouping(
+        &self,
+        expr: &Expr,
+        input_schema: &Schema,
+        group_rows: &[&Record],
+        group_key: &[Value],
+        group_exprs: &[Expr],
+        active_indices: &[usize],
+    ) -> Result<Value> {
+        let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
+
+        match expr {
+            Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if name == "GROUPING" {
+                    return self.evaluate_grouping_function(func, group_exprs, active_indices);
+                }
+                if name == "GROUPING_ID" {
+                    return self.evaluate_grouping_id_function(func, group_exprs, active_indices);
+                }
+                if self.is_aggregate_function(&name) {
+                    return self.compute_aggregate(&name, func, input_schema, group_rows);
+                }
+                let mut evaluated_args = Vec::new();
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg
+                        {
+                            let val = self.evaluate_aggregate_expr_with_grouping(
+                                arg_expr,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                group_exprs,
+                                active_indices,
+                            )?;
+                            evaluated_args.push(val);
+                        }
+                    }
+                }
+                if let Some(row) = group_rows.first() {
+                    evaluator.evaluate_function(&name, &evaluated_args, func, row)
+                } else {
+                    Ok(Value::null())
+                }
+            }
+            Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
+                for (i, ge) in group_exprs.iter().enumerate() {
+                    if self.exprs_equal(expr, ge) && i < group_key.len() {
+                        return Ok(group_key[i].clone());
+                    }
+                }
+                if let Some(row) = group_rows.first() {
+                    evaluator.evaluate(expr, row)
+                } else {
+                    Ok(Value::null())
+                }
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = self.evaluate_aggregate_expr_with_grouping(
+                    left,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                )?;
+                let right_val = self.evaluate_aggregate_expr_with_grouping(
+                    right,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                )?;
+                evaluator.evaluate_binary_op_values(&left_val, op, &right_val)
+            }
+            Expr::Case {
+                operand,
+                conditions,
+                else_result,
+                ..
+            } => {
+                match operand {
+                    Some(op_expr) => {
+                        let op_val = self.evaluate_aggregate_expr_with_grouping(
+                            op_expr,
+                            input_schema,
+                            group_rows,
+                            group_key,
+                            group_exprs,
+                            active_indices,
+                        )?;
+                        for cond in conditions {
+                            let when_val = self.evaluate_aggregate_expr_with_grouping(
+                                &cond.condition,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                group_exprs,
+                                active_indices,
+                            )?;
+                            if op_val == when_val {
+                                return self.evaluate_aggregate_expr_with_grouping(
+                                    &cond.result,
+                                    input_schema,
+                                    group_rows,
+                                    group_key,
+                                    group_exprs,
+                                    active_indices,
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        for cond in conditions {
+                            let cond_val = self.evaluate_aggregate_expr_with_grouping(
+                                &cond.condition,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                group_exprs,
+                                active_indices,
+                            )?;
+                            if cond_val == Value::Bool(true) {
+                                return self.evaluate_aggregate_expr_with_grouping(
+                                    &cond.result,
+                                    input_schema,
+                                    group_rows,
+                                    group_key,
+                                    group_exprs,
+                                    active_indices,
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(else_expr) = else_result {
+                    self.evaluate_aggregate_expr_with_grouping(
+                        else_expr,
+                        input_schema,
+                        group_rows,
+                        group_key,
+                        group_exprs,
+                        active_indices,
+                    )
+                } else {
+                    Ok(Value::null())
+                }
+            }
+            Expr::Value(v) => self.sql_value_to_value(&v.value),
+            _ => {
+                if let Some(row) = group_rows.first() {
+                    evaluator.evaluate(expr, row)
+                } else {
+                    Ok(Value::null())
+                }
+            }
+        }
+    }
+
+    fn evaluate_grouping_function(
+        &self,
+        func: &ast::Function,
+        group_exprs: &[Expr],
+        active_indices: &[usize],
+    ) -> Result<Value> {
+        let args = match &func.args {
+            ast::FunctionArguments::List(list) => &list.args,
+            _ => return Ok(Value::Int64(0)),
+        };
+
+        if args.is_empty() {
+            return Ok(Value::Int64(0));
+        }
+
+        if let Some(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr))) = args.first()
+        {
+            for (i, ge) in group_exprs.iter().enumerate() {
+                if self.exprs_equal(arg_expr, ge) {
+                    let is_active = active_indices.contains(&i);
+                    return Ok(Value::Int64(if is_active { 0 } else { 1 }));
+                }
+            }
+        }
+
+        Ok(Value::Int64(0))
+    }
+
+    fn evaluate_grouping_id_function(
+        &self,
+        func: &ast::Function,
+        group_exprs: &[Expr],
+        active_indices: &[usize],
+    ) -> Result<Value> {
+        let args = match &func.args {
+            ast::FunctionArguments::List(list) => &list.args,
+            _ => return Ok(Value::Int64(0)),
+        };
+
+        if args.is_empty() {
+            return Ok(Value::Int64(0));
+        }
+
+        let mut result: i64 = 0;
+        let n = args.len();
+        for (arg_pos, arg) in args.iter().enumerate() {
+            if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg {
+                for (i, ge) in group_exprs.iter().enumerate() {
+                    if self.exprs_equal(arg_expr, ge) {
+                        let is_active = active_indices.contains(&i);
+                        if !is_active {
+                            result |= 1 << (n - 1 - arg_pos);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(Value::Int64(result))
     }
 
     fn is_aggregate_function(&self, name: &str) -> bool {
@@ -3087,12 +3619,11 @@ impl QueryExecutor {
                     .evaluate(&order_expr.expr, b)
                     .unwrap_or(Value::null());
 
-                let ordering = self.compare_values(&a_val, &b_val);
-                let ordering = if order_expr.options.asc.unwrap_or(true) {
-                    ordering
-                } else {
-                    ordering.reverse()
-                };
+                let asc = order_expr.options.asc.unwrap_or(true);
+                let nulls_first = order_expr.options.nulls_first.unwrap_or(!asc);
+
+                let ordering = self.compare_values_with_nulls(&a_val, &b_val, nulls_first);
+                let ordering = if asc { ordering } else { ordering.reverse() };
 
                 if ordering != std::cmp::Ordering::Equal {
                     return ordering;
@@ -3102,6 +3633,32 @@ impl QueryExecutor {
         });
 
         Ok(())
+    }
+
+    fn compare_values_with_nulls(
+        &self,
+        a: &Value,
+        b: &Value,
+        nulls_first: bool,
+    ) -> std::cmp::Ordering {
+        if a.is_null() && b.is_null() {
+            return std::cmp::Ordering::Equal;
+        }
+        if a.is_null() {
+            return if nulls_first {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
+        }
+        if b.is_null() {
+            return if nulls_first {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            };
+        }
+        self.compare_values(a, b)
     }
 
     fn compare_values(&self, a: &Value, b: &Value) -> std::cmp::Ordering {
