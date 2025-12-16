@@ -5359,8 +5359,9 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::UnnamedExpr(expr) => {
+                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
                     let val = evaluator
-                        .evaluate(expr, &sample_record)
+                        .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
                     let name = self.expr_to_alias(expr, idx);
                     let data_type = if val.data_type() == DataType::Unknown {
@@ -5372,8 +5373,9 @@ impl QueryExecutor {
                     all_cols.push((name, data_type));
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
+                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
                     let val = evaluator
-                        .evaluate(expr, &sample_record)
+                        .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
                     let data_type = if val.data_type() == DataType::Unknown {
                         self.infer_expr_type(expr, input_schema)
@@ -5435,7 +5437,8 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
-                        let val = evaluator.evaluate(expr, row)?;
+                        let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                        let val = evaluator.evaluate(&resolved_expr, row)?;
                         values.push(val);
                     }
                 }
@@ -6745,29 +6748,56 @@ impl QueryExecutor {
                     negated: *negated,
                 })
             }
+            Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if name == "ARRAY" {
+                    if let ast::FunctionArguments::Subquery(query) = &func.args {
+                        let result = self.execute_query(query)?;
+                        let rows = result.to_records()?;
+                        let values: Vec<Value> = rows
+                            .iter()
+                            .map(|row| row.values().first().cloned().unwrap_or_else(Value::null))
+                            .collect();
+                        let arr_value = Value::array(values);
+                        return Ok(self.value_to_expr(&arr_value));
+                    }
+                }
+                Ok(expr.clone())
+            }
             _ => Ok(expr.clone()),
         }
     }
 
     fn value_to_expr(&self, value: &Value) -> Expr {
-        let sql_value = match value {
-            Value::Null => SqlValue::Null,
-            Value::Bool(b) => SqlValue::Boolean(*b),
-            Value::Int64(i) => SqlValue::Number(i.to_string(), false),
-            Value::Float64(f) => {
-                let s = f.to_string();
-                let s = if s.contains('.') || s.contains('e') || s.contains('E') {
-                    s
-                } else {
-                    format!("{}.0", s)
-                };
-                SqlValue::Number(s, false)
+        match value {
+            Value::Array(arr) => {
+                let elements: Vec<Expr> = arr.iter().map(|v| self.value_to_expr(v)).collect();
+                Expr::Array(ast::Array {
+                    elem: elements,
+                    named: false,
+                })
             }
-            Value::String(s) => SqlValue::SingleQuotedString(s.clone()),
-            Value::Numeric(n) => SqlValue::Number(n.to_string(), false),
-            _ => SqlValue::Null,
-        };
-        Expr::Value(sql_value.into())
+            _ => {
+                let sql_value = match value {
+                    Value::Null => SqlValue::Null,
+                    Value::Bool(b) => SqlValue::Boolean(*b),
+                    Value::Int64(i) => SqlValue::Number(i.to_string(), false),
+                    Value::Float64(f) => {
+                        let s = f.to_string();
+                        let s = if s.contains('.') || s.contains('e') || s.contains('E') {
+                            s
+                        } else {
+                            format!("{}.0", s)
+                        };
+                        SqlValue::Number(s, false)
+                    }
+                    Value::String(s) => SqlValue::SingleQuotedString(s.clone()),
+                    Value::Numeric(n) => SqlValue::Number(n.to_string(), false),
+                    _ => SqlValue::Null,
+                };
+                Expr::Value(sql_value.into())
+            }
+        }
     }
 
     fn expr_to_alias(&self, expr: &Expr, idx: usize) -> String {
