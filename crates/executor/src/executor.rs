@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use sqlparser::ast::{
-    self, Expr, LimitClause, ObjectName, OrderBy, OrderByExpr, OrderByKind, Query, Select,
-    SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Value as SqlValue,
+    self, CreateFunctionBody, Expr, LimitClause, ObjectName, OrderBy, OrderByExpr, OrderByKind,
+    Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Value as SqlValue,
 };
 use sqlparser::dialect::BigQueryDialect;
 use sqlparser::parser::Parser;
@@ -18,7 +18,7 @@ use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, StructField, Value};
 use yachtsql_storage::{Column, Field, Record, Schema, Table, TableSchemaOps};
 
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, UserFunction, UserProcedure};
 use crate::evaluator::{Evaluator, parse_byte_string_escapes};
 
 #[derive(Debug, Clone)]
@@ -74,6 +74,25 @@ impl QueryExecutor {
             Statement::AlterTable {
                 name, operations, ..
             } => self.execute_alter_table(name, operations),
+            Statement::CreateFunction(create_func) => self.execute_create_function(create_func),
+            Statement::DropFunction {
+                if_exists,
+                func_desc,
+                ..
+            } => self.execute_drop_function(func_desc, *if_exists),
+            Statement::CreateProcedure {
+                or_alter,
+                name,
+                params,
+                body,
+                ..
+            } => self.execute_create_procedure(name, params, body, *or_alter),
+            Statement::DropProcedure {
+                if_exists,
+                proc_desc,
+                ..
+            } => self.execute_drop_procedure(proc_desc, *if_exists),
+            Statement::Call(func) => self.execute_call(func),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Statement type not yet supported: {:?}",
                 stmt
@@ -200,7 +219,7 @@ impl QueryExecutor {
     fn evaluate_select_without_from(&self, select: &Select) -> Result<(Schema, Vec<Record>)> {
         let empty_schema = Schema::new();
         let empty_record = Record::from_values(vec![]);
-        let evaluator = Evaluator::new(&empty_schema);
+        let evaluator = Evaluator::with_user_functions(&empty_schema, self.catalog.get_functions());
 
         let mut result_values = Vec::new();
         let mut field_names = Vec::new();
@@ -239,7 +258,7 @@ impl QueryExecutor {
 
     fn evaluate_select_with_from(&self, select: &Select) -> Result<(Schema, Vec<Record>)> {
         let (input_schema, input_rows) = self.get_from_data(&select.from)?;
-        let evaluator = Evaluator::new(&input_schema);
+        let evaluator = Evaluator::with_user_functions(&input_schema, self.catalog.get_functions());
 
         let mut filtered_rows: Vec<Record> = if let Some(selection) = &select.selection {
             input_rows
@@ -300,7 +319,7 @@ impl QueryExecutor {
         cte_tables: &HashMap<String, Table>,
     ) -> Result<(Schema, Vec<Record>, bool)> {
         let (input_schema, input_rows) = self.get_from_data_ctes(&select.from, cte_tables)?;
-        let evaluator = Evaluator::new(&input_schema);
+        let evaluator = Evaluator::with_user_functions(&input_schema, self.catalog.get_functions());
 
         let mut filtered_rows: Vec<Record> = if let Some(selection) = &select.selection {
             input_rows
@@ -635,7 +654,8 @@ impl QueryExecutor {
         right_rows: &[Record],
         constraint: &ast::JoinConstraint,
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(combined_schema);
+        let evaluator =
+            Evaluator::with_user_functions(combined_schema, self.catalog.get_functions());
         let mut result_rows = Vec::new();
 
         for left_record in left_rows {
@@ -678,7 +698,8 @@ impl QueryExecutor {
         right_rows: &[Record],
         constraint: &ast::JoinConstraint,
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(combined_schema);
+        let evaluator =
+            Evaluator::with_user_functions(combined_schema, self.catalog.get_functions());
         let mut result_rows = Vec::new();
         let null_right: Vec<Value> = (0..right_schema.field_count())
             .map(|_| Value::null())
@@ -735,7 +756,8 @@ impl QueryExecutor {
         right_rows: &[Record],
         constraint: &ast::JoinConstraint,
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(combined_schema);
+        let evaluator =
+            Evaluator::with_user_functions(combined_schema, self.catalog.get_functions());
         let mut result_rows = Vec::new();
         let null_left: Vec<Value> = (0..left_schema.field_count())
             .map(|_| Value::null())
@@ -791,7 +813,8 @@ impl QueryExecutor {
         right_rows: &[Record],
         constraint: &ast::JoinConstraint,
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(combined_schema);
+        let evaluator =
+            Evaluator::with_user_functions(combined_schema, self.catalog.get_functions());
         let mut result_rows = Vec::new();
         let null_left: Vec<Value> = (0..left_schema.field_count())
             .map(|_| Value::null())
@@ -960,7 +983,7 @@ impl QueryExecutor {
         rows: &[Record],
         select: &Select,
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(input_schema);
+        let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
 
         let group_by_is_empty =
             matches!(&select.group_by, ast::GroupByExpr::Expressions(v, _) if v.is_empty());
@@ -1050,7 +1073,8 @@ impl QueryExecutor {
         let schema = Schema::from_fields(output_fields.unwrap_or_default());
 
         if let Some(having) = &select.having {
-            let having_evaluator = Evaluator::new(&schema);
+            let having_evaluator =
+                Evaluator::with_user_functions(&schema, self.catalog.get_functions());
             result_rows.retain(|row| {
                 having_evaluator
                     .evaluate_to_bool(having, row)
@@ -1076,7 +1100,7 @@ impl QueryExecutor {
         group_key: &[Value],
         group_by: &ast::GroupByExpr,
     ) -> Result<Value> {
-        let evaluator = Evaluator::new(input_schema);
+        let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
 
         match expr {
             Expr::Function(func) => {
@@ -1232,7 +1256,7 @@ impl QueryExecutor {
         input_schema: &Schema,
         group_rows: &[&Record],
     ) -> Result<Value> {
-        let evaluator = Evaluator::new(input_schema);
+        let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
 
         let is_distinct = matches!(&func.args, ast::FunctionArguments::List(list) if list.duplicate_treatment == Some(ast::DuplicateTreatment::Distinct));
 
@@ -1529,7 +1553,7 @@ impl QueryExecutor {
         rows: &[Record],
         projection: &[SelectItem],
     ) -> Result<(Schema, Vec<Record>)> {
-        let evaluator = Evaluator::new(input_schema);
+        let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
 
         let mut all_cols: Vec<(String, DataType)> = Vec::new();
 
@@ -1595,7 +1619,7 @@ impl QueryExecutor {
     }
 
     fn sort_rows(&self, schema: &Schema, rows: &mut Vec<Record>, order_by: &OrderBy) -> Result<()> {
-        let evaluator = Evaluator::new(schema);
+        let evaluator = Evaluator::with_user_functions(schema, self.catalog.get_functions());
 
         let exprs: &[OrderByExpr] = match &order_by.kind {
             OrderByKind::Expressions(exprs) => exprs,
@@ -1779,6 +1803,178 @@ impl QueryExecutor {
         }
     }
 
+    fn execute_create_function(&mut self, create: &ast::CreateFunction) -> Result<Table> {
+        let name = create.name.to_string();
+
+        let body = match &create.function_body {
+            Some(CreateFunctionBody::AsBeforeOptions(expr)) => expr.clone(),
+            Some(CreateFunctionBody::AsAfterOptions(expr)) => expr.clone(),
+            _ => {
+                return Err(Error::UnsupportedFeature(
+                    "Only SQL UDFs with AS (expr) are supported".to_string(),
+                ));
+            }
+        };
+
+        let return_type = match &create.return_type {
+            Some(dt) => self.sql_type_to_data_type(dt)?,
+            None => {
+                return Err(Error::InvalidQuery(
+                    "RETURNS clause is required for CREATE FUNCTION".to_string(),
+                ));
+            }
+        };
+
+        let parameters = create.args.clone().unwrap_or_default();
+
+        if create.if_not_exists && self.catalog.function_exists(&name) {
+            return Ok(Table::empty(Schema::new()));
+        }
+
+        let func = UserFunction {
+            name: name.clone(),
+            parameters,
+            return_type,
+            body,
+            is_temporary: create.temporary,
+        };
+
+        self.catalog.create_function(func, create.or_replace)?;
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn execute_drop_function(
+        &mut self,
+        func_desc: &[ast::FunctionDesc],
+        if_exists: bool,
+    ) -> Result<Table> {
+        for desc in func_desc {
+            let name = desc.name.to_string();
+            if if_exists && !self.catalog.function_exists(&name) {
+                continue;
+            }
+            self.catalog.drop_function(&name)?;
+        }
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn execute_create_procedure(
+        &mut self,
+        name: &ObjectName,
+        params: &Option<Vec<ast::ProcedureParam>>,
+        body: &ast::ConditionalStatements,
+        or_replace: bool,
+    ) -> Result<Table> {
+        let proc_name = name.to_string();
+        let parameters = params.clone().unwrap_or_default();
+
+        let proc = UserProcedure {
+            name: proc_name,
+            parameters,
+            body: body.clone(),
+        };
+
+        self.catalog.create_procedure(proc, or_replace)?;
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn execute_drop_procedure(
+        &mut self,
+        proc_desc: &[ast::FunctionDesc],
+        if_exists: bool,
+    ) -> Result<Table> {
+        for desc in proc_desc {
+            let name = desc.name.to_string();
+            if if_exists && !self.catalog.procedure_exists(&name) {
+                continue;
+            }
+            self.catalog.drop_procedure(&name)?;
+        }
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn execute_call(&mut self, func: &ast::Function) -> Result<Table> {
+        let name = func.name.to_string();
+        let proc = self
+            .catalog
+            .get_procedure(&name)
+            .ok_or_else(|| Error::invalid_query(format!("Procedure not found: {}", name)))?
+            .clone();
+
+        let args = self.extract_call_args(func)?;
+
+        let mut param_values: HashMap<String, Value> = HashMap::new();
+        for (i, param) in proc.parameters.iter().enumerate() {
+            let param_name = param.name.value.to_uppercase();
+            let value = args.get(i).cloned().unwrap_or(Value::null());
+            param_values.insert(param_name, value);
+        }
+
+        match &proc.body {
+            ast::ConditionalStatements::Sequence { statements } => {
+                let mut result = Table::empty(Schema::new());
+                for stmt in statements {
+                    result = self.execute_statement(stmt)?;
+                }
+                Ok(result)
+            }
+            ast::ConditionalStatements::BeginEnd(begin_end) => {
+                let mut result = Table::empty(Schema::new());
+                for stmt in &begin_end.statements {
+                    result = self.execute_statement(stmt)?;
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn extract_call_args(&self, func: &ast::Function) -> Result<Vec<Value>> {
+        let empty_record = Record::from_values(vec![]);
+        let empty_schema = Schema::new();
+        let evaluator = Evaluator::with_user_functions(&empty_schema, self.catalog.get_functions());
+
+        match &func.args {
+            ast::FunctionArguments::None => Ok(vec![]),
+            ast::FunctionArguments::Subquery(_) => Err(Error::UnsupportedFeature(
+                "Subquery arguments not supported in CALL".to_string(),
+            )),
+            ast::FunctionArguments::List(list) => {
+                let mut args = Vec::new();
+                for arg in &list.args {
+                    match arg {
+                        ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                            ast::FunctionArgExpr::Expr(expr) => {
+                                args.push(evaluator.evaluate(expr, &empty_record)?);
+                            }
+                            ast::FunctionArgExpr::Wildcard => {
+                                return Err(Error::InvalidQuery(
+                                    "Wildcard not allowed in CALL".to_string(),
+                                ));
+                            }
+                            ast::FunctionArgExpr::QualifiedWildcard(_) => {
+                                return Err(Error::InvalidQuery(
+                                    "Qualified wildcard not allowed in CALL".to_string(),
+                                ));
+                            }
+                        },
+                        ast::FunctionArg::Named { arg, .. }
+                        | ast::FunctionArg::ExprNamed { arg, .. } => match arg {
+                            ast::FunctionArgExpr::Expr(expr) => {
+                                args.push(evaluator.evaluate(expr, &empty_record)?);
+                            }
+                            _ => {
+                                return Err(Error::InvalidQuery(
+                                    "Invalid argument in CALL".to_string(),
+                                ));
+                            }
+                        },
+                    }
+                }
+                Ok(args)
+            }
+        }
+    }
+
     fn execute_insert(&mut self, insert: &ast::Insert) -> Result<Table> {
         let table_name = insert.table.to_string();
         let table_data = self
@@ -1869,13 +2065,14 @@ impl QueryExecutor {
         selection: Option<&Expr>,
     ) -> Result<Table> {
         let table_name = self.extract_single_table_name(table)?;
+        let user_functions = self.catalog.get_functions().clone();
         let table_data = self
             .catalog
             .get_table_mut(&table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
 
         let schema = table_data.schema().clone();
-        let evaluator = Evaluator::new(&schema);
+        let evaluator = Evaluator::with_user_functions(&schema, &user_functions);
 
         let assignment_indices: Vec<(usize, &Expr)> = assignments
             .iter()
@@ -1920,13 +2117,14 @@ impl QueryExecutor {
 
     fn execute_delete(&mut self, delete: &ast::Delete) -> Result<Table> {
         let table_name = self.extract_delete_table_name(delete)?;
+        let user_functions = self.catalog.get_functions().clone();
         let table_data = self
             .catalog
             .get_table_mut(&table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
 
         let schema = table_data.schema().clone();
-        let evaluator = Evaluator::new(&schema);
+        let evaluator = Evaluator::with_user_functions(&schema, &user_functions);
 
         match &delete.selection {
             Some(selection) => {
@@ -2407,7 +2605,7 @@ impl QueryExecutor {
         projection: &[SelectItem],
     ) -> Result<HashMap<String, Vec<Value>>> {
         let mut window_results: HashMap<String, Vec<Value>> = HashMap::new();
-        let evaluator = Evaluator::new(schema);
+        let evaluator = Evaluator::with_user_functions(schema, self.catalog.get_functions());
 
         for item in projection {
             let expr = match item {
@@ -3309,7 +3507,7 @@ impl QueryExecutor {
         row_idx: usize,
         window_results: &HashMap<String, Vec<Value>>,
     ) -> Result<Value> {
-        let evaluator = Evaluator::new(schema);
+        let evaluator = Evaluator::with_user_functions(schema, self.catalog.get_functions());
 
         match expr {
             Expr::Function(func) if func.over.is_some() => {

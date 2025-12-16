@@ -70,13 +70,31 @@ pub fn parse_byte_string_escapes(s: &str) -> Vec<u8> {
     result
 }
 
+use std::collections::HashMap;
+
+use crate::catalog::UserFunction;
+
 pub struct Evaluator<'a> {
     schema: &'a Schema,
+    user_functions: Option<&'a HashMap<String, UserFunction>>,
 }
 
 impl<'a> Evaluator<'a> {
     pub fn new(schema: &'a Schema) -> Self {
-        Self { schema }
+        Self {
+            schema,
+            user_functions: None,
+        }
+    }
+
+    pub fn with_user_functions(
+        schema: &'a Schema,
+        user_functions: &'a HashMap<String, UserFunction>,
+    ) -> Self {
+        Self {
+            schema,
+            user_functions: Some(user_functions),
+        }
     }
 
     pub fn evaluate(&self, expr: &Expr, record: &Record) -> Result<Value> {
@@ -2777,10 +2795,260 @@ impl<'a> Evaluator<'a> {
                 }
                 Ok(args[0].clone())
             }
-            _ => Err(Error::UnsupportedFeature(format!(
-                "Function not yet supported: {}",
-                name
-            ))),
+            _ => {
+                if let Some(udf_result) = self.try_evaluate_udf(&name, func, record)? {
+                    return Ok(udf_result);
+                }
+                Err(Error::UnsupportedFeature(format!(
+                    "Function not yet supported: {}",
+                    name
+                )))
+            }
+        }
+    }
+
+    fn try_evaluate_udf(
+        &self,
+        name: &str,
+        func: &sqlparser::ast::Function,
+        record: &Record,
+    ) -> Result<Option<Value>> {
+        let user_functions = match self.user_functions {
+            Some(funcs) => funcs,
+            None => return Ok(None),
+        };
+
+        let udf = match user_functions.get(name) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+
+        let args = self.extract_udf_arg_exprs(func)?;
+
+        if args.len() != udf.parameters.len() {
+            return Err(Error::InvalidQuery(format!(
+                "Function {} expects {} arguments, got {}",
+                name,
+                udf.parameters.len(),
+                args.len()
+            )));
+        }
+
+        let substituted_body = self.substitute_udf_params(&udf.body, &udf.parameters, &args);
+
+        Ok(Some(self.evaluate(&substituted_body, record)?))
+    }
+
+    fn extract_udf_arg_exprs(&self, func: &sqlparser::ast::Function) -> Result<Vec<Expr>> {
+        match &func.args {
+            sqlparser::ast::FunctionArguments::None => Ok(vec![]),
+            sqlparser::ast::FunctionArguments::Subquery(_) => Err(Error::UnsupportedFeature(
+                "Subquery arguments not supported in UDF".to_string(),
+            )),
+            sqlparser::ast::FunctionArguments::List(list) => {
+                let mut exprs = Vec::new();
+                for arg in &list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(arg_expr)
+                        | sqlparser::ast::FunctionArg::ExprNamed { arg: arg_expr, .. } => {
+                            match arg_expr {
+                                sqlparser::ast::FunctionArgExpr::Expr(expr) => {
+                                    exprs.push(expr.clone());
+                                }
+                                _ => {
+                                    return Err(Error::InvalidQuery(
+                                        "Invalid argument in UDF call".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        sqlparser::ast::FunctionArg::Named { arg, .. } => match arg {
+                            sqlparser::ast::FunctionArgExpr::Expr(expr) => {
+                                exprs.push(expr.clone());
+                            }
+                            _ => {
+                                return Err(Error::InvalidQuery(
+                                    "Invalid argument in UDF call".to_string(),
+                                ));
+                            }
+                        },
+                    }
+                }
+                Ok(exprs)
+            }
+        }
+    }
+
+    fn substitute_udf_params(
+        &self,
+        expr: &Expr,
+        params: &[sqlparser::ast::OperateFunctionArg],
+        args: &[Expr],
+    ) -> Expr {
+        match expr {
+            Expr::Identifier(ident) => {
+                let ident_upper = ident.value.to_uppercase();
+                for (i, param) in params.iter().enumerate() {
+                    let param_name = match &param.name {
+                        Some(n) => n.value.to_uppercase(),
+                        None => continue,
+                    };
+                    if param_name == ident_upper {
+                        return args[i].clone();
+                    }
+                }
+                expr.clone()
+            }
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(self.substitute_udf_params(left, params, args)),
+                op: op.clone(),
+                right: Box::new(self.substitute_udf_params(right, params, args)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(self.substitute_udf_params(inner, params, args)),
+            },
+            Expr::Nested(inner) => {
+                Expr::Nested(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::Function(func) => {
+                let new_args = match &func.args {
+                    sqlparser::ast::FunctionArguments::None => {
+                        sqlparser::ast::FunctionArguments::None
+                    }
+                    sqlparser::ast::FunctionArguments::Subquery(q) => {
+                        sqlparser::ast::FunctionArguments::Subquery(q.clone())
+                    }
+                    sqlparser::ast::FunctionArguments::List(list) => {
+                        let new_list_args: Vec<_> = list
+                            .args
+                            .iter()
+                            .map(|arg| match arg {
+                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                                    sqlparser::ast::FunctionArgExpr::Expr(e) => {
+                                        sqlparser::ast::FunctionArg::Unnamed(
+                                            sqlparser::ast::FunctionArgExpr::Expr(
+                                                self.substitute_udf_params(e, params, args),
+                                            ),
+                                        )
+                                    }
+                                    other => sqlparser::ast::FunctionArg::Unnamed(other.clone()),
+                                },
+                                sqlparser::ast::FunctionArg::Named {
+                                    name,
+                                    arg,
+                                    operator,
+                                } => match arg {
+                                    sqlparser::ast::FunctionArgExpr::Expr(e) => {
+                                        sqlparser::ast::FunctionArg::Named {
+                                            name: name.clone(),
+                                            arg: sqlparser::ast::FunctionArgExpr::Expr(
+                                                self.substitute_udf_params(e, params, args),
+                                            ),
+                                            operator: operator.clone(),
+                                        }
+                                    }
+                                    other => sqlparser::ast::FunctionArg::Named {
+                                        name: name.clone(),
+                                        arg: other.clone(),
+                                        operator: operator.clone(),
+                                    },
+                                },
+                                sqlparser::ast::FunctionArg::ExprNamed {
+                                    name,
+                                    arg,
+                                    operator,
+                                } => match arg {
+                                    sqlparser::ast::FunctionArgExpr::Expr(e) => {
+                                        sqlparser::ast::FunctionArg::ExprNamed {
+                                            name: name.clone(),
+                                            arg: sqlparser::ast::FunctionArgExpr::Expr(
+                                                self.substitute_udf_params(e, params, args),
+                                            ),
+                                            operator: operator.clone(),
+                                        }
+                                    }
+                                    other => sqlparser::ast::FunctionArg::ExprNamed {
+                                        name: name.clone(),
+                                        arg: other.clone(),
+                                        operator: operator.clone(),
+                                    },
+                                },
+                            })
+                            .collect();
+                        sqlparser::ast::FunctionArguments::List(
+                            sqlparser::ast::FunctionArgumentList {
+                                duplicate_treatment: list.duplicate_treatment,
+                                args: new_list_args,
+                                clauses: list.clauses.clone(),
+                            },
+                        )
+                    }
+                };
+                Expr::Function(sqlparser::ast::Function {
+                    name: func.name.clone(),
+                    uses_odbc_syntax: func.uses_odbc_syntax,
+                    args: new_args,
+                    filter: func.filter.clone(),
+                    null_treatment: func.null_treatment,
+                    over: func.over.clone(),
+                    within_group: func.within_group.clone(),
+                    parameters: func.parameters.clone(),
+                })
+            }
+            Expr::Case {
+                case_token,
+                end_token,
+                operand,
+                conditions,
+                else_result,
+            } => Expr::Case {
+                case_token: case_token.clone(),
+                end_token: end_token.clone(),
+                operand: operand
+                    .as_ref()
+                    .map(|o| Box::new(self.substitute_udf_params(o, params, args))),
+                conditions: conditions
+                    .iter()
+                    .map(|cw| sqlparser::ast::CaseWhen {
+                        condition: self.substitute_udf_params(&cw.condition, params, args),
+                        result: self.substitute_udf_params(&cw.result, params, args),
+                    })
+                    .collect(),
+                else_result: else_result
+                    .as_ref()
+                    .map(|e| Box::new(self.substitute_udf_params(e, params, args))),
+            },
+            Expr::Cast {
+                expr: inner,
+                data_type,
+                format,
+                kind,
+            } => Expr::Cast {
+                expr: Box::new(self.substitute_udf_params(inner, params, args)),
+                data_type: data_type.clone(),
+                format: format.clone(),
+                kind: kind.clone(),
+            },
+            Expr::IsFalse(inner) => {
+                Expr::IsFalse(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::IsNotFalse(inner) => {
+                Expr::IsNotFalse(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::IsTrue(inner) => {
+                Expr::IsTrue(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::IsNotTrue(inner) => {
+                Expr::IsNotTrue(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::IsNull(inner) => {
+                Expr::IsNull(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            Expr::IsNotNull(inner) => {
+                Expr::IsNotNull(Box::new(self.substitute_udf_params(inner, params, args)))
+            }
+            _ => expr.clone(),
         }
     }
 
