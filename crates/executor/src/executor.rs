@@ -2064,21 +2064,20 @@ impl QueryExecutor {
             self.sort_rows(&pre_projection_schema, &mut rows, order_by)?;
         }
 
-        let (schema, rows) = if do_projection {
-            let (out_schema, mut out_rows) =
+        let (schema, mut rows) = if do_projection {
+            let (schema, mut projected_rows) =
                 self.project_rows(&pre_projection_schema, &rows, &select.projection)?;
             if select.distinct.is_some() {
                 let mut seen = std::collections::HashSet::new();
-                out_rows.retain(|row| {
+                projected_rows.retain(|row| {
                     let key = format!("{:?}", row.values());
                     seen.insert(key)
                 });
             }
-            (out_schema, out_rows)
+            (schema, projected_rows)
         } else {
             (pre_projection_schema, rows)
         };
-        let mut rows = rows;
 
         if let Some(limit_clause) = limit_clause {
             match limit_clause {
@@ -2472,10 +2471,63 @@ impl QueryExecutor {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    if self.expr_references_non_projected(
+                        &order_expr.expr,
+                        &projected_columns,
+                        input_schema,
+                    ) {
+                        return true;
+                    }
+                }
             }
         }
         false
+    }
+
+    fn expr_references_non_projected(
+        &self,
+        expr: &Expr,
+        projected_columns: &std::collections::HashSet<String>,
+        input_schema: &Schema,
+    ) -> bool {
+        match expr {
+            Expr::Identifier(ident) => {
+                let col_name = ident.value.to_uppercase();
+                !projected_columns.contains(&col_name)
+                    && input_schema
+                        .fields()
+                        .iter()
+                        .any(|f| f.name.to_uppercase() == col_name)
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.expr_references_non_projected(left, projected_columns, input_schema)
+                    || self.expr_references_non_projected(right, projected_columns, input_schema)
+            }
+            Expr::UnaryOp { expr, .. } => {
+                self.expr_references_non_projected(expr, projected_columns, input_schema)
+            }
+            Expr::Function(func) => {
+                if let ast::FunctionArguments::List(args) = &func.args {
+                    for arg in &args.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) = arg {
+                            if self.expr_references_non_projected(
+                                e,
+                                projected_columns,
+                                input_schema,
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Expr::Nested(inner) => {
+                self.expr_references_non_projected(inner, projected_columns, input_schema)
+            }
+            _ => false,
+        }
     }
 
     fn get_from_data(&self, from: &[TableWithJoins]) -> Result<(Schema, Vec<Record>)> {
@@ -5831,11 +5883,22 @@ impl QueryExecutor {
                     }
                 }
 
-                if nullable {
-                    Ok(Field::nullable(col.name.value.clone(), data_type))
+                let default_value = col.options.iter().find_map(|opt| {
+                    if let ast::ColumnOption::Default(expr) = &opt.option {
+                        self.evaluate_literal_expr(expr).ok()
+                    } else {
+                        None
+                    }
+                });
+                let mut field = if nullable {
+                    Field::nullable(col.name.value.clone(), data_type)
                 } else {
-                    Ok(Field::required(col.name.value.clone(), data_type))
+                    Field::required(col.name.value.clone(), data_type)
+                };
+                if let Some(default) = default_value {
+                    field = field.with_default(default);
                 }
+                Ok(field)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -5859,13 +5922,48 @@ impl QueryExecutor {
         if_not_exists: bool,
         materialized: bool,
     ) -> Result<Table> {
+        let view_name = name.to_string();
+
         if materialized {
-            return Err(Error::UnsupportedFeature(
-                "MATERIALIZED VIEW not yet supported".to_string(),
-            ));
+            let result_table = self.execute_query(query)?;
+            let schema = result_table.schema().clone();
+
+            if or_replace {
+                let _ = self.catalog.drop_table(&view_name);
+            } else if self.catalog.table_exists(&view_name) && !if_not_exists {
+                return Err(Error::invalid_query(format!(
+                    "Materialized view already exists: {}",
+                    view_name
+                )));
+            }
+
+            if self.catalog.table_exists(&view_name) {
+                return Ok(Table::empty(Schema::new()));
+            }
+
+            self.catalog.create_table(&view_name, schema)?;
+
+            let table_data = self.catalog.get_table_mut(&view_name).unwrap();
+            for i in 0..result_table.row_count() {
+                let row_values: Vec<Value> = result_table
+                    .schema()
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .map(|(col_idx, field)| {
+                        result_table
+                            .columns()
+                            .get(&field.name)
+                            .map(|col| col.get_value(i))
+                            .unwrap_or(Value::null())
+                    })
+                    .collect();
+                table_data.push_row(row_values)?;
+            }
+
+            return Ok(Table::empty(Schema::new()));
         }
 
-        let view_name = name.to_string();
         let column_aliases: Vec<String> = columns.iter().map(|c| c.name.value.clone()).collect();
         let query_string = query.to_string();
 
@@ -6178,6 +6276,12 @@ impl QueryExecutor {
             .source
             .as_ref()
             .ok_or_else(|| Error::InvalidQuery("INSERT requires VALUES or SELECT".to_string()))?;
+
+        let default_row_values: Vec<Value> = schema
+            .fields()
+            .iter()
+            .map(|f| f.default_value.clone().unwrap_or(Value::null()))
+            .collect();
 
         match source.body.as_ref() {
             SetExpr::Values(values) => {

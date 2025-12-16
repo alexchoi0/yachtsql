@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::DataType;
+use yachtsql_common::types::{DataType, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FieldMode {
@@ -17,6 +17,7 @@ pub struct Field {
     pub mode: FieldMode,
     pub description: Option<String>,
     pub source_table: Option<String>,
+    pub default_value: Option<Value>,
 }
 
 impl Field {
@@ -27,6 +28,7 @@ impl Field {
             mode,
             description: None,
             source_table: None,
+            default_value: None,
         }
     }
 
@@ -49,6 +51,11 @@ impl Field {
 
     pub fn with_source_table(mut self, table: impl Into<String>) -> Self {
         self.source_table = Some(table.into());
+        self
+    }
+
+    pub fn with_default(mut self, default_value: Value) -> Self {
+        self.default_value = Some(default_value);
         self
     }
 

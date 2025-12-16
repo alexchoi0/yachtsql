@@ -59,11 +59,10 @@ fn test_not_in_where_clause() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_in_with_null() {
     let mut executor = create_executor();
     let result = executor.execute_sql("SELECT NULL IN (1, 2, 3)").unwrap();
-    assert_table_eq!(result, [[false]]);
+    assert_table_eq!(result, [[null]]);
 }
 
 #[test]

@@ -672,10 +672,6 @@ impl<'a> Evaluator<'a> {
                 if val.is_null() {
                     return Ok(Value::null());
                 }
-                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                    expected: "STRING".to_string(),
-                    actual: val.data_type().to_string(),
-                })?;
 
                 let start = if let Some(from_expr) = substring_from {
                     let from_val = self.evaluate(from_expr, record)?;
@@ -684,6 +680,25 @@ impl<'a> Evaluator<'a> {
                     1
                 };
                 let start_idx = if start > 0 { start - 1 } else { 0 };
+
+                if let Some(bytes) = val.as_bytes() {
+                    if start_idx >= bytes.len() {
+                        return Ok(Value::bytes(Vec::new()));
+                    }
+                    let result: Vec<u8> = if let Some(for_expr) = substring_for {
+                        let len_val = self.evaluate(for_expr, record)?;
+                        let len = len_val.as_i64().unwrap_or(0) as usize;
+                        bytes[start_idx..].iter().take(len).copied().collect()
+                    } else {
+                        bytes[start_idx..].to_vec()
+                    };
+                    return Ok(Value::bytes(result));
+                }
+
+                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING or BYTES".to_string(),
+                    actual: val.data_type().to_string(),
+                })?;
 
                 let chars: Vec<char> = s.chars().collect();
                 if start_idx >= chars.len() {
@@ -4573,9 +4588,36 @@ impl<'a> Evaluator<'a> {
                 }
                 let format_str = args[0].as_str().unwrap_or("%s");
                 let mut result = format_str.to_string();
-                for (i, arg) in args.iter().skip(1).enumerate() {
-                    result = result.replacen("%s", &arg.to_string(), 1);
-                    result = result.replace(&format!("%{}", i + 1), &arg.to_string());
+                for arg in args.iter().skip(1) {
+                    if let Some(pos) = result.find("%s") {
+                        let replacement = arg.as_str().unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%d") {
+                        let replacement = arg
+                            .as_i64()
+                            .map(|n| n.to_string())
+                            .or_else(|| arg.as_f64().map(|n| (n as i64).to_string()))
+                            .unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%t") {
+                        let replacement = arg.to_string();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%.") {
+                        let end_pos = result[pos + 2..]
+                            .find('f')
+                            .map(|p| pos + 2 + p + 1)
+                            .unwrap_or(pos + 4);
+                        let precision: usize = result[pos + 2..end_pos - 1].parse().unwrap_or(2);
+                        let replacement = arg
+                            .as_f64()
+                            .map(|n| format!("{:.prec$}", n, prec = precision))
+                            .or_else(|| {
+                                arg.as_i64()
+                                    .map(|n| format!("{:.prec$}", n as f64, prec = precision))
+                            })
+                            .unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[end_pos..]);
+                    }
                 }
                 Ok(Value::string(result))
             }
@@ -6891,6 +6933,8 @@ impl<'a> Evaluator<'a> {
                 result.extend_from_slice(plaintext);
                 Ok(Value::bytes(result))
             }
+            "SESSION_USER" => Ok(Value::string("anonymous@localhost".to_string())),
+            "CURRENT_USER" => Ok(Value::string("anonymous@localhost".to_string())),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Function not yet supported: {}",
                 name
