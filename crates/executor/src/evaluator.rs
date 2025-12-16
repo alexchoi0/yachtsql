@@ -620,7 +620,7 @@ impl<'a> Evaluator<'a> {
                     Ok(Value::string(s.to_string()))
                 }
             }
-            sqlparser::ast::DataType::Timestamp(_, _) | sqlparser::ast::DataType::Datetime(_) => {
+            sqlparser::ast::DataType::Timestamp(_, _) => {
                 if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(s) {
                     Ok(Value::timestamp(ts.with_timezone(&chrono::Utc)))
                 } else if let Ok(ndt) =
@@ -635,6 +635,32 @@ impl<'a> Evaluator<'a> {
                     Ok(Value::timestamp(
                         chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc),
                     ))
+                } else if s.ends_with(" UTC") {
+                    let s_without_tz = s.trim_end_matches(" UTC");
+                    if let Ok(ndt) =
+                        chrono::NaiveDateTime::parse_from_str(s_without_tz, "%Y-%m-%d %H:%M:%S")
+                    {
+                        Ok(Value::timestamp(
+                            chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc),
+                        ))
+                    } else {
+                        Ok(Value::string(s.to_string()))
+                    }
+                } else {
+                    Ok(Value::string(s.to_string()))
+                }
+            }
+            sqlparser::ast::DataType::Datetime(_) => {
+                if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+                    Ok(Value::datetime(ndt))
+                } else if let Ok(ndt) =
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                {
+                    Ok(Value::datetime(ndt))
+                } else if let Ok(ndt) =
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                {
+                    Ok(Value::datetime(ndt))
                 } else {
                     Ok(Value::string(s.to_string()))
                 }
@@ -2499,6 +2525,832 @@ impl<'a> Evaluator<'a> {
                 let now = chrono::Utc::now();
                 Ok(Value::timestamp(now))
             }
+            "DATE_ADD" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATE_ADD requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let date = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_date = if interval.months != 0 {
+                    date.checked_add_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(date)
+                } else {
+                    date.checked_add_signed(chrono::Duration::days(interval.days as i64))
+                        .unwrap_or(date)
+                };
+                Ok(Value::date(new_date))
+            }
+            "DATE_SUB" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATE_SUB requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let date = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_date = if interval.months != 0 {
+                    date.checked_sub_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(date)
+                } else {
+                    date.checked_sub_signed(chrono::Duration::days(interval.days as i64))
+                        .unwrap_or(date)
+                };
+                Ok(Value::date(new_date))
+            }
+            "DATE_DIFF" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "DATE_DIFF requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let date1 = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let date2 = args[1].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let unit = args[2].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[2].data_type().to_string(),
+                })?;
+                let diff = match unit.to_uppercase().as_str() {
+                    "DAY" => (date1 - date2).num_days(),
+                    "WEEK" => (date1 - date2).num_weeks(),
+                    "MONTH" => {
+                        let months1 = date1.year() as i64 * 12 + date1.month() as i64;
+                        let months2 = date2.year() as i64 * 12 + date2.month() as i64;
+                        months1 - months2
+                    }
+                    "QUARTER" => {
+                        let q1 = date1.year() as i64 * 4 + ((date1.month() - 1) / 3) as i64;
+                        let q2 = date2.year() as i64 * 4 + ((date2.month() - 1) / 3) as i64;
+                        q1 - q2
+                    }
+                    "YEAR" => date1.year() as i64 - date2.year() as i64,
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid DATE_DIFF unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::int64(diff))
+            }
+            "DATE_TRUNC" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATE_TRUNC requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let date = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let unit = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let truncated = match unit.to_uppercase().as_str() {
+                    "DAY" => date,
+                    "WEEK" => {
+                        let days_since_sunday = date.weekday().num_days_from_sunday();
+                        date - chrono::Duration::days(days_since_sunday as i64)
+                    }
+                    "MONTH" => chrono::NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                        .unwrap_or(date),
+                    "QUARTER" => {
+                        let quarter_month = ((date.month() - 1) / 3) * 3 + 1;
+                        chrono::NaiveDate::from_ymd_opt(date.year(), quarter_month, 1)
+                            .unwrap_or(date)
+                    }
+                    "YEAR" => chrono::NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid DATE_TRUNC unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::date(truncated))
+            }
+            "DATE_FROM_UNIX_DATE" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "DATE_FROM_UNIX_DATE requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let days = args[0].as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let date = epoch + chrono::Duration::days(days);
+                Ok(Value::date(date))
+            }
+            "UNIX_DATE" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "UNIX_DATE requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let date = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let days = (date - epoch).num_days();
+                Ok(Value::int64(days))
+            }
+            "PARSE_DATE" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "PARSE_DATE requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let format = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let date_str = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                match chrono::NaiveDate::parse_from_str(date_str, format) {
+                    Ok(date) => Ok(Value::date(date)),
+                    Err(_) => Ok(Value::null()),
+                }
+            }
+            "FORMAT_DATE" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "FORMAT_DATE requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let format = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let date = args[1].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                Ok(Value::string(date.format(format).to_string()))
+            }
+            "LAST_DAY" => {
+                if args.is_empty() {
+                    return Err(Error::InvalidQuery(
+                        "LAST_DAY requires at least 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let date = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let next_month = if date.month() == 12 {
+                    chrono::NaiveDate::from_ymd_opt(date.year() + 1, 1, 1)
+                } else {
+                    chrono::NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1)
+                };
+                let last_day = next_month.unwrap() - chrono::Duration::days(1);
+                Ok(Value::date(last_day))
+            }
+            "TIMESTAMP_ADD" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_ADD requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_ts = if interval.months != 0 {
+                    ts.checked_add_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(ts)
+                } else if interval.days != 0 {
+                    ts + chrono::Duration::days(interval.days as i64)
+                } else {
+                    ts + chrono::Duration::nanoseconds(interval.nanos)
+                };
+                Ok(Value::timestamp(new_ts))
+            }
+            "TIMESTAMP_SUB" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_SUB requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_ts = if interval.months != 0 {
+                    ts.checked_sub_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(ts)
+                } else if interval.days != 0 {
+                    ts - chrono::Duration::days(interval.days as i64)
+                } else {
+                    ts - chrono::Duration::nanoseconds(interval.nanos)
+                };
+                Ok(Value::timestamp(new_ts))
+            }
+            "TIMESTAMP_DIFF" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_DIFF requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts1 = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts2 = args[1].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let unit = args[2].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[2].data_type().to_string(),
+                })?;
+                let duration = ts1.signed_duration_since(ts2);
+                let diff = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => duration.num_microseconds().unwrap_or(0),
+                    "MILLISECOND" => duration.num_milliseconds(),
+                    "SECOND" => duration.num_seconds(),
+                    "MINUTE" => duration.num_minutes(),
+                    "HOUR" => duration.num_hours(),
+                    "DAY" => duration.num_days(),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid TIMESTAMP_DIFF unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::int64(diff))
+            }
+            "TIMESTAMP_TRUNC" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_TRUNC requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let unit = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let naive = ts.naive_utc();
+                let truncated = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => naive,
+                    "MILLISECOND" => {
+                        let ms = naive.and_utc().timestamp_subsec_millis();
+                        naive.with_nanosecond(ms * 1_000_000).unwrap_or(naive)
+                    }
+                    "SECOND" => naive.with_nanosecond(0).unwrap_or(naive),
+                    "MINUTE" => naive
+                        .with_second(0)
+                        .and_then(|dt| dt.with_nanosecond(0))
+                        .unwrap_or(naive),
+                    "HOUR" => naive
+                        .with_minute(0)
+                        .and_then(|dt| dt.with_second(0))
+                        .and_then(|dt| dt.with_nanosecond(0))
+                        .unwrap_or(naive),
+                    "DAY" => chrono::NaiveDateTime::new(
+                        naive.date(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    "WEEK" => {
+                        let days_since_sunday = naive.date().weekday().num_days_from_sunday();
+                        let week_start =
+                            naive.date() - chrono::Duration::days(days_since_sunday as i64);
+                        chrono::NaiveDateTime::new(
+                            week_start,
+                            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                        )
+                    }
+                    "MONTH" => chrono::NaiveDateTime::new(
+                        chrono::NaiveDate::from_ymd_opt(naive.year(), naive.month(), 1).unwrap(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    "QUARTER" => {
+                        let quarter_month = ((naive.month() - 1) / 3) * 3 + 1;
+                        chrono::NaiveDateTime::new(
+                            chrono::NaiveDate::from_ymd_opt(naive.year(), quarter_month, 1)
+                                .unwrap(),
+                            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                        )
+                    }
+                    "YEAR" => chrono::NaiveDateTime::new(
+                        chrono::NaiveDate::from_ymd_opt(naive.year(), 1, 1).unwrap(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid TIMESTAMP_TRUNC unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::timestamp(
+                    chrono::DateTime::from_naive_utc_and_offset(truncated, chrono::Utc),
+                ))
+            }
+            "PARSE_TIMESTAMP" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "PARSE_TIMESTAMP requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let format = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts_str = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                match chrono::NaiveDateTime::parse_from_str(ts_str, format) {
+                    Ok(ndt) => Ok(Value::timestamp(
+                        chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc),
+                    )),
+                    Err(_) => Ok(Value::null()),
+                }
+            }
+            "FORMAT_TIMESTAMP" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "FORMAT_TIMESTAMP requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let format = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts = args[1].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                Ok(Value::string(ts.format(format).to_string()))
+            }
+            "UNIX_SECONDS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "UNIX_SECONDS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                Ok(Value::int64(ts.timestamp()))
+            }
+            "TIMESTAMP_SECONDS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_SECONDS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let seconds = args[0].as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts =
+                    chrono::DateTime::from_timestamp(seconds, 0).unwrap_or_else(chrono::Utc::now);
+                Ok(Value::timestamp(ts))
+            }
+            "UNIX_MILLIS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "UNIX_MILLIS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                Ok(Value::int64(ts.timestamp_millis()))
+            }
+            "TIMESTAMP_MILLIS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_MILLIS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let millis = args[0].as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts = chrono::DateTime::from_timestamp_millis(millis)
+                    .unwrap_or_else(chrono::Utc::now);
+                Ok(Value::timestamp(ts))
+            }
+            "UNIX_MICROS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "UNIX_MICROS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let ts = args[0].as_timestamp().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIMESTAMP".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                Ok(Value::int64(ts.timestamp_micros()))
+            }
+            "TIMESTAMP_MICROS" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "TIMESTAMP_MICROS requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let micros = args[0].as_i64().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INT64".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let ts = chrono::DateTime::from_timestamp_micros(micros)
+                    .unwrap_or_else(chrono::Utc::now);
+                Ok(Value::timestamp(ts))
+            }
+            "TIME_ADD" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIME_ADD requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let time = args[0].as_time().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let duration = chrono::Duration::nanoseconds(interval.nanos);
+                let new_time = time + duration;
+                Ok(Value::time(new_time))
+            }
+            "TIME_SUB" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIME_SUB requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let time = args[0].as_time().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let duration = chrono::Duration::nanoseconds(interval.nanos);
+                let new_time = time - duration;
+                Ok(Value::time(new_time))
+            }
+            "TIME_DIFF" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "TIME_DIFF requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let time1 = args[0].as_time().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let time2 = args[1].as_time().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIME".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let unit = args[2].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[2].data_type().to_string(),
+                })?;
+                let duration = time1.signed_duration_since(time2);
+                let diff = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => duration.num_microseconds().unwrap_or(0),
+                    "MILLISECOND" => duration.num_milliseconds(),
+                    "SECOND" => duration.num_seconds(),
+                    "MINUTE" => duration.num_minutes(),
+                    "HOUR" => duration.num_hours(),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid TIME_DIFF unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::int64(diff))
+            }
+            "TIME_TRUNC" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "TIME_TRUNC requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let time = args[0].as_time().ok_or_else(|| Error::TypeMismatch {
+                    expected: "TIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let unit = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let truncated = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => time,
+                    "MILLISECOND" => {
+                        let ms = time.nanosecond() / 1_000_000;
+                        time.with_nanosecond(ms * 1_000_000).unwrap_or(time)
+                    }
+                    "SECOND" => time.with_nanosecond(0).unwrap_or(time),
+                    "MINUTE" => chrono::NaiveTime::from_hms_opt(time.hour(), time.minute(), 0)
+                        .unwrap_or(time),
+                    "HOUR" => chrono::NaiveTime::from_hms_opt(time.hour(), 0, 0).unwrap_or(time),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid TIME_TRUNC unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::time(truncated))
+            }
+            "DATETIME_ADD" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATETIME_ADD requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let dt = args[0].as_datetime().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATETIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_dt = if interval.months != 0 {
+                    dt.checked_add_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(dt)
+                } else if interval.days != 0 {
+                    dt + chrono::Duration::days(interval.days as i64)
+                } else {
+                    dt + chrono::Duration::nanoseconds(interval.nanos)
+                };
+                Ok(Value::datetime(new_dt))
+            }
+            "DATETIME_SUB" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATETIME_SUB requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let dt = args[0].as_datetime().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATETIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_dt = if interval.months != 0 {
+                    dt.checked_sub_months(chrono::Months::new(interval.months as u32))
+                        .unwrap_or(dt)
+                } else if interval.days != 0 {
+                    dt - chrono::Duration::days(interval.days as i64)
+                } else {
+                    dt - chrono::Duration::nanoseconds(interval.nanos)
+                };
+                Ok(Value::datetime(new_dt))
+            }
+            "DATETIME_DIFF" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "DATETIME_DIFF requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let dt1 = args[0].as_datetime().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATETIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let dt2 = args[1].as_datetime().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATETIME".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let unit = args[2].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[2].data_type().to_string(),
+                })?;
+                let duration = dt1.signed_duration_since(dt2);
+                let diff = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => duration.num_microseconds().unwrap_or(0),
+                    "MILLISECOND" => duration.num_milliseconds(),
+                    "SECOND" => duration.num_seconds(),
+                    "MINUTE" => duration.num_minutes(),
+                    "HOUR" => duration.num_hours(),
+                    "DAY" => duration.num_days(),
+                    "WEEK" => duration.num_weeks(),
+                    "MONTH" => {
+                        let months1 = dt1.year() as i64 * 12 + dt1.month() as i64;
+                        let months2 = dt2.year() as i64 * 12 + dt2.month() as i64;
+                        months1 - months2
+                    }
+                    "QUARTER" => {
+                        let q1 = dt1.year() as i64 * 4 + ((dt1.month() - 1) / 3) as i64;
+                        let q2 = dt2.year() as i64 * 4 + ((dt2.month() - 1) / 3) as i64;
+                        q1 - q2
+                    }
+                    "YEAR" => dt1.year() as i64 - dt2.year() as i64,
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid DATETIME_DIFF unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::int64(diff))
+            }
+            "DATETIME_TRUNC" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "DATETIME_TRUNC requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let dt = args[0].as_datetime().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATETIME".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let unit = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let truncated = match unit.to_uppercase().as_str() {
+                    "MICROSECOND" => dt,
+                    "MILLISECOND" => {
+                        let ms = dt.and_utc().timestamp_subsec_millis();
+                        dt.with_nanosecond(ms * 1_000_000).unwrap_or(dt)
+                    }
+                    "SECOND" => dt.with_nanosecond(0).unwrap_or(dt),
+                    "MINUTE" => dt
+                        .with_second(0)
+                        .and_then(|d| d.with_nanosecond(0))
+                        .unwrap_or(dt),
+                    "HOUR" => dt
+                        .with_minute(0)
+                        .and_then(|d| d.with_second(0))
+                        .and_then(|d| d.with_nanosecond(0))
+                        .unwrap_or(dt),
+                    "DAY" => chrono::NaiveDateTime::new(
+                        dt.date(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    "WEEK" => {
+                        let days_since_sunday = dt.date().weekday().num_days_from_sunday();
+                        let week_start =
+                            dt.date() - chrono::Duration::days(days_since_sunday as i64);
+                        chrono::NaiveDateTime::new(
+                            week_start,
+                            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                        )
+                    }
+                    "MONTH" => chrono::NaiveDateTime::new(
+                        chrono::NaiveDate::from_ymd_opt(dt.year(), dt.month(), 1).unwrap(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    "QUARTER" => {
+                        let quarter_month = ((dt.month() - 1) / 3) * 3 + 1;
+                        chrono::NaiveDateTime::new(
+                            chrono::NaiveDate::from_ymd_opt(dt.year(), quarter_month, 1).unwrap(),
+                            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                        )
+                    }
+                    "YEAR" => chrono::NaiveDateTime::new(
+                        chrono::NaiveDate::from_ymd_opt(dt.year(), 1, 1).unwrap(),
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid DATETIME_TRUNC unit: {}",
+                            unit
+                        )));
+                    }
+                };
+                Ok(Value::datetime(truncated))
+            }
             "FORMAT" => {
                 if args.is_empty() {
                     return Err(Error::InvalidQuery("FORMAT requires arguments".to_string()));
@@ -2989,11 +3841,29 @@ impl<'a> Evaluator<'a> {
                     sqlparser::ast::FunctionArgExpr::Expr(expr),
                 ) = arg
                 {
-                    args.push(self.evaluate(expr, record)?);
+                    let val = self.evaluate_with_date_part_fallback(expr, record)?;
+                    args.push(val);
                 }
             }
         }
         Ok(args)
+    }
+
+    fn evaluate_with_date_part_fallback(&self, expr: &Expr, record: &Record) -> Result<Value> {
+        match self.evaluate(expr, record) {
+            Ok(val) => Ok(val),
+            Err(Error::ColumnNotFound(name)) => {
+                let upper = name.to_uppercase();
+                match upper.as_str() {
+                    "MICROSECOND" | "MILLISECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY"
+                    | "DAYOFWEEK" | "DAYOFYEAR" | "WEEK" | "MONTH" | "QUARTER" | "YEAR" => {
+                        Ok(Value::string(upper))
+                    }
+                    _ => Err(Error::ColumnNotFound(name)),
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn compare_for_ordering(&self, a: &Value, b: &Value) -> std::cmp::Ordering {
