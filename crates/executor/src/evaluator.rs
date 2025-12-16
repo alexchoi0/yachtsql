@@ -9,12 +9,6 @@
 use std::str::FromStr;
 
 use chrono::{Datelike, Timelike};
-
-enum LikePatterns {
-    Single(String),
-    Any(Vec<String>),
-    All(Vec<String>),
-}
 use geo::{
     Area, BooleanOps, Centroid, Contains, ConvexHull, EuclideanDistance, GeodesicArea,
     GeodesicDistance, GeodesicLength, Intersects, Simplify, Within,
@@ -23,7 +17,7 @@ use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon,
 };
-use sqlparser::ast::{self, BinaryOperator, CastKind, Expr, UnaryOperator, Value as SqlValue};
+use sqlparser::ast::{BinaryOperator, CastKind, Expr, UnaryOperator, Value as SqlValue};
 use wkt::TryFromWkt;
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::Value;
@@ -560,17 +554,15 @@ impl<'a> Evaluator<'a> {
                 expr,
                 pattern,
                 negated,
-                any,
                 ..
-            } => self.evaluate_like(expr, pattern, *negated, *any, record),
+            } => self.evaluate_like(expr, pattern, *negated, record),
 
             Expr::ILike {
                 expr,
                 pattern,
                 negated,
-                any,
                 ..
-            } => self.evaluate_ilike(expr, pattern, *negated, *any, record),
+            } => self.evaluate_ilike(expr, pattern, *negated, record),
 
             Expr::Cast {
                 expr,
@@ -600,6 +592,29 @@ impl<'a> Evaluator<'a> {
             } => Err(Error::UnsupportedFeature(
                 "IN subquery not yet supported in evaluator".to_string(),
             )),
+
+            Expr::InUnnest {
+                expr,
+                array_expr,
+                negated,
+            } => {
+                let val = self.evaluate(expr, record)?;
+                let array_val = self.evaluate(array_expr, record)?;
+
+                let found = match &array_val {
+                    Value::Array(arr) => arr.iter().any(|item| item == &val),
+                    Value::Null => return Ok(Value::null()),
+                    _ => {
+                        return Err(Error::TypeMismatch {
+                            expected: "ARRAY".to_string(),
+                            actual: array_val.data_type().to_string(),
+                        });
+                    }
+                };
+
+                let result = if *negated { !found } else { found };
+                Ok(Value::Bool(result))
+            }
 
             Expr::Subquery(_) => Err(Error::UnsupportedFeature(
                 "Subquery not yet supported in evaluator".to_string(),
@@ -1265,42 +1280,26 @@ impl<'a> Evaluator<'a> {
         expr: &Expr,
         pattern: &Expr,
         negated: bool,
-        any: bool,
         record: &Record,
     ) -> Result<Value> {
         let val = self.evaluate(expr, record)?;
-        if val.is_null() {
+        let pat = self.evaluate(pattern, record)?;
+
+        if val.is_null() || pat.is_null() {
             return Ok(Value::null());
         }
+
         let val_str = val.as_str().ok_or_else(|| Error::TypeMismatch {
             expected: "STRING".to_string(),
             actual: val.data_type().to_string(),
         })?;
+        let pat_str = pat.as_str().ok_or_else(|| Error::TypeMismatch {
+            expected: "STRING".to_string(),
+            actual: pat.data_type().to_string(),
+        })?;
 
-        let patterns = self.extract_like_patterns(pattern, record)?;
-
-        match patterns {
-            LikePatterns::Single(pat_str) => {
-                let matches = self.like_match(val_str, &pat_str, false);
-                Ok(Value::bool_val(if negated { !matches } else { matches }))
-            }
-            LikePatterns::Any(pattern_strings) => {
-                if any {
-                    let matches = pattern_strings
-                        .iter()
-                        .any(|p| self.like_match(val_str, p, false));
-                    Ok(Value::bool_val(if negated { !matches } else { matches }))
-                } else {
-                    panic!("LIKE patterns without ANY/ALL modifier")
-                }
-            }
-            LikePatterns::All(pattern_strings) => {
-                let matches = pattern_strings
-                    .iter()
-                    .all(|p| self.like_match(val_str, p, false));
-                Ok(Value::bool_val(if negated { !matches } else { matches }))
-            }
-        }
+        let matches = self.like_match(val_str, pat_str, false);
+        Ok(Value::bool_val(if negated { !matches } else { matches }))
     }
 
     fn evaluate_ilike(
@@ -1308,105 +1307,26 @@ impl<'a> Evaluator<'a> {
         expr: &Expr,
         pattern: &Expr,
         negated: bool,
-        any: bool,
         record: &Record,
     ) -> Result<Value> {
         let val = self.evaluate(expr, record)?;
-        if val.is_null() {
+        let pat = self.evaluate(pattern, record)?;
+
+        if val.is_null() || pat.is_null() {
             return Ok(Value::null());
         }
+
         let val_str = val.as_str().ok_or_else(|| Error::TypeMismatch {
             expected: "STRING".to_string(),
             actual: val.data_type().to_string(),
         })?;
+        let pat_str = pat.as_str().ok_or_else(|| Error::TypeMismatch {
+            expected: "STRING".to_string(),
+            actual: pat.data_type().to_string(),
+        })?;
 
-        let patterns = self.extract_like_patterns(pattern, record)?;
-
-        match patterns {
-            LikePatterns::Single(pat_str) => {
-                let matches = self.like_match(val_str, &pat_str, true);
-                Ok(Value::bool_val(if negated { !matches } else { matches }))
-            }
-            LikePatterns::Any(pattern_strings) => {
-                if any {
-                    let matches = pattern_strings
-                        .iter()
-                        .any(|p| self.like_match(val_str, p, true));
-                    Ok(Value::bool_val(if negated { !matches } else { matches }))
-                } else {
-                    panic!("ILIKE patterns without ANY/ALL modifier")
-                }
-            }
-            LikePatterns::All(pattern_strings) => {
-                let matches = pattern_strings
-                    .iter()
-                    .all(|p| self.like_match(val_str, p, true));
-                Ok(Value::bool_val(if negated { !matches } else { matches }))
-            }
-        }
-    }
-
-    fn extract_like_patterns(&self, pattern: &Expr, record: &Record) -> Result<LikePatterns> {
-        match pattern {
-            Expr::Tuple(exprs) => {
-                let mut patterns = Vec::new();
-                for e in exprs {
-                    let val = self.evaluate(e, record)?;
-                    if val.is_null() {
-                        return Ok(LikePatterns::Single(String::new()));
-                    }
-                    let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                        expected: "STRING".to_string(),
-                        actual: val.data_type().to_string(),
-                    })?;
-                    patterns.push(s.to_string());
-                }
-                Ok(LikePatterns::Any(patterns))
-            }
-            Expr::Function(func) => {
-                let func_name = func.name.to_string().to_uppercase();
-                if func_name == "ALL" {
-                    let mut patterns = Vec::new();
-                    if let ast::FunctionArguments::List(args) = &func.args {
-                        for arg in &args.args {
-                            if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) = arg {
-                                let val = self.evaluate(e, record)?;
-                                if val.is_null() {
-                                    return Ok(LikePatterns::All(vec![]));
-                                }
-                                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                                    expected: "STRING".to_string(),
-                                    actual: val.data_type().to_string(),
-                                })?;
-                                patterns.push(s.to_string());
-                            }
-                        }
-                    }
-                    Ok(LikePatterns::All(patterns))
-                } else {
-                    let val = self.evaluate(pattern, record)?;
-                    if val.is_null() {
-                        return Ok(LikePatterns::Single(String::new()));
-                    }
-                    let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                        expected: "STRING".to_string(),
-                        actual: val.data_type().to_string(),
-                    })?;
-                    Ok(LikePatterns::Single(s.to_string()))
-                }
-            }
-            _ => {
-                let val = self.evaluate(pattern, record)?;
-                if val.is_null() {
-                    return Ok(LikePatterns::Single(String::new()));
-                }
-                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                    expected: "STRING".to_string(),
-                    actual: val.data_type().to_string(),
-                })?;
-                Ok(LikePatterns::Single(s.to_string()))
-            }
-        }
+        let matches = self.like_match(val_str, pat_str, true);
+        Ok(Value::bool_val(if negated { !matches } else { matches }))
     }
 
     fn like_match(&self, text: &str, pattern: &str, case_insensitive: bool) -> bool {
