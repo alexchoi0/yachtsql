@@ -452,9 +452,28 @@ impl QueryExecutor {
         }
 
         for additional_from in from.iter().skip(1) {
-            let (right_schema, right_rows) =
-                self.get_table_factor_data_ctes(&additional_from.relation, cte_tables)?;
-            (schema, rows) = self.execute_cross_join(&schema, &rows, &right_schema, &right_rows)?;
+            if let TableFactor::UNNEST {
+                alias,
+                array_exprs,
+                with_offset,
+                with_offset_alias,
+                ..
+            } = &additional_from.relation
+            {
+                (schema, rows) = self.execute_unnest_lateral(
+                    &schema,
+                    &rows,
+                    array_exprs,
+                    alias.as_ref(),
+                    *with_offset,
+                    with_offset_alias.as_ref(),
+                )?;
+            } else {
+                let (right_schema, right_rows) =
+                    self.get_table_factor_data_ctes(&additional_from.relation, cte_tables)?;
+                (schema, rows) =
+                    self.execute_cross_join(&schema, &rows, &right_schema, &right_rows)?;
+            }
 
             for join in &additional_from.joins {
                 let (join_right_schema, join_right_rows) =
@@ -554,6 +573,69 @@ impl QueryExecutor {
                     result.schema().clone()
                 };
                 Ok((schema, rows))
+            }
+            TableFactor::UNNEST {
+                alias,
+                array_exprs,
+                with_offset,
+                with_offset_alias,
+                ..
+            } => {
+                if array_exprs.is_empty() {
+                    return Err(Error::InvalidQuery(
+                        "UNNEST requires at least one array expression".to_string(),
+                    ));
+                }
+
+                let empty_schema = Schema::new();
+                let empty_record = Record::from_values(vec![]);
+                let evaluator = Evaluator::new(&empty_schema);
+                let array_expr = &array_exprs[0];
+
+                let element_alias = alias
+                    .as_ref()
+                    .map(|a| a.name.value.clone())
+                    .unwrap_or_else(|| "element".to_string());
+                let offset_alias = with_offset_alias
+                    .as_ref()
+                    .map(|a| a.value.clone())
+                    .unwrap_or_else(|| "offset".to_string());
+
+                let array_val = evaluator.evaluate(array_expr, &empty_record)?;
+                let mut result_rows = Vec::new();
+                let mut element_type: Option<DataType> = None;
+
+                match array_val.as_array() {
+                    Some(elements) => {
+                        if !elements.is_empty() {
+                            element_type = Some(elements[0].data_type());
+                        }
+                        for (idx, elem) in elements.iter().enumerate() {
+                            let mut values = vec![elem.clone()];
+                            if *with_offset {
+                                values.push(Value::int64(idx as i64));
+                            }
+                            result_rows.push(Record::from_values(values));
+                        }
+                    }
+                    None => {
+                        if !array_val.is_null() {
+                            return Err(Error::TypeMismatch {
+                                expected: "Array".to_string(),
+                                actual: format!("{:?}", array_val.data_type()),
+                            });
+                        }
+                    }
+                }
+
+                let final_element_type = element_type.unwrap_or(DataType::String);
+                let mut output_fields = vec![Field::nullable(element_alias, final_element_type)];
+                if *with_offset {
+                    output_fields.push(Field::nullable(offset_alias, DataType::Int64));
+                }
+                let output_schema = Schema::from_fields(output_fields);
+
+                Ok((output_schema, result_rows))
             }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Table factor not yet supported: {:?}",
@@ -885,6 +967,74 @@ impl QueryExecutor {
         }
 
         Ok((combined_schema, result_rows))
+    }
+
+    fn execute_unnest_lateral(
+        &self,
+        left_schema: &Schema,
+        left_rows: &[Record],
+        array_exprs: &[Expr],
+        alias: Option<&ast::TableAlias>,
+        with_offset: bool,
+        with_offset_alias: Option<&ast::Ident>,
+    ) -> Result<(Schema, Vec<Record>)> {
+        if array_exprs.is_empty() {
+            return Err(Error::InvalidQuery(
+                "UNNEST requires at least one array expression".to_string(),
+            ));
+        }
+
+        let evaluator = Evaluator::new(left_schema);
+        let array_expr = &array_exprs[0];
+
+        let element_alias = alias
+            .map(|a| a.name.value.clone())
+            .unwrap_or_else(|| "element".to_string());
+        let offset_alias = with_offset_alias
+            .map(|a| a.value.clone())
+            .unwrap_or_else(|| "offset".to_string());
+
+        let mut result_rows = Vec::new();
+        let mut element_type: Option<DataType> = None;
+
+        for left_record in left_rows {
+            let array_val = evaluator.evaluate(array_expr, left_record)?;
+
+            match array_val.as_array() {
+                Some(elements) => {
+                    if element_type.is_none() && !elements.is_empty() {
+                        element_type = Some(elements[0].data_type());
+                    }
+                    for (idx, elem) in elements.iter().enumerate() {
+                        let mut combined_values: Vec<Value> = left_record.values().to_vec();
+                        combined_values.push(elem.clone());
+                        if with_offset {
+                            combined_values.push(Value::int64(idx as i64));
+                        }
+                        result_rows.push(Record::from_values(combined_values));
+                    }
+                }
+                None => {
+                    if array_val.is_null() {
+                        continue;
+                    }
+                    return Err(Error::TypeMismatch {
+                        expected: "Array".to_string(),
+                        actual: format!("{:?}", array_val.data_type()),
+                    });
+                }
+            }
+        }
+
+        let final_element_type = element_type.unwrap_or(DataType::String);
+        let mut output_fields: Vec<Field> = left_schema.fields().to_vec();
+        output_fields.push(Field::nullable(element_alias, final_element_type));
+        if with_offset {
+            output_fields.push(Field::nullable(offset_alias, DataType::Int64));
+        }
+        let output_schema = Schema::from_fields(output_fields);
+
+        Ok((output_schema, result_rows))
     }
 
     fn has_aggregate_functions(&self, projection: &[SelectItem]) -> bool {
@@ -2108,6 +2258,22 @@ impl QueryExecutor {
                 Ok(Value::array(values))
             }
             Expr::TypedString(ts) => self.evaluate_typed_string_literal(&ts.data_type, &ts.value),
+            Expr::Struct { values, fields: _ } => {
+                let mut struct_fields = Vec::with_capacity(values.len());
+                for (i, e) in values.iter().enumerate() {
+                    match e {
+                        Expr::Named { expr, name } => {
+                            let val = self.evaluate_literal_expr(expr)?;
+                            struct_fields.push((name.value.clone(), val));
+                        }
+                        _ => {
+                            let val = self.evaluate_literal_expr(e)?;
+                            struct_fields.push((format!("_field{}", i), val));
+                        }
+                    }
+                }
+                Ok(Value::struct_val(struct_fields))
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Expression not supported in this context: {:?}",
                 expr
@@ -2300,6 +2466,31 @@ impl QueryExecutor {
             DataType::Bytes => {
                 if let Some(s) = value.as_str() {
                     return Ok(Value::bytes(s.as_bytes().to_vec()));
+                }
+                Ok(value)
+            }
+            DataType::Struct(target_fields) => {
+                if let Some(struct_vals) = value.as_struct() {
+                    if struct_vals.len() == target_fields.len() {
+                        let coerced_fields: Vec<(String, Value)> = struct_vals
+                            .iter()
+                            .zip(target_fields.iter())
+                            .map(|((_, val), target_field)| {
+                                (target_field.name.clone(), val.clone())
+                            })
+                            .collect();
+                        return Ok(Value::struct_val(coerced_fields));
+                    }
+                }
+                Ok(value)
+            }
+            DataType::Array(element_type) => {
+                if let Some(arr) = value.as_array() {
+                    let coerced_elements: Vec<Value> = arr
+                        .iter()
+                        .map(|elem| self.coerce_value_to_type(elem.clone(), element_type))
+                        .collect::<Result<Vec<_>>>()?;
+                    return Ok(Value::array(coerced_elements));
                 }
                 Ok(value)
             }

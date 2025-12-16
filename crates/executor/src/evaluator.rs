@@ -119,9 +119,68 @@ impl<'a> Evaluator<'a> {
                         self.schema.fields().iter().position(|f| {
                             f.name.to_uppercase().ends_with(&format!(".{}", last_name))
                         })
-                    })
-                    .ok_or_else(|| Error::ColumnNotFound(full_name.clone()))?;
-                Ok(record.values().get(idx).cloned().unwrap_or(Value::null()))
+                    });
+
+                if let Some(idx) = idx {
+                    return Ok(record.values().get(idx).cloned().unwrap_or(Value::null()));
+                }
+
+                if parts.len() >= 2 {
+                    let first = parts[0].value.to_uppercase();
+                    if let Some(base_idx) = self
+                        .schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.to_uppercase() == first)
+                    {
+                        let base_val = record
+                            .values()
+                            .get(base_idx)
+                            .cloned()
+                            .unwrap_or(Value::null());
+                        if let Some(struct_fields) = base_val.as_struct() {
+                            let field_name = parts[1].value.to_uppercase();
+                            for (name, val) in struct_fields {
+                                if name.to_uppercase() == field_name {
+                                    if parts.len() == 2 {
+                                        return Ok(val.clone());
+                                    }
+                                    if let Some(nested) = val.as_struct() {
+                                        let nested_field = parts[2].value.to_uppercase();
+                                        for (n, v) in nested {
+                                            if n.to_uppercase() == nested_field {
+                                                return Ok(v.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return Err(Error::ColumnNotFound(full_name.clone()));
+                        }
+                    }
+                    if let Some(base_idx) = self
+                        .schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.to_uppercase().ends_with(&format!(".{}", first)))
+                    {
+                        let base_val = record
+                            .values()
+                            .get(base_idx)
+                            .cloned()
+                            .unwrap_or(Value::null());
+                        if let Some(struct_fields) = base_val.as_struct() {
+                            let field_name = parts[1].value.to_uppercase();
+                            for (name, val) in struct_fields {
+                                if name.to_uppercase() == field_name {
+                                    return Ok(val.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Err(Error::ColumnNotFound(full_name.clone()))
             }
 
             Expr::Value(val) => self.evaluate_literal(&val.value),
