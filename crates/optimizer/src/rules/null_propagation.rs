@@ -17,12 +17,8 @@ impl NullPropagation {
             func_name,
             FunctionName::Coalesce
                 | FunctionName::Ifnull
-                | FunctionName::Nvl
-                | FunctionName::Isnull
                 | FunctionName::ArrayAgg
-                | FunctionName::Collect
                 | FunctionName::If
-                | FunctionName::Iif
                 | FunctionName::Custom(_)
         )
     }
@@ -238,12 +234,8 @@ impl NullPropagation {
                     return Expr::Literal(LiteralValue::Null);
                 }
 
-                if matches!(
-                    name,
-                    yachtsql_ir::FunctionName::Ifnull
-                        | yachtsql_ir::FunctionName::Nvl
-                        | yachtsql_ir::FunctionName::Isnull
-                ) && simplified_args.len() == 2
+                if matches!(name, yachtsql_ir::FunctionName::Ifnull)
+                    && simplified_args.len() == 2
                     && Self::is_always_null(&simplified_args[0])
                 {
                     return simplified_args[1].clone();
@@ -640,7 +632,6 @@ impl NullPropagation {
                     unpivot_columns: unpivot_columns.clone(),
                 }),
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

@@ -5,7 +5,7 @@ use yachtsql_ir::plan::PlanNode;
 
 pub fn infer_output_columns(node: &PlanNode) -> Option<HashSet<String>> {
     match node {
-        PlanNode::Scan { projection, .. } | PlanNode::IndexScan { projection, .. } => {
+        PlanNode::Scan { projection, .. } => {
             projection.clone().map(|cols| cols.into_iter().collect())
         }
         PlanNode::Projection { expressions, .. } => {

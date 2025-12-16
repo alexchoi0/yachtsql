@@ -484,7 +484,7 @@ impl LogicalPlanBuilder {
                 let search_expr = self.sql_expr_to_expr(expr)?;
                 let array = self.sql_expr_to_expr(array_expr)?;
                 let contains = Expr::Function {
-                    name: yachtsql_ir::FunctionName::ArrayContains,
+                    name: yachtsql_ir::FunctionName::ArrayIncludes,
                     args: vec![array, search_expr],
                 };
                 if *negated {

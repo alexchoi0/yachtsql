@@ -2,7 +2,7 @@ use chrono::TimeZone;
 use rust_decimal::Decimal;
 
 use crate::error::{Error, Result};
-use crate::types::{DataType, FixedStringData, Interval, Range, RangeType, Value};
+use crate::types::{DataType, Interval, Value};
 
 fn parse_interval_string(s: &str) -> Result<Interval> {
     let s = s.trim();

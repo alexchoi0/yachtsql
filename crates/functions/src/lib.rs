@@ -22,7 +22,6 @@ pub mod encoding;
 pub mod encryption;
 pub mod generator;
 pub mod geography;
-pub mod geometric;
 pub mod interval;
 #[cfg(feature = "json")]
 pub mod json;

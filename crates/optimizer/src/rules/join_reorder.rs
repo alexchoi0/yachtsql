@@ -13,7 +13,6 @@ impl JoinReorder {
     fn estimate_cardinality(node: &PlanNode) -> usize {
         match node {
             PlanNode::Scan { .. } => 10000,
-            PlanNode::IndexScan { .. } => 1000,
             PlanNode::Filter { .. } => 1000,
             PlanNode::Projection { input, .. } => Self::estimate_cardinality(input),
             PlanNode::Aggregate { .. } => 100,
@@ -374,7 +373,6 @@ impl JoinReorder {
                     unpivot_columns: unpivot_columns.clone(),
                 }),
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

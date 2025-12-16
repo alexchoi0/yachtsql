@@ -49,14 +49,6 @@ pub enum PlanNode {
         final_modifier: bool,
     },
 
-    IndexScan {
-        table_name: String,
-        alias: Option<String>,
-        index_name: String,
-        predicate: Expr,
-        projection: Option<Vec<String>>,
-    },
-
     Filter {
         predicate: Expr,
         input: Box<PlanNode>,
@@ -422,7 +414,6 @@ impl PlanNode {
     pub fn children(&self) -> Vec<&PlanNode> {
         match self {
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

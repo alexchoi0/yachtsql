@@ -516,7 +516,6 @@ impl InterestingOrderRule {
             }
 
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

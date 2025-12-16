@@ -285,7 +285,6 @@ impl DistinctElimination {
                 }),
 
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

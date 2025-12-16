@@ -222,8 +222,6 @@ pub fn provided_ordering(node: &PlanNode, child_ordering: &OrderingProperty) -> 
     match node {
         PlanNode::Sort { order_by, .. } => OrderingProperty::from_order_by(order_by),
 
-        PlanNode::IndexScan { .. } => OrderingProperty::empty(),
-
         PlanNode::Scan { .. } => OrderingProperty::empty(),
 
         PlanNode::Filter { .. } => child_ordering.clone(),

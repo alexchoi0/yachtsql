@@ -90,7 +90,7 @@ impl CostModel {
 
     fn estimate_node_cost(&self, node: &PlanNode) -> Cost {
         match node {
-            PlanNode::Scan { table_name, .. } | PlanNode::IndexScan { table_name, .. } => {
+            PlanNode::Scan { table_name, .. } => {
                 self.estimate_scan_cost(table_name)
             }
             PlanNode::Filter { input, .. } => {

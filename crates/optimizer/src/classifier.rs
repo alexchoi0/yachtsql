@@ -126,7 +126,7 @@ impl ComplexityAnalyzer {
         self.max_depth = self.max_depth.max(self.current_depth);
 
         match node {
-            PlanNode::Scan { .. } | PlanNode::IndexScan { .. } => {
+            PlanNode::Scan { .. } => {
                 self.num_tables += 1;
             }
 

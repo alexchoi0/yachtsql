@@ -47,7 +47,6 @@ pub trait PlanRewriter {
     fn rewrite_children(&mut self, node: &PlanNode) -> Result<Option<PlanNode>> {
         match node {
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

@@ -275,7 +275,6 @@ impl FilterMerge {
                     unpivot_columns: unpivot_columns.clone(),
                 }),
             PlanNode::Scan { .. }
-            | PlanNode::IndexScan { .. }
             | PlanNode::Update { .. }
             | PlanNode::Delete { .. }
             | PlanNode::Truncate { .. }

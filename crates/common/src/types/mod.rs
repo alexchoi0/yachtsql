@@ -1,7 +1,6 @@
 pub mod coercion;
 pub mod collation;
 pub mod conversion;
-pub mod network;
 pub mod tuple_ops;
 
 pub mod small_value;
@@ -13,125 +12,52 @@ use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 use indexmap::IndexMap;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataType {
     Unknown,
     Bool,
     Int64,
-    Float32,
     Float64,
     Numeric(Option<(u8, u8)>),
     BigNumeric,
     String,
-    FixedString(usize),
     Bytes,
     Date,
     DateTime,
     Time,
     Timestamp,
-    TimestampTz,
     Geography,
     Json,
     Struct(Vec<StructField>),
     Array(Box<DataType>),
-    Map(Box<DataType>, Box<DataType>),
-    Uuid,
-    Vector(usize),
     Interval,
-    Range(RangeType),
-    Multirange(MultirangeType),
-    Inet,
-    Cidr,
-    Point,
-    Circle,
-    Line,
-    Lseg,
-    Path,
-    Polygon,
-    MacAddr,
-    MacAddr8,
-    IPv4,
-    IPv6,
-    Date32,
-    GeoPoint,
-    GeoRing,
-    GeoPolygon,
-    GeoMultiPolygon,
-    Enum {
-        type_name: String,
-        labels: Vec<String>,
-    },
-    Xid,
-    Xid8,
-    Tid,
-    Cid,
-    Oid,
-    Custom(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RangeType {
-    Int4Range,
-    Int8Range,
-    NumRange,
-    TsRange,
-    TsTzRange,
-    DateRange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MultirangeType {
-    Int4Multirange,
-    Int8Multirange,
-    NumMultirange,
-    TsMultirange,
-    TsTzMultirange,
-    DateMultirange,
-}
-
-impl MultirangeType {
-    pub fn element_range_type(&self) -> RangeType {
-        match self {
-            MultirangeType::Int4Multirange => RangeType::Int4Range,
-            MultirangeType::Int8Multirange => RangeType::Int8Range,
-            MultirangeType::NumMultirange => RangeType::NumRange,
-            MultirangeType::TsMultirange => RangeType::TsRange,
-            MultirangeType::TsTzMultirange => RangeType::TsTzRange,
-            MultirangeType::DateMultirange => RangeType::DateRange,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StructField {
     pub name: String,
-
     pub data_type: DataType,
 }
 
 impl fmt::Display for DataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DataType::Unknown => write!(f, "UNKNOWN"),
             DataType::Bool => write!(f, "BOOL"),
             DataType::Int64 => write!(f, "INT64"),
-            DataType::Float32 => write!(f, "FLOAT32"),
             DataType::Float64 => write!(f, "FLOAT64"),
-            DataType::Unknown => write!(f, "UNKNOWN"),
             DataType::Numeric(None) => write!(f, "NUMERIC"),
             DataType::Numeric(Some((precision, scale))) => {
                 write!(f, "NUMERIC({}, {})", precision, scale)
             }
             DataType::BigNumeric => write!(f, "BIGNUMERIC"),
             DataType::String => write!(f, "STRING"),
-            DataType::FixedString(n) => write!(f, "FixedString({})", n),
             DataType::Bytes => write!(f, "BYTES"),
             DataType::Date => write!(f, "DATE"),
             DataType::DateTime => write!(f, "DATETIME"),
             DataType::Time => write!(f, "TIME"),
             DataType::Timestamp => write!(f, "TIMESTAMP"),
-            DataType::TimestampTz => write!(f, "TIMESTAMPTZ"),
             DataType::Geography => write!(f, "GEOGRAPHY"),
             DataType::Json => write!(f, "JSON"),
             DataType::Struct(fields) => {
@@ -145,52 +71,7 @@ impl fmt::Display for DataType {
                 write!(f, ">")
             }
             DataType::Array(inner) => write!(f, "ARRAY<{}>", inner),
-            DataType::Map(key_type, value_type) => {
-                write!(f, "MAP<{}, {}>", key_type, value_type)
-            }
-            DataType::Uuid => write!(f, "UUID"),
-            DataType::Vector(dims) => write!(f, "VECTOR({})", dims),
             DataType::Interval => write!(f, "INTERVAL"),
-            DataType::Range(range_type) => match range_type {
-                RangeType::Int4Range => write!(f, "INT4RANGE"),
-                RangeType::Int8Range => write!(f, "INT8RANGE"),
-                RangeType::NumRange => write!(f, "NUMRANGE"),
-                RangeType::TsRange => write!(f, "TSRANGE"),
-                RangeType::TsTzRange => write!(f, "TSTZRANGE"),
-                RangeType::DateRange => write!(f, "DATERANGE"),
-            },
-            DataType::Multirange(mr_type) => match mr_type {
-                MultirangeType::Int4Multirange => write!(f, "INT4MULTIRANGE"),
-                MultirangeType::Int8Multirange => write!(f, "INT8MULTIRANGE"),
-                MultirangeType::NumMultirange => write!(f, "NUMMULTIRANGE"),
-                MultirangeType::TsMultirange => write!(f, "TSMULTIRANGE"),
-                MultirangeType::TsTzMultirange => write!(f, "TSTZMULTIRANGE"),
-                MultirangeType::DateMultirange => write!(f, "DATEMULTIRANGE"),
-            },
-            DataType::Inet => write!(f, "INET"),
-            DataType::Cidr => write!(f, "CIDR"),
-            DataType::Point => write!(f, "POINT"),
-            DataType::Circle => write!(f, "CIRCLE"),
-            DataType::Line => write!(f, "LINE"),
-            DataType::Lseg => write!(f, "LSEG"),
-            DataType::Path => write!(f, "PATH"),
-            DataType::Polygon => write!(f, "POLYGON"),
-            DataType::MacAddr => write!(f, "MACADDR"),
-            DataType::MacAddr8 => write!(f, "MACADDR8"),
-            DataType::IPv4 => write!(f, "IPv4"),
-            DataType::IPv6 => write!(f, "IPv6"),
-            DataType::Date32 => write!(f, "Date32"),
-            DataType::GeoPoint => write!(f, "Point"),
-            DataType::GeoRing => write!(f, "Ring"),
-            DataType::GeoPolygon => write!(f, "Polygon"),
-            DataType::GeoMultiPolygon => write!(f, "MultiPolygon"),
-            DataType::Enum { type_name, .. } => write!(f, "{}", type_name),
-            DataType::Xid => write!(f, "XID"),
-            DataType::Xid8 => write!(f, "XID8"),
-            DataType::Tid => write!(f, "TID"),
-            DataType::Cid => write!(f, "CID"),
-            DataType::Oid => write!(f, "OID"),
-            DataType::Custom(name) => write!(f, "{}", name),
         }
     }
 }
@@ -203,27 +84,7 @@ const TAG_BYTES: u8 = 131;
 const TAG_JSON: u8 = 132;
 const TAG_GEOGRAPHY: u8 = 133;
 const TAG_STRUCT: u8 = 134;
-const TAG_UUID: u8 = 135;
-const TAG_DEFAULT: u8 = 136;
-const TAG_VECTOR: u8 = 137;
 const TAG_INTERVAL: u8 = 138;
-const TAG_RANGE: u8 = 139;
-const TAG_INET: u8 = 140;
-const TAG_CIDR: u8 = 141;
-const TAG_POINT: u8 = 142;
-const TAG_CIRCLE: u8 = 144;
-const TAG_LINE: u8 = 161;
-const TAG_LSEG: u8 = 162;
-const TAG_PATH: u8 = 163;
-const TAG_POLYGON: u8 = 164;
-const TAG_IPV4: u8 = 153;
-const TAG_IPV6: u8 = 154;
-const TAG_DATE32: u8 = 155;
-const TAG_GEO_POINT: u8 = 156;
-const TAG_GEO_RING: u8 = 157;
-const TAG_GEO_POLYGON: u8 = 158;
-const TAG_GEO_MULTIPOLYGON: u8 = 159;
-const TAG_FIXED_STRING: u8 = 160;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FixedStringData {

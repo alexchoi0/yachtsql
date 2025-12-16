@@ -5,7 +5,6 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 #![allow(missing_docs)]
 
-pub mod catalog;
 pub mod classifier;
 pub mod cost_model;
 pub mod grouping_sets;
@@ -22,7 +21,6 @@ pub mod visitor;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-pub use catalog::{CatalogRef, EmptyCatalog, IndexCatalog, IndexInfo, IndexType};
 pub use classifier::{ComplexityLevel, QueryComplexity};
 pub use cost_model::{AggregateStrategy, Cost, CostModel, JoinStrategy, TableStats};
 pub use ordering::{OrderingProperty, OrderingRequirement, SortColumn};
