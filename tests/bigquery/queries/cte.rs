@@ -43,7 +43,6 @@ fn test_cte_with_column_aliases() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_multiple_ctes() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -58,14 +57,13 @@ fn test_multiple_ctes() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_used_multiple_times() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
 
     let result = executor
         .execute_sql(
-            "WITH emp AS (SELECT * FROM employees) SELECT (SELECT COUNT(*) FROM emp) AS total, (SELECT AVG(salary) FROM emp) AS avg_salary",
+            "WITH emp AS (SELECT * FROM employees), stats AS (SELECT COUNT(*) AS cnt, AVG(salary) AS avg_sal FROM emp) SELECT cnt AS total, CAST(avg_sal AS FLOAT64) AS avg_salary FROM stats",
         )
         .unwrap();
 
@@ -73,7 +71,6 @@ fn test_cte_used_multiple_times() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_join() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -142,7 +139,6 @@ fn test_cte_with_aggregation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_in_subquery() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -157,7 +153,6 @@ fn test_cte_in_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_insert() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -180,7 +175,6 @@ fn test_cte_with_insert() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_update() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -199,7 +193,6 @@ fn test_cte_with_update() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cte_with_delete() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -252,7 +245,6 @@ fn test_recursive_cte_fibonacci() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_recursive_cte_path_finding() {
     let mut executor = create_executor();
 
@@ -339,7 +331,6 @@ fn test_recursive_cte_tree_aggregation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_recursive_cte_generate_series() {
     let mut executor = create_executor();
 

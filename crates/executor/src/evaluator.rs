@@ -83,7 +83,8 @@ pub fn parse_byte_string_escapes(s: &str) -> Vec<u8> {
 
 use std::collections::HashMap;
 
-use crate::catalog::UserFunction;
+use crate::catalog::{FunctionBody, UserFunction};
+use crate::js_udf::evaluate_js_function;
 
 fn parse_geography(wkt_str: &str) -> std::result::Result<Geometry<f64>, String> {
     if wkt_str.starts_with("GEOGRAPHY") {
@@ -391,12 +392,17 @@ impl<'a> Evaluator<'a> {
         match expr {
             Expr::Identifier(ident) => {
                 let name = ident.value.to_uppercase();
-                let idx = self
-                    .schema
-                    .fields()
-                    .iter()
-                    .position(|f| f.name.to_uppercase() == name)
-                    .ok_or_else(|| Error::ColumnNotFound(ident.value.clone()))?;
+                let idx =
+                    self.schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.to_uppercase() == name)
+                        .or_else(|| {
+                            self.schema.fields().iter().position(|f| {
+                                f.name.to_uppercase().ends_with(&format!(".{}", name))
+                            })
+                        })
+                        .ok_or_else(|| Error::ColumnNotFound(ident.value.clone()))?;
                 Ok(record.values().get(idx).cloned().unwrap_or(Value::null()))
             }
 
@@ -626,6 +632,12 @@ impl<'a> Evaluator<'a> {
                 "IN subquery not yet supported in evaluator".to_string(),
             )),
 
+            Expr::InUnnest {
+                expr,
+                array_expr,
+                negated,
+            } => self.evaluate_in_unnest(expr, array_expr, *negated, record),
+
             Expr::Subquery(_) => Err(Error::UnsupportedFeature(
                 "Subquery not yet supported in evaluator".to_string(),
             )),
@@ -698,10 +710,6 @@ impl<'a> Evaluator<'a> {
                 if val.is_null() {
                     return Ok(Value::null());
                 }
-                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
-                    expected: "STRING".to_string(),
-                    actual: val.data_type().to_string(),
-                })?;
 
                 let start = if let Some(from_expr) = substring_from {
                     let from_val = self.evaluate(from_expr, record)?;
@@ -710,6 +718,25 @@ impl<'a> Evaluator<'a> {
                     1
                 };
                 let start_idx = if start > 0 { start - 1 } else { 0 };
+
+                if let Some(bytes) = val.as_bytes() {
+                    if start_idx >= bytes.len() {
+                        return Ok(Value::bytes(Vec::new()));
+                    }
+                    let result: Vec<u8> = if let Some(for_expr) = substring_for {
+                        let len_val = self.evaluate(for_expr, record)?;
+                        let len = len_val.as_i64().unwrap_or(0) as usize;
+                        bytes[start_idx..].iter().take(len).copied().collect()
+                    } else {
+                        bytes[start_idx..].to_vec()
+                    };
+                    return Ok(Value::bytes(result));
+                }
+
+                let s = val.as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING or BYTES".to_string(),
+                    actual: val.data_type().to_string(),
+                })?;
 
                 let chars: Vec<char> = s.chars().collect();
                 if start_idx >= chars.len() {
@@ -946,6 +973,46 @@ impl<'a> Evaluator<'a> {
 
                 Err(Error::TypeMismatch {
                     expected: "DATE, TIME, TIMESTAMP, or INTERVAL".to_string(),
+                    actual: val.data_type().to_string(),
+                })
+            }
+
+            Expr::Ceil { expr, .. } => {
+                let val = self.evaluate(expr, record)?;
+                if val.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(i) = val.as_i64() {
+                    return Ok(Value::int64(i));
+                }
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(d.ceil()));
+                }
+                if let Some(f) = val.as_f64() {
+                    return Ok(Value::float64(f.ceil()));
+                }
+                Err(Error::TypeMismatch {
+                    expected: "numeric".to_string(),
+                    actual: val.data_type().to_string(),
+                })
+            }
+
+            Expr::Floor { expr, .. } => {
+                let val = self.evaluate(expr, record)?;
+                if val.is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(i) = val.as_i64() {
+                    return Ok(Value::int64(i));
+                }
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(d.floor()));
+                }
+                if let Some(f) = val.as_f64() {
+                    return Ok(Value::float64(f.floor()));
+                }
+                Err(Error::TypeMismatch {
+                    expected: "numeric".to_string(),
                     actual: val.data_type().to_string(),
                 })
             }
@@ -1226,10 +1293,75 @@ impl<'a> Evaluator<'a> {
         let mut found = false;
         let mut has_null = false;
         for item in list {
+            if let Expr::Function(func) = item {
+                if func.name.to_string().to_uppercase() == "UNNEST" {
+                    if let sqlparser::ast::FunctionArguments::List(arg_list) = &func.args {
+                        if let Some(sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(inner),
+                        )) = arg_list.args.first()
+                        {
+                            let arr_val = self.evaluate(inner, record)?;
+                            if let Some(arr) = arr_val.as_array() {
+                                for arr_item in arr {
+                                    if arr_item.is_null() {
+                                        has_null = true;
+                                    } else if val == *arr_item {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if found {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             let item_val = self.evaluate(item, record)?;
             if item_val.is_null() {
                 has_null = true;
             } else if val == item_val {
+                found = true;
+                break;
+            }
+        }
+        let result = if found {
+            true
+        } else if has_null {
+            return Ok(Value::null());
+        } else {
+            false
+        };
+        Ok(Value::bool_val(if negated { !result } else { result }))
+    }
+
+    fn evaluate_in_unnest(
+        &self,
+        expr: &Expr,
+        array_expr: &Expr,
+        negated: bool,
+        record: &Record,
+    ) -> Result<Value> {
+        let val = self.evaluate(expr, record)?;
+        if val.is_null() {
+            return Ok(Value::null());
+        }
+        let arr_val = self.evaluate(array_expr, record)?;
+        if arr_val.is_null() {
+            return Ok(Value::null());
+        }
+        let arr = arr_val.as_array().ok_or_else(|| Error::TypeMismatch {
+            expected: "ARRAY".to_string(),
+            actual: arr_val.data_type().to_string(),
+        })?;
+        let mut found = false;
+        let mut has_null = false;
+        for arr_item in arr {
+            if arr_item.is_null() {
+                has_null = true;
+            } else if val == *arr_item {
                 found = true;
                 break;
             }
@@ -1262,6 +1394,24 @@ impl<'a> Evaluator<'a> {
 
         let ge_low = self.compare_values(&val, &low_val, |ord| ord.is_ge())?;
         let le_high = self.compare_values(&val, &high_val, |ord| ord.is_le())?;
+
+        let in_range = ge_low.as_bool().unwrap_or(false) && le_high.as_bool().unwrap_or(false);
+        Ok(Value::bool_val(if negated { !in_range } else { in_range }))
+    }
+
+    pub fn evaluate_between_values(
+        &self,
+        val: &Value,
+        low_val: &Value,
+        high_val: &Value,
+        negated: bool,
+    ) -> Result<Value> {
+        if val.is_null() || low_val.is_null() || high_val.is_null() {
+            return Ok(Value::null());
+        }
+
+        let ge_low = self.compare_values(val, low_val, |ord| ord.is_ge())?;
+        let le_high = self.compare_values(val, high_val, |ord| ord.is_le())?;
 
         let in_range = ge_low.as_bool().unwrap_or(false) && le_high.as_bool().unwrap_or(false);
         Ok(Value::bool_val(if negated { !in_range } else { in_range }))
@@ -1364,6 +1514,15 @@ impl<'a> Evaluator<'a> {
                         }
                     }
                     return Ok(Value::int64(f as i64));
+                }
+                if let Some(d) = val.as_numeric() {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(i) = d.to_i64() {
+                        return Ok(Value::int64(i));
+                    }
+                    if is_safe {
+                        return Ok(Value::null());
+                    }
                 }
                 if let Some(s) = val.as_str() {
                     if let Ok(i) = s.parse::<i64>() {
@@ -1696,6 +1855,8 @@ impl<'a> Evaluator<'a> {
             SqlValue::Number(n, _) => {
                 if let Ok(i) = n.parse::<i64>() {
                     Ok(Value::int64(i))
+                } else if let Ok(d) = n.parse::<rust_decimal::Decimal>() {
+                    Ok(Value::numeric(d))
                 } else if let Ok(f) = n.parse::<f64>() {
                     Ok(Value::float64(f))
                 } else {
@@ -1793,17 +1954,32 @@ impl<'a> Evaluator<'a> {
             BinaryOperator::Minus => self.sub_op(left, right),
             BinaryOperator::Multiply => self.mul_op(left, right),
             BinaryOperator::Divide => {
-                if let Some(r) = right.as_i64() {
-                    if r == 0 {
-                        return Err(Error::DivisionByZero);
-                    }
+                let l = left
+                    .as_f64()
+                    .or_else(|| left.as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        left.as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
+                let r = right
+                    .as_f64()
+                    .or_else(|| right.as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        right.as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
+                match (l, r) {
+                    (Some(_), Some(0.0)) => Err(Error::DivisionByZero),
+                    (Some(l), Some(r)) => Ok(Value::float64(l / r)),
+                    _ => Err(Error::TypeMismatch {
+                        expected: "numeric types".to_string(),
+                        actual: format!("{:?} vs {:?}", left.data_type(), right.data_type()),
+                    }),
                 }
-                if let Some(r) = right.as_f64() {
-                    if r == 0.0 {
-                        return Err(Error::DivisionByZero);
-                    }
-                }
-                self.numeric_op(left, right, |a, b| a / b, |a, b| a / b)
             }
             BinaryOperator::Modulo => {
                 if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
@@ -1861,6 +2037,38 @@ impl<'a> Evaluator<'a> {
                 )));
             }
         }
+        if let Some(l) = left.as_f64() {
+            if let Some(r) = right.as_numeric() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(r_f64) = r.to_f64() {
+                    return Ok(Value::bool_val(pred(
+                        l.partial_cmp(&r_f64).unwrap_or(std::cmp::Ordering::Equal),
+                    )));
+                }
+            }
+        }
+        if let Some(l) = left.as_numeric() {
+            if let Some(r) = right.as_f64() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(l_f64) = l.to_f64() {
+                    return Ok(Value::bool_val(pred(
+                        l_f64.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
+                    )));
+                }
+            }
+        }
+        if let Some(l) = left.as_i64() {
+            if let Some(r) = right.as_numeric() {
+                let l_dec = rust_decimal::Decimal::from(l);
+                return Ok(Value::bool_val(pred(l_dec.cmp(&r))));
+            }
+        }
+        if let Some(l) = left.as_numeric() {
+            if let Some(r) = right.as_i64() {
+                let r_dec = rust_decimal::Decimal::from(r);
+                return Ok(Value::bool_val(pred(l.cmp(&r_dec))));
+            }
+        }
         if let (Some(l), Some(r)) = (left.as_date(), right.as_date()) {
             return Ok(Value::bool_val(pred(l.cmp(&r))));
         }
@@ -1914,8 +2122,33 @@ impl<'a> Evaluator<'a> {
         if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
             return Ok(Value::int64(int_op(l, r)));
         }
-        let l = left.as_f64().or_else(|| left.as_i64().map(|i| i as f64));
-        let r = right.as_f64().or_else(|| right.as_i64().map(|i| i as f64));
+        if let (Some(l), Some(r)) = (left.as_numeric(), right.as_numeric()) {
+            use rust_decimal::prelude::ToPrimitive;
+            if let (Some(lf), Some(rf)) = (l.to_f64(), r.to_f64()) {
+                return Ok(Value::numeric(
+                    rust_decimal::Decimal::from_f64_retain(float_op(lf, rf))
+                        .unwrap_or(rust_decimal::Decimal::ZERO),
+                ));
+            }
+        }
+        let l = left
+            .as_f64()
+            .or_else(|| left.as_i64().map(|i| i as f64))
+            .or_else(|| {
+                left.as_numeric().and_then(|d| {
+                    use rust_decimal::prelude::ToPrimitive;
+                    d.to_f64()
+                })
+            });
+        let r = right
+            .as_f64()
+            .or_else(|| right.as_i64().map(|i| i as f64))
+            .or_else(|| {
+                right.as_numeric().and_then(|d| {
+                    use rust_decimal::prelude::ToPrimitive;
+                    d.to_f64()
+                })
+            });
         if let (Some(l), Some(r)) = (l, r) {
             return Ok(Value::float64(float_op(l, r)));
         }
@@ -2107,6 +2340,9 @@ impl<'a> Evaluator<'a> {
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::int64(-i));
                 }
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(-d));
+                }
                 if let Some(f) = val.as_f64() {
                     return Ok(Value::float64(-f));
                 }
@@ -2167,6 +2403,39 @@ impl<'a> Evaluator<'a> {
                 }
                 if args[0] == args[1] {
                     Ok(Value::null())
+                } else {
+                    Ok(args[0].clone())
+                }
+            }
+            "NULLIFZERO" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "NULLIFZERO requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let is_zero = args[0].as_i64().map(|i| i == 0).unwrap_or(false)
+                    || args[0].as_f64().map(|f| f == 0.0).unwrap_or(false)
+                    || args[0]
+                        .as_numeric()
+                        .map(|d| d == rust_decimal::Decimal::ZERO)
+                        .unwrap_or(false);
+                if is_zero {
+                    Ok(Value::null())
+                } else {
+                    Ok(args[0].clone())
+                }
+            }
+            "ZEROIFNULL" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "ZEROIFNULL requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    Ok(Value::int64(0))
                 } else {
                     Ok(args[0].clone())
                 }
@@ -2399,6 +2668,9 @@ impl<'a> Evaluator<'a> {
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::int64(i.abs()));
                 }
+                if let Some(d) = args[0].as_numeric() {
+                    return Ok(Value::numeric(d.abs()));
+                }
                 if let Some(f) = args[0].as_f64() {
                     return Ok(Value::float64(f.abs()));
                 }
@@ -2417,6 +2689,11 @@ impl<'a> Evaluator<'a> {
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::int64(i));
                 }
+                if let Some(d) = args[0].as_numeric() {
+                    use rust_decimal::prelude::ToPrimitive;
+                    let ceiled = d.ceil();
+                    return Ok(Value::numeric(ceiled));
+                }
                 if let Some(f) = args[0].as_f64() {
                     return Ok(Value::float64(f.ceil()));
                 }
@@ -2434,6 +2711,10 @@ impl<'a> Evaluator<'a> {
                 }
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::int64(i));
+                }
+                if let Some(d) = args[0].as_numeric() {
+                    let floored = d.floor();
+                    return Ok(Value::numeric(floored));
                 }
                 if let Some(f) = args[0].as_f64() {
                     return Ok(Value::float64(f.floor()));
@@ -2459,6 +2740,10 @@ impl<'a> Evaluator<'a> {
                 };
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::int64(i));
+                }
+                if let Some(d) = args[0].as_numeric() {
+                    let rounded = d.round_dp(decimals.max(0) as u32);
+                    return Ok(Value::numeric(rounded));
                 }
                 if let Some(f) = args[0].as_f64() {
                     let multiplier = 10f64.powi(decimals as i32);
@@ -2561,13 +2846,25 @@ impl<'a> Evaluator<'a> {
                 }
                 let divisor = args[1]
                     .as_f64()
-                    .or_else(|| args[1].as_i64().map(|i| i as f64));
+                    .or_else(|| args[1].as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        args[1].as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
                 if divisor == Some(0.0) {
                     return Ok(Value::null());
                 }
                 let dividend = args[0]
                     .as_f64()
-                    .or_else(|| args[0].as_i64().map(|i| i as f64));
+                    .or_else(|| args[0].as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        args[0].as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
                 match (dividend, divisor) {
                     (Some(a), Some(b)) => Ok(Value::float64(a / b)),
                     _ => Ok(Value::null()),
@@ -2668,6 +2965,50 @@ impl<'a> Evaluator<'a> {
                 };
                 let digest = md5::compute(&input);
                 Ok(Value::bytes(digest.to_vec()))
+            }
+            "SHA256" => {
+                use sha2::{Digest, Sha256};
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "SHA256 requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let input = if let Some(s) = args[0].as_str() {
+                    s.as_bytes().to_vec()
+                } else if let Some(b) = args[0].as_bytes() {
+                    b.to_vec()
+                } else {
+                    return Ok(Value::null());
+                };
+                let mut hasher = Sha256::new();
+                hasher.update(&input);
+                let result = hasher.finalize();
+                Ok(Value::bytes(result.to_vec()))
+            }
+            "SHA512" => {
+                use sha2::{Digest, Sha512};
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "SHA512 requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let input = if let Some(s) = args[0].as_str() {
+                    s.as_bytes().to_vec()
+                } else if let Some(b) = args[0].as_bytes() {
+                    b.to_vec()
+                } else {
+                    return Ok(Value::null());
+                };
+                let mut hasher = Sha512::new();
+                hasher.update(&input);
+                let result = hasher.finalize();
+                Ok(Value::bytes(result.to_vec()))
             }
             "INT64" | "INT" => {
                 if args.len() != 1 {
@@ -2889,6 +3230,85 @@ impl<'a> Evaluator<'a> {
                             }
                         }
                         Ok(Value::null())
+                    }
+                    Err(_) => Ok(Value::null()),
+                }
+            }
+            "REGEXP_EXTRACT_ALL" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "REGEXP_EXTRACT_ALL requires 2 or 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let text = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let pattern = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        let group_idx = if args.len() == 3 {
+                            args[2].as_i64().unwrap_or(0) as usize
+                        } else if re.captures_len() > 1 {
+                            1
+                        } else {
+                            0
+                        };
+                        let matches: Vec<Value> = re
+                            .captures_iter(text)
+                            .filter_map(|caps| caps.get(group_idx))
+                            .map(|m| Value::string(m.as_str().to_string()))
+                            .collect();
+                        Ok(Value::array(matches))
+                    }
+                    Err(_) => Ok(Value::null()),
+                }
+            }
+            "REGEXP_SUBSTR" => {
+                if args.len() < 2 {
+                    return Err(Error::InvalidQuery(
+                        "REGEXP_SUBSTR requires at least 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let text = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let pattern = args[1].as_str().ok_or_else(|| Error::TypeMismatch {
+                    expected: "STRING".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let position = if args.len() > 2 {
+                    args[2].as_i64().unwrap_or(1).max(1) as usize - 1
+                } else {
+                    0
+                };
+                let occurrence = if args.len() > 3 {
+                    args[3].as_i64().unwrap_or(1).max(1) as usize
+                } else {
+                    1
+                };
+                let search_text = if position < text.len() {
+                    &text[position..]
+                } else {
+                    ""
+                };
+                match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        if let Some(m) = re.find_iter(search_text).nth(occurrence - 1) {
+                            Ok(Value::string(m.as_str().to_string()))
+                        } else {
+                            Ok(Value::null())
+                        }
                     }
                     Err(_) => Ok(Value::null()),
                 }
@@ -3554,6 +3974,55 @@ impl<'a> Evaluator<'a> {
                 let last_day = next_month.unwrap() - chrono::Duration::days(1);
                 Ok(Value::date(last_day))
             }
+            "GENERATE_DATE_ARRAY" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "GENERATE_DATE_ARRAY requires 2 or 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let start = args[0].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let end = args[1].as_date().ok_or_else(|| Error::TypeMismatch {
+                    expected: "DATE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let step_days = if args.len() == 3 {
+                    if args[2].is_null() {
+                        return Ok(Value::null());
+                    }
+                    args[2]
+                        .as_interval()
+                        .map(|iv| iv.days as i64)
+                        .or_else(|| args[2].as_i64())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
+                if step_days == 0 {
+                    return Err(Error::InvalidQuery(
+                        "GENERATE_DATE_ARRAY step cannot be 0".to_string(),
+                    ));
+                }
+                let mut result = Vec::new();
+                let mut curr = start;
+                if step_days > 0 {
+                    while curr <= end {
+                        result.push(Value::date(curr));
+                        curr += chrono::Duration::days(step_days);
+                    }
+                } else {
+                    while curr >= end {
+                        result.push(Value::date(curr));
+                        curr += chrono::Duration::days(step_days);
+                    }
+                }
+                Ok(Value::array(result))
+            }
             "TIMESTAMP_ADD" => {
                 if args.len() != 2 {
                     return Err(Error::InvalidQuery(
@@ -4157,9 +4626,36 @@ impl<'a> Evaluator<'a> {
                 }
                 let format_str = args[0].as_str().unwrap_or("%s");
                 let mut result = format_str.to_string();
-                for (i, arg) in args.iter().skip(1).enumerate() {
-                    result = result.replacen("%s", &arg.to_string(), 1);
-                    result = result.replace(&format!("%{}", i + 1), &arg.to_string());
+                for arg in args.iter().skip(1) {
+                    if let Some(pos) = result.find("%s") {
+                        let replacement = arg.as_str().unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%d") {
+                        let replacement = arg
+                            .as_i64()
+                            .map(|n| n.to_string())
+                            .or_else(|| arg.as_f64().map(|n| (n as i64).to_string()))
+                            .unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%t") {
+                        let replacement = arg.to_string();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[pos + 2..]);
+                    } else if let Some(pos) = result.find("%.") {
+                        let end_pos = result[pos + 2..]
+                            .find('f')
+                            .map(|p| pos + 2 + p + 1)
+                            .unwrap_or(pos + 4);
+                        let precision: usize = result[pos + 2..end_pos - 1].parse().unwrap_or(2);
+                        let replacement = arg
+                            .as_f64()
+                            .map(|n| format!("{:.prec$}", n, prec = precision))
+                            .or_else(|| {
+                                arg.as_i64()
+                                    .map(|n| format!("{:.prec$}", n as f64, prec = precision))
+                            })
+                            .unwrap_or_default();
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[end_pos..]);
+                    }
                 }
                 Ok(Value::string(result))
             }
@@ -4196,8 +4692,20 @@ impl<'a> Evaluator<'a> {
                     expected: "STRING".to_string(),
                     actual: args[2].data_type().to_string(),
                 })?;
+                let rust_replacement = replacement
+                    .replace("\\1", "$1")
+                    .replace("\\2", "$2")
+                    .replace("\\3", "$3")
+                    .replace("\\4", "$4")
+                    .replace("\\5", "$5")
+                    .replace("\\6", "$6")
+                    .replace("\\7", "$7")
+                    .replace("\\8", "$8")
+                    .replace("\\9", "$9");
                 match regex::Regex::new(pattern) {
-                    Ok(re) => Ok(Value::string(re.replace_all(text, replacement).to_string())),
+                    Ok(re) => Ok(Value::string(
+                        re.replace_all(text, rust_replacement.as_str()).to_string(),
+                    )),
                     Err(_) => Ok(Value::null()),
                 }
             }
@@ -4226,6 +4734,12 @@ impl<'a> Evaluator<'a> {
                         "OFFSET requires 1 argument".to_string(),
                     ));
                 }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(i) = args[0].as_i64() {
+                    return Ok(Value::int64(i + 1));
+                }
                 Ok(args[0].clone())
             }
             "SAFE_ORDINAL" | "ORDINAL" => {
@@ -4233,12 +4747,6 @@ impl<'a> Evaluator<'a> {
                     return Err(Error::InvalidQuery(
                         "ORDINAL requires 1 argument".to_string(),
                     ));
-                }
-                if args[0].is_null() {
-                    return Ok(Value::null());
-                }
-                if let Some(i) = args[0].as_i64() {
-                    return Ok(Value::int64(i - 1));
                 }
                 Ok(args[0].clone())
             }
@@ -4390,6 +4898,29 @@ impl<'a> Evaluator<'a> {
                 }
                 Ok(Value::array(result))
             }
+            "ARRAY_SLICE" => {
+                if args.len() != 3 {
+                    return Err(Error::InvalidQuery(
+                        "ARRAY_SLICE requires 3 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let arr = args[0].as_array().ok_or_else(|| Error::TypeMismatch {
+                    expected: "ARRAY".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let start = args[1].as_i64().unwrap_or(1);
+                let end = args[2].as_i64().unwrap_or(0);
+                if start < 1 || end < start {
+                    return Ok(Value::array(vec![]));
+                }
+                let start_idx = (start - 1) as usize;
+                let end_idx = (end as usize).min(arr.len());
+                let slice: Vec<Value> = arr[start_idx..end_idx].to_vec();
+                Ok(Value::array(slice))
+            }
             "ST_GEOGFROMTEXT" | "ST_GEOGRAPHYFROMTEXT" => {
                 if args.is_empty() || args[0].is_null() {
                     return Ok(Value::null());
@@ -4412,14 +4943,26 @@ impl<'a> Evaluator<'a> {
                 if args[0].is_null() || args[1].is_null() {
                     return Ok(Value::null());
                 }
-                let lng = args[0].as_f64().ok_or_else(|| Error::TypeMismatch {
-                    expected: "FLOAT64".to_string(),
-                    actual: args[0].data_type().to_string(),
-                })?;
-                let lat = args[1].as_f64().ok_or_else(|| Error::TypeMismatch {
-                    expected: "FLOAT64".to_string(),
-                    actual: args[1].data_type().to_string(),
-                })?;
+                let lng = args[0]
+                    .as_f64()
+                    .or_else(|| {
+                        use rust_decimal::prelude::ToPrimitive;
+                        args[0].as_numeric().and_then(|d| d.to_f64())
+                    })
+                    .ok_or_else(|| Error::TypeMismatch {
+                        expected: "FLOAT64".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    })?;
+                let lat = args[1]
+                    .as_f64()
+                    .or_else(|| {
+                        use rust_decimal::prelude::ToPrimitive;
+                        args[1].as_numeric().and_then(|d| d.to_f64())
+                    })
+                    .ok_or_else(|| Error::TypeMismatch {
+                        expected: "FLOAT64".to_string(),
+                        actual: args[1].data_type().to_string(),
+                    })?;
                 let point = Point::new(lng, lat);
                 Ok(Value::geography(format_wkt_number(&Geometry::Point(point))))
             }
@@ -4522,8 +5065,8 @@ impl<'a> Evaluator<'a> {
                 let geom = parse_geography(wkt)
                     .map_err(|e| Error::InvalidQuery(format!("Invalid geometry: {}", e)))?;
                 let area = match &geom {
-                    Geometry::Polygon(poly) => poly.geodesic_area_unsigned(),
-                    Geometry::MultiPolygon(mpoly) => mpoly.geodesic_area_unsigned(),
+                    Geometry::Polygon(poly) => poly.geodesic_area_signed().abs(),
+                    Geometry::MultiPolygon(mpoly) => mpoly.geodesic_area_signed().abs(),
                     _ => 0.0,
                 };
                 Ok(Value::float64(area))
@@ -5600,7 +6143,13 @@ impl<'a> Evaluator<'a> {
                         actual: args[0].data_type().to_string(),
                     })?;
                 let grid_size = if args.len() > 1 {
-                    args[1].as_f64().unwrap_or(0.0001)
+                    args[1]
+                        .as_f64()
+                        .or_else(|| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            args[1].as_numeric().and_then(|d| d.to_f64())
+                        })
+                        .unwrap_or(0.0001)
                 } else {
                     0.0001
                 };
@@ -5989,9 +6538,9 @@ impl<'a> Evaluator<'a> {
                 let geom = parse_geography(wkt)
                     .map_err(|e| Error::InvalidQuery(format!("Invalid geometry: {}", e)))?;
                 let precision = if args.len() > 1 {
-                    args[1].as_i64().unwrap_or(20) as usize
+                    args[1].as_i64().unwrap_or(12).min(12) as usize
                 } else {
-                    20
+                    12
                 };
                 match geom {
                     Geometry::Point(p) => {
@@ -6402,6 +6951,37 @@ impl<'a> Evaluator<'a> {
                     _ => Ok(Value::null()),
                 }
             }
+            "KEYS.NEW_KEYSET" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "KEYS.NEW_KEYSET requires 1 argument".to_string(),
+                    ));
+                }
+                let keyset_type = args[0].as_str().unwrap_or("AEAD_AES_GCM_256");
+                let keyset = format!("KEYSET:{}:{}", keyset_type, uuid::Uuid::new_v4());
+                Ok(Value::bytes(keyset.as_bytes().to_vec()))
+            }
+            "AEAD.ENCRYPT" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(Error::InvalidQuery(
+                        "AEAD.ENCRYPT requires 2-3 arguments".to_string(),
+                    ));
+                }
+                let plaintext = args[1].as_bytes().unwrap_or_default();
+                let aad = if args.len() > 2 {
+                    args[2].as_bytes().unwrap_or_default().to_vec()
+                } else {
+                    Vec::new()
+                };
+                let mut result = Vec::new();
+                result.extend_from_slice(b"AEAD_ENCRYPTED:");
+                result.extend_from_slice(&(aad.len() as u32).to_le_bytes());
+                result.extend_from_slice(&aad);
+                result.extend_from_slice(plaintext);
+                Ok(Value::bytes(result))
+            }
+            "SESSION_USER" => Ok(Value::string("anonymous@localhost".to_string())),
+            "CURRENT_USER" => Ok(Value::string("anonymous@localhost".to_string())),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Function not yet supported: {}",
                 name
@@ -6436,9 +7016,30 @@ impl<'a> Evaluator<'a> {
             )));
         }
 
-        let substituted_body = self.substitute_udf_params(&udf.body, &udf.parameters, &args);
+        match &udf.body {
+            FunctionBody::Sql(body_expr) => {
+                let substituted_body =
+                    self.substitute_udf_params(body_expr, &udf.parameters, &args);
+                Ok(Some(self.evaluate(&substituted_body, record)?))
+            }
+            FunctionBody::JavaScript(js_code) => {
+                let param_names: Vec<String> = udf
+                    .parameters
+                    .iter()
+                    .filter_map(|p| p.name.as_ref().map(|n| n.value.clone()))
+                    .collect();
 
-        Ok(Some(self.evaluate(&substituted_body, record)?))
+                let arg_values: Vec<Value> = args
+                    .iter()
+                    .map(|arg| self.evaluate(arg, record))
+                    .collect::<Result<Vec<_>>>()?;
+
+                let result = evaluate_js_function(js_code, &param_names, &arg_values)
+                    .map_err(|e| Error::InvalidQuery(format!("JavaScript UDF error: {}", e)))?;
+
+                Ok(Some(result))
+            }
+        }
     }
 
     fn extract_udf_arg_exprs(&self, func: &sqlparser::ast::Function) -> Result<Vec<Expr>> {

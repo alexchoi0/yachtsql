@@ -68,6 +68,20 @@ pub fn substr(val: &Value, start: &Value, len: Option<&Value>) -> Result<Value> 
             };
             Ok(Value::String(result))
         }
+        (Value::Bytes(b), Value::Int64(start_idx)) => {
+            let start = (*start_idx as usize).saturating_sub(1);
+
+            let result = match len {
+                Some(Value::Int64(l)) => {
+                    let length = *l as usize;
+                    b.iter().skip(start).take(length).copied().collect()
+                }
+                Some(Value::Null) => return Ok(Value::Null),
+                None => b.iter().skip(start).copied().collect(),
+                _ => return Err(Error::type_mismatch("SUBSTR length must be an integer")),
+            };
+            Ok(Value::Bytes(result))
+        }
         _ => Err(Error::type_mismatch("SUBSTR requires (string, int, [int])")),
     }
 }

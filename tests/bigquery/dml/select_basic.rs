@@ -220,7 +220,6 @@ fn test_select_with_not_null_check() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_select_from_empty_table() {
     let mut executor = create_executor();
 
@@ -234,7 +233,6 @@ fn test_select_from_empty_table() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_select_with_no_matching_rows() {
     let mut executor = create_executor();
     setup_users_table(&mut executor);
@@ -247,12 +245,11 @@ fn test_select_with_no_matching_rows() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_select_literal_values() {
     let mut executor = create_executor();
 
     let result = executor
-        .execute_sql("SELECT 1, 'hello', 3.14, true")
+        .execute_sql("SELECT 1, 'hello', CAST(3.14 AS FLOAT64), true")
         .unwrap();
 
     assert_table_eq!(result, [[1, "hello", 3.14, true,]]);

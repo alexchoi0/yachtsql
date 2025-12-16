@@ -32,7 +32,7 @@ use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, StructField, Value};
 use yachtsql_storage::{Column, Field, Record, Schema, Table, TableSchemaOps};
 
-use crate::catalog::{Catalog, UserFunction, UserProcedure};
+use crate::catalog::{Catalog, ColumnDefault, FunctionBody, UserFunction, UserProcedure};
 use crate::evaluator::{Evaluator, parse_byte_string_escapes};
 
 #[derive(Debug, Clone)]
@@ -305,6 +305,663 @@ enum LoopControl {
     Return,
 }
 
+#[derive(Debug, Clone)]
+struct LoopStatement {
+    label: Option<String>,
+    body: String,
+}
+
+#[derive(Debug, Clone)]
+struct WhileDoStatement {
+    label: Option<String>,
+    condition: String,
+    body: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepeatStatement {
+    label: Option<String>,
+    body: String,
+    until_condition: String,
+}
+
+#[derive(Debug, Clone)]
+struct ForStatement {
+    label: Option<String>,
+    loop_var: String,
+    query: String,
+    body: String,
+}
+
+fn parse_loop_statement(sql: &str) -> Option<LoopStatement> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_uppercase();
+
+    let (label, rest) = if upper.starts_with("LOOP") {
+        (None, trimmed)
+    } else if let Some(colon_pos) = trimmed.find(':') {
+        let potential_label = trimmed[..colon_pos].trim();
+        if potential_label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let after_colon = trimmed[colon_pos + 1..].trim();
+            if after_colon.to_uppercase().starts_with("LOOP") {
+                (Some(potential_label.to_string()), after_colon)
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if !rest.to_uppercase().starts_with("LOOP") {
+        return None;
+    }
+
+    let after_loop = rest[4..].trim();
+
+    let end_loop_pattern = if label.is_some() {
+        format!("END LOOP {}", label.as_ref().unwrap())
+    } else {
+        "END LOOP".to_string()
+    };
+
+    let end_pos = find_end_loop_position(after_loop, &label)?;
+    let body = after_loop[..end_pos].trim().to_string();
+
+    Some(LoopStatement { label, body })
+}
+
+fn find_end_loop_position(s: &str, label: &Option<String>) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let mut search_pos = 0;
+    let mut depth = 1;
+
+    while search_pos < upper.len() {
+        let remaining = &upper[search_pos..];
+
+        if remaining.starts_with("LOOP")
+            && !remaining[..4]
+                .chars()
+                .last()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false)
+        {
+            if search_pos == 0
+                || !s[..search_pos]
+                    .chars()
+                    .last()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false)
+            {
+                depth += 1;
+            }
+        }
+
+        if let Some(after_end_loop) = remaining.strip_prefix("END LOOP") {
+            let is_end = after_end_loop.is_empty()
+                || after_end_loop.starts_with(';')
+                || after_end_loop.starts_with(char::is_whitespace);
+
+            if is_end {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(search_pos);
+                }
+            }
+        }
+
+        search_pos += 1;
+    }
+    None
+}
+
+fn parse_while_do_statement(sql: &str) -> Option<WhileDoStatement> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_uppercase();
+
+    let (label, rest) = if upper.starts_with("WHILE") {
+        (None, trimmed)
+    } else if let Some(colon_pos) = trimmed.find(':') {
+        let potential_label = trimmed[..colon_pos].trim();
+        if potential_label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let after_colon = trimmed[colon_pos + 1..].trim();
+            if after_colon.to_uppercase().starts_with("WHILE") {
+                (Some(potential_label.to_string()), after_colon)
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if !rest.to_uppercase().starts_with("WHILE") {
+        return None;
+    }
+
+    let after_while = rest[5..].trim();
+    let rest_upper = after_while.to_uppercase();
+    let do_pos = find_do_position(&rest_upper)?;
+
+    let condition = after_while[..do_pos].trim().to_string();
+    let after_do = after_while[do_pos + 2..].trim();
+
+    let end_pos = find_end_while_position(after_do, &label)?;
+    let body = after_do[..end_pos].trim().to_string();
+
+    Some(WhileDoStatement {
+        label,
+        condition,
+        body,
+    })
+}
+
+fn find_do_position(s: &str) -> Option<usize> {
+    let mut i = 0;
+    while i < s.len() {
+        if s[i..].starts_with("DO") {
+            let before_ok = i == 0
+                || !s[..i]
+                    .chars()
+                    .last()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            let after_ok = s.len() <= i + 2
+                || !s[i + 2..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_end_while_position(s: &str, label: &Option<String>) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let mut search_pos = 0;
+    let mut depth = 1;
+
+    while search_pos < upper.len() {
+        let remaining = &upper[search_pos..];
+
+        if let Some(after) = remaining.strip_prefix("WHILE") {
+            if after.is_empty() || after.starts_with(char::is_whitespace) {
+                if search_pos == 0
+                    || !s[..search_pos]
+                        .chars()
+                        .last()
+                        .map(|c| c.is_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    depth += 1;
+                }
+            }
+        }
+
+        if let Some(after_end) = remaining.strip_prefix("END WHILE") {
+            let is_end = after_end.is_empty()
+                || after_end.starts_with(';')
+                || after_end.starts_with(char::is_whitespace);
+
+            if is_end {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(search_pos);
+                }
+            }
+        }
+
+        search_pos += 1;
+    }
+    None
+}
+
+fn parse_repeat_statement(sql: &str) -> Option<RepeatStatement> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_uppercase();
+
+    let (label, rest) = if upper.starts_with("REPEAT") {
+        (None, trimmed)
+    } else if let Some(colon_pos) = trimmed.find(':') {
+        let potential_label = trimmed[..colon_pos].trim();
+        if potential_label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let after_colon = trimmed[colon_pos + 1..].trim();
+            if after_colon.to_uppercase().starts_with("REPEAT") {
+                (Some(potential_label.to_string()), after_colon)
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if !rest.to_uppercase().starts_with("REPEAT") {
+        return None;
+    }
+
+    let after_repeat = rest[6..].trim();
+
+    let until_pos = find_until_position(after_repeat)?;
+    let body = after_repeat[..until_pos].trim().to_string();
+    let after_until = after_repeat[until_pos + 5..].trim();
+
+    let end_repeat_pos = find_end_repeat_position(after_until)?;
+    let until_condition = after_until[..end_repeat_pos].trim().to_string();
+
+    Some(RepeatStatement {
+        label,
+        body,
+        until_condition,
+    })
+}
+
+fn find_until_position(s: &str) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let mut i = 0;
+    let mut depth = 1;
+
+    while i < upper.len() {
+        let remaining = &upper[i..];
+
+        if let Some(after) = remaining.strip_prefix("REPEAT") {
+            if after.is_empty() || after.starts_with(char::is_whitespace) {
+                if i == 0
+                    || !s[..i]
+                        .chars()
+                        .last()
+                        .map(|c| c.is_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    depth += 1;
+                }
+            }
+        }
+
+        if remaining.starts_with("END REPEAT") {
+            depth -= 1;
+        }
+
+        if remaining.starts_with("UNTIL") && depth == 1 {
+            let after = &remaining[5..];
+            if after.is_empty() || after.starts_with(char::is_whitespace) {
+                if i == 0
+                    || !s[..i]
+                        .chars()
+                        .last()
+                        .map(|c| c.is_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    return Some(i);
+                }
+            }
+        }
+
+        i += 1;
+    }
+    None
+}
+
+fn find_end_repeat_position(s: &str) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let mut i = 0;
+    while i < upper.len() {
+        if upper[i..].starts_with("END REPEAT") {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_for_statement(sql: &str) -> Option<ForStatement> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_uppercase();
+
+    let (label, rest) = if upper.starts_with("FOR") {
+        (None, trimmed)
+    } else if let Some(colon_pos) = trimmed.find(':') {
+        let potential_label = trimmed[..colon_pos].trim();
+        if potential_label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let after_colon = trimmed[colon_pos + 1..].trim();
+            if after_colon.to_uppercase().starts_with("FOR") {
+                (Some(potential_label.to_string()), after_colon)
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if !rest.to_uppercase().starts_with("FOR") {
+        return None;
+    }
+
+    let after_for = rest[3..].trim();
+    let rest_upper = after_for.to_uppercase();
+
+    let in_pos = find_in_keyword_position(&rest_upper)?;
+    let loop_var = after_for[..in_pos].trim().to_string();
+    let after_in = after_for[in_pos + 2..].trim();
+
+    let do_pos = find_do_position(&after_in.to_uppercase())?;
+    let query = after_in[..do_pos].trim().to_string();
+    let after_do = after_in[do_pos + 2..].trim();
+
+    let end_pos = find_end_for_position(after_do)?;
+    let body = after_do[..end_pos].trim().to_string();
+
+    Some(ForStatement {
+        label,
+        loop_var,
+        query,
+        body,
+    })
+}
+
+fn find_in_keyword_position(s: &str) -> Option<usize> {
+    let mut i = 0;
+    while i < s.len() {
+        if s[i..].starts_with("IN") {
+            let before_ok = i == 0
+                || !s[..i]
+                    .chars()
+                    .last()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            let after_ok = s.len() <= i + 2
+                || !s[i + 2..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_end_for_position(s: &str) -> Option<usize> {
+    let upper = s.to_uppercase();
+    let mut search_pos = 0;
+    let mut depth = 1;
+
+    while search_pos < upper.len() {
+        let remaining = &upper[search_pos..];
+
+        if let Some(after) = remaining.strip_prefix("FOR") {
+            if after.is_empty() || after.starts_with(char::is_whitespace) {
+                if search_pos == 0
+                    || !s[..search_pos]
+                        .chars()
+                        .last()
+                        .map(|c| c.is_alphanumeric() || c == '_')
+                        .unwrap_or(false)
+                {
+                    depth += 1;
+                }
+            }
+        }
+
+        if let Some(after_end) = remaining.strip_prefix("END FOR") {
+            let is_end = after_end.is_empty()
+                || after_end.starts_with(';')
+                || after_end.starts_with(char::is_whitespace);
+
+            if is_end {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(search_pos);
+                }
+            }
+        }
+
+        search_pos += 1;
+    }
+    None
+}
+
+fn is_leave_or_iterate_statement(sql: &str) -> Option<(bool, Option<String>)> {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let upper = trimmed.to_uppercase();
+
+    if upper.starts_with("LEAVE") {
+        let label = trimmed[5..].trim();
+        if label.is_empty() {
+            Some((true, None))
+        } else {
+            Some((true, Some(label.to_string())))
+        }
+    } else if upper.starts_with("ITERATE") {
+        let label = trimmed[7..].trim();
+        if label.is_empty() {
+            Some((false, None))
+        } else {
+            Some((false, Some(label.to_string())))
+        }
+    } else if upper == "BREAK" {
+        Some((true, None))
+    } else if upper == "CONTINUE" {
+        Some((false, None))
+    } else {
+        None
+    }
+}
+
+fn preprocess_loop_control_statements(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            result.push(c);
+            if c == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '\'' | '"' => {
+                in_string = true;
+                string_char = c;
+                result.push(c);
+                i += 1;
+            }
+            _ => {
+                let remaining = &sql[i..];
+                let remaining_upper = remaining.to_uppercase();
+
+                let is_word_boundary =
+                    i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_';
+
+                if is_word_boundary {
+                    if let Some(after) = remaining_upper.strip_prefix("LEAVE") {
+                        if after.is_empty()
+                            || after.starts_with(';')
+                            || after.starts_with(char::is_whitespace)
+                        {
+                            result.push_str("RAISE USING MESSAGE = '__LOOP_LEAVE__'");
+                            i += 5;
+                            while i < chars.len()
+                                && (chars[i].is_whitespace()
+                                    || chars[i].is_alphanumeric()
+                                    || chars[i] == '_')
+                                && chars[i] != ';'
+                            {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    if let Some(after) = remaining_upper.strip_prefix("ITERATE") {
+                        if after.is_empty()
+                            || after.starts_with(';')
+                            || after.starts_with(char::is_whitespace)
+                        {
+                            result.push_str("RAISE USING MESSAGE = '__LOOP_ITERATE__'");
+                            i += 7;
+                            while i < chars.len()
+                                && (chars[i].is_whitespace()
+                                    || chars[i].is_alphanumeric()
+                                    || chars[i] == '_')
+                                && chars[i] != ';'
+                            {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    if let Some(after) = remaining_upper.strip_prefix("BREAK") {
+                        if after.is_empty()
+                            || after.starts_with(';')
+                            || after.starts_with(char::is_whitespace)
+                        {
+                            result.push_str("RAISE USING MESSAGE = '__LOOP_LEAVE__'");
+                            i += 5;
+                            continue;
+                        }
+                    }
+                    if let Some(after) = remaining_upper.strip_prefix("CONTINUE") {
+                        if after.is_empty()
+                            || after.starts_with(';')
+                            || after.starts_with(char::is_whitespace)
+                        {
+                            result.push_str("RAISE USING MESSAGE = '__LOOP_ITERATE__'");
+                            i += 8;
+                            continue;
+                        }
+                    }
+                }
+                result.push(c);
+                i += 1;
+            }
+        }
+    }
+
+    result
+}
+
+fn split_script_statements(body: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut depth = 0;
+    let chars: Vec<char> = body.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            current.push(c);
+            if c == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '\'' | '"' => {
+                in_string = true;
+                string_char = c;
+                current.push(c);
+            }
+            ';' if depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    statements.push(current.clone());
+                }
+                current.clear();
+            }
+            _ => {
+                let remaining = body[i..].to_uppercase();
+                if remaining.starts_with("IF ")
+                    || remaining.starts_with("IF\n")
+                    || remaining.starts_with("IF\t")
+                    || remaining.starts_with("BEGIN")
+                    || remaining.starts_with("LOOP")
+                    || remaining.starts_with("WHILE")
+                    || remaining.starts_with("REPEAT")
+                    || remaining.starts_with("FOR ")
+                    || remaining.starts_with("CASE ")
+                    || remaining.starts_with("CASE\n")
+                {
+                    let prev_word_boundary =
+                        i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_';
+                    if prev_word_boundary {
+                        depth += 1;
+                    }
+                }
+
+                if remaining.starts_with("END IF")
+                    || remaining.starts_with("END;")
+                    || remaining.starts_with("END ")
+                    || remaining.starts_with("END\n")
+                    || remaining.starts_with("END LOOP")
+                    || remaining.starts_with("END WHILE")
+                    || remaining.starts_with("END REPEAT")
+                    || remaining.starts_with("END FOR")
+                    || remaining.starts_with("END CASE")
+                {
+                    let prev_word_boundary =
+                        i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_';
+                    if prev_word_boundary && depth > 0 {
+                        depth -= 1;
+                    }
+                }
+
+                current.push(c);
+            }
+        }
+        i += 1;
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        statements.push(current);
+    }
+
+    statements
+}
+
 pub struct QueryExecutor {
     catalog: Catalog,
     variables: Vec<HashMap<String, ScriptVariable>>,
@@ -351,6 +1008,11 @@ impl QueryExecutor {
                 }
                 return Ok(());
             }
+        }
+        if name.starts_with('@') {
+            let data_type = value.data_type();
+            self.declare_variable(name, data_type, Some(value));
+            return Ok(());
         }
         Err(Error::ColumnNotFound(format!(
             "Variable '{}' not declared",
@@ -548,6 +1210,24 @@ impl QueryExecutor {
             return self.execute_load_data(&load_info);
         }
 
+        if let Some(loop_stmt) = parse_loop_statement(trimmed) {
+            return self.execute_loop(&loop_stmt).map(|(t, _)| t);
+        }
+        if let Some(while_stmt) = parse_while_do_statement(trimmed) {
+            return self.execute_while_do(&while_stmt).map(|(t, _)| t);
+        }
+        if let Some(repeat_stmt) = parse_repeat_statement(trimmed) {
+            return self.execute_repeat(&repeat_stmt).map(|(t, _)| t);
+        }
+        if let Some(for_stmt) = parse_for_statement(trimmed) {
+            return self.execute_for(&for_stmt).map(|(t, _)| t);
+        }
+        if let Some((is_leave, label)) = is_leave_or_iterate_statement(trimmed) {
+            return self
+                .execute_leave_iterate(is_leave, label.as_deref())
+                .map(|(t, _)| t);
+        }
+
         let dialect = BigQueryDialect {};
         let statements =
             Parser::parse_sql(&dialect, sql).map_err(|e| Error::ParseError(e.to_string()))?;
@@ -642,7 +1322,12 @@ impl QueryExecutor {
         stmt: &Statement,
     ) -> Result<(Table, Option<LoopControl>)> {
         match stmt {
-            Statement::Query(query) => self.execute_query(query).map(|t| (t, None)),
+            Statement::Query(query) => match query.body.as_ref() {
+                SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) => {
+                    self.execute_query_dml(query).map(|t| (t, None))
+                }
+                _ => self.execute_query(query).map(|t| (t, None)),
+            },
             Statement::CreateTable(create) => self.execute_create_table(create).map(|t| (t, None)),
             Statement::CreateView {
                 name,
@@ -748,6 +1433,9 @@ impl QueryExecutor {
                 ..
             } if *immediate => self.execute_immediate(parameters),
             Statement::Case(case_stmt) => self.execute_case_statement(case_stmt),
+            Statement::Assert { condition, message } => {
+                self.execute_assert(condition, message.as_ref())
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Statement type not yet supported: {:?}",
                 stmt
@@ -755,9 +1443,83 @@ impl QueryExecutor {
         }
     }
 
+    fn execute_assert(
+        &self,
+        condition: &Expr,
+        message: Option<&Expr>,
+    ) -> Result<(Table, Option<LoopControl>)> {
+        let cond_val = self.evaluate_assert_expr(condition)?;
+        let is_true = cond_val.as_bool().unwrap_or(false);
+
+        if is_true {
+            Ok((Table::empty(Schema::new()), None))
+        } else {
+            let msg = message
+                .map(|m| self.evaluate_assert_expr(m))
+                .transpose()?
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "Assertion failed".to_string());
+            Err(Error::InvalidQuery(format!("ASSERT failed: {}", msg)))
+        }
+    }
+
+    fn evaluate_assert_expr(&self, expr: &Expr) -> Result<Value> {
+        match expr {
+            Expr::Subquery(query) => {
+                let result = self.execute_query(query)?;
+                let records = result.to_records()?;
+                if records.is_empty() {
+                    return Ok(Value::null());
+                }
+                let first_record = &records[0];
+                let values = first_record.values();
+                if values.is_empty() {
+                    return Ok(Value::null());
+                }
+                Ok(values[0].clone())
+            }
+            Expr::Nested(inner) => self.evaluate_assert_expr(inner),
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = self.evaluate_assert_expr(left)?;
+                let right_val = self.evaluate_assert_expr(right)?;
+                self.evaluate_binary_op(&left_val, op, &right_val)
+            }
+            _ => {
+                let empty_schema = Schema::new();
+                let empty_record = Record::from_values(vec![]);
+                let evaluator = Evaluator::new(&empty_schema);
+                evaluator.evaluate(expr, &empty_record)
+            }
+        }
+    }
+
     fn execute_query(&self, query: &Query) -> Result<Table> {
         let cte_tables = self.materialize_ctes(&query.with)?;
         self.execute_query_with_ctes(query, &cte_tables)
+    }
+
+    fn execute_query_dml(&mut self, query: &Query) -> Result<Table> {
+        let cte_tables = self.materialize_ctes(&query.with)?;
+        match query.body.as_ref() {
+            SetExpr::Insert(Statement::Insert(insert)) => {
+                self.execute_insert_with_ctes(insert, &cte_tables)
+            }
+            SetExpr::Update(Statement::Update {
+                table,
+                assignments,
+                selection,
+                ..
+            }) => {
+                self.execute_update_with_ctes(table, assignments, selection.as_ref(), &cte_tables)
+            }
+            SetExpr::Delete(Statement::Delete(delete)) => {
+                self.execute_delete_with_ctes(delete, &cte_tables)
+            }
+            _ => Err(Error::UnsupportedFeature(format!(
+                "DML type not supported in query: {:?}",
+                query.body
+            ))),
+        }
     }
 
     fn execute_view_query(&self, query_sql: &str) -> Result<Table> {
@@ -1292,7 +2054,7 @@ impl QueryExecutor {
         cte_tables: &HashMap<String, Table>,
     ) -> Result<Table> {
         let (pre_projection_schema, mut rows, do_projection) = if select.from.is_empty() {
-            let (schema, rows) = self.evaluate_select_without_from(select)?;
+            let (schema, rows) = self.evaluate_select_without_from(select, cte_tables)?;
             (schema, rows, false)
         } else {
             self.evaluate_select_with_from_for_ordering_ctes(select, order_by, cte_tables)?
@@ -1302,12 +2064,20 @@ impl QueryExecutor {
             self.sort_rows(&pre_projection_schema, &mut rows, order_by)?;
         }
 
-        let (schema, rows) = if do_projection {
-            self.project_rows(&pre_projection_schema, &rows, &select.projection)?
+        let (schema, mut rows) = if do_projection {
+            let (schema, mut projected_rows) =
+                self.project_rows(&pre_projection_schema, &rows, &select.projection)?;
+            if select.distinct.is_some() {
+                let mut seen = std::collections::HashSet::new();
+                projected_rows.retain(|row| {
+                    let key = format!("{:?}", row.values());
+                    seen.insert(key)
+                });
+            }
+            (schema, projected_rows)
         } else {
             (pre_projection_schema, rows)
         };
-        let mut rows = rows;
 
         if let Some(limit_clause) = limit_clause {
             match limit_clause {
@@ -1354,7 +2124,11 @@ impl QueryExecutor {
         Table::from_values(schema, values)
     }
 
-    fn evaluate_select_without_from(&self, select: &Select) -> Result<(Schema, Vec<Record>)> {
+    fn evaluate_select_without_from(
+        &self,
+        select: &Select,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<(Schema, Vec<Record>)> {
         let empty_schema = Schema::new();
         let empty_record = Record::from_values(vec![]);
         let evaluator = Evaluator::with_user_functions(&empty_schema, self.catalog.get_functions());
@@ -1365,12 +2139,18 @@ impl QueryExecutor {
         for (idx, item) in select.projection.iter().enumerate() {
             match item {
                 SelectItem::UnnamedExpr(expr) => {
-                    let val = self.evaluate_with_variables(&evaluator, expr, &empty_record)?;
+                    let resolved_expr =
+                        self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
+                    let val =
+                        self.evaluate_with_variables(&evaluator, &resolved_expr, &empty_record)?;
                     result_values.push(val.clone());
                     field_names.push(self.expr_to_alias(expr, idx));
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    let val = self.evaluate_with_variables(&evaluator, expr, &empty_record)?;
+                    let resolved_expr =
+                        self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
+                    let val =
+                        self.evaluate_with_variables(&evaluator, &resolved_expr, &empty_record)?;
                     result_values.push(val.clone());
                     field_names.push(alias.value.clone());
                 }
@@ -1427,28 +2207,82 @@ impl QueryExecutor {
             );
         }
 
-        if select.distinct.is_some() {
-            let mut seen = std::collections::HashSet::new();
-            filtered_rows.retain(|row| {
-                let key = format!("{:?}", row.values());
-                seen.insert(key)
-            });
-        }
-
         let has_window_funcs = self.has_window_functions(&select.projection);
-        if has_window_funcs {
-            let window_results =
-                self.compute_window_functions(&input_schema, &filtered_rows, &select.projection)?;
-            return self.project_rows_with_windows(
+        let has_qualify = select.qualify.is_some();
+        let qualify_has_window = select
+            .qualify
+            .as_ref()
+            .is_some_and(|q| self.expr_has_window_function(q));
+
+        if has_window_funcs || qualify_has_window {
+            let window_results = self.compute_window_functions_with_qualify(
                 &input_schema,
                 &filtered_rows,
+                &select.projection,
+                select.qualify.as_ref(),
+            )?;
+
+            let rows_after_qualify = if let Some(qualify_expr) = &select.qualify {
+                let qualifying_indices = self.apply_qualify_filter(
+                    &input_schema,
+                    &filtered_rows,
+                    qualify_expr,
+                    &window_results,
+                )?;
+
+                let filtered: Vec<Record> = qualifying_indices
+                    .iter()
+                    .map(|&i| filtered_rows[i].clone())
+                    .collect();
+
+                let new_window_results: HashMap<String, Vec<Value>> = window_results
+                    .iter()
+                    .map(|(k, v)| {
+                        let filtered_v: Vec<Value> =
+                            qualifying_indices.iter().map(|&i| v[i].clone()).collect();
+                        (k.clone(), filtered_v)
+                    })
+                    .collect();
+
+                return self.project_rows_with_windows(
+                    &input_schema,
+                    &filtered,
+                    &select.projection,
+                    &new_window_results,
+                );
+            } else {
+                filtered_rows.clone()
+            };
+
+            return self.project_rows_with_windows(
+                &input_schema,
+                &rows_after_qualify,
                 &select.projection,
                 &window_results,
             );
         }
 
-        let (output_schema, output_rows) =
+        if has_qualify {
+            let evaluator =
+                Evaluator::with_user_functions(&input_schema, self.catalog.get_functions());
+            let qualify_expr = select.qualify.as_ref().unwrap();
+            filtered_rows.retain(|row| {
+                evaluator
+                    .evaluate_to_bool(qualify_expr, row)
+                    .unwrap_or(false)
+            });
+        }
+
+        let (output_schema, mut output_rows) =
             self.project_rows(&input_schema, &filtered_rows, &select.projection)?;
+
+        if select.distinct.is_some() {
+            let mut seen = std::collections::HashSet::new();
+            output_rows.retain(|row| {
+                let key = format!("{:?}", row.values());
+                seen.insert(key)
+            });
+        }
 
         Ok((output_schema, output_rows))
     }
@@ -1500,18 +2334,52 @@ impl QueryExecutor {
             return Ok((schema, rows, false));
         }
 
-        if select.distinct.is_some() {
-            let mut seen = std::collections::HashSet::new();
-            filtered_rows.retain(|row| {
-                let key = format!("{:?}", row.values());
-                seen.insert(key)
-            });
-        }
-
         let has_window_funcs = self.has_window_functions(&select.projection);
-        if has_window_funcs {
-            let window_results =
-                self.compute_window_functions(&input_schema, &filtered_rows, &select.projection)?;
+        let has_qualify = select.qualify.is_some();
+        let qualify_has_window = select
+            .qualify
+            .as_ref()
+            .is_some_and(|q| self.expr_has_window_function(q));
+
+        if has_window_funcs || qualify_has_window {
+            let window_results = self.compute_window_functions_with_qualify(
+                &input_schema,
+                &filtered_rows,
+                &select.projection,
+                select.qualify.as_ref(),
+            )?;
+
+            if let Some(qualify_expr) = &select.qualify {
+                let qualifying_indices = self.apply_qualify_filter(
+                    &input_schema,
+                    &filtered_rows,
+                    qualify_expr,
+                    &window_results,
+                )?;
+
+                let filtered: Vec<Record> = qualifying_indices
+                    .iter()
+                    .map(|&i| filtered_rows[i].clone())
+                    .collect();
+
+                let new_window_results: HashMap<String, Vec<Value>> = window_results
+                    .iter()
+                    .map(|(k, v)| {
+                        let filtered_v: Vec<Value> =
+                            qualifying_indices.iter().map(|&i| v[i].clone()).collect();
+                        (k.clone(), filtered_v)
+                    })
+                    .collect();
+
+                let (schema, rows) = self.project_rows_with_windows(
+                    &input_schema,
+                    &filtered,
+                    &select.projection,
+                    &new_window_results,
+                )?;
+                return Ok((schema, rows, false));
+            }
+
             let (schema, rows) = self.project_rows_with_windows(
                 &input_schema,
                 &filtered_rows,
@@ -1521,6 +2389,17 @@ impl QueryExecutor {
             return Ok((schema, rows, false));
         }
 
+        if has_qualify {
+            let evaluator =
+                Evaluator::with_user_functions(&input_schema, self.catalog.get_functions());
+            let qualify_expr = select.qualify.as_ref().unwrap();
+            filtered_rows.retain(|row| {
+                evaluator
+                    .evaluate_to_bool(qualify_expr, row)
+                    .unwrap_or(false)
+            });
+        }
+
         let needs_deferred_projection = order_by.as_ref().is_some_and(|ob| {
             self.order_by_references_non_projected_columns(&input_schema, &select.projection, ob)
         });
@@ -1528,8 +2407,15 @@ impl QueryExecutor {
         if needs_deferred_projection {
             Ok((input_schema, filtered_rows, true))
         } else {
-            let (output_schema, output_rows) =
+            let (output_schema, mut output_rows) =
                 self.project_rows(&input_schema, &filtered_rows, &select.projection)?;
+            if select.distinct.is_some() {
+                let mut seen = std::collections::HashSet::new();
+                output_rows.retain(|row| {
+                    let key = format!("{:?}", row.values());
+                    seen.insert(key)
+                });
+            }
             Ok((output_schema, output_rows, false))
         }
     }
@@ -1594,10 +2480,63 @@ impl QueryExecutor {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    if self.expr_references_non_projected(
+                        &order_expr.expr,
+                        &projected_columns,
+                        input_schema,
+                    ) {
+                        return true;
+                    }
+                }
             }
         }
         false
+    }
+
+    fn expr_references_non_projected(
+        &self,
+        expr: &Expr,
+        projected_columns: &std::collections::HashSet<String>,
+        input_schema: &Schema,
+    ) -> bool {
+        match expr {
+            Expr::Identifier(ident) => {
+                let col_name = ident.value.to_uppercase();
+                !projected_columns.contains(&col_name)
+                    && input_schema
+                        .fields()
+                        .iter()
+                        .any(|f| f.name.to_uppercase() == col_name)
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.expr_references_non_projected(left, projected_columns, input_schema)
+                    || self.expr_references_non_projected(right, projected_columns, input_schema)
+            }
+            Expr::UnaryOp { expr, .. } => {
+                self.expr_references_non_projected(expr, projected_columns, input_schema)
+            }
+            Expr::Function(func) => {
+                if let ast::FunctionArguments::List(args) = &func.args {
+                    for arg in &args.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) = arg {
+                            if self.expr_references_non_projected(
+                                e,
+                                projected_columns,
+                                input_schema,
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Expr::Nested(inner) => {
+                self.expr_references_non_projected(inner, projected_columns, input_schema)
+            }
+            _ => false,
+        }
     }
 
     fn get_from_data(&self, from: &[TableWithJoins]) -> Result<(Schema, Vec<Record>)> {
@@ -1679,7 +2618,12 @@ impl QueryExecutor {
         cte_tables: &HashMap<String, Table>,
     ) -> Result<(Schema, Vec<Record>)> {
         match table_factor {
-            TableFactor::Table { name, alias, .. } => {
+            TableFactor::Table {
+                name,
+                alias,
+                sample,
+                ..
+            } => {
                 let table_name = name.to_string();
                 let table_name_upper = table_name.to_uppercase();
 
@@ -1703,7 +2647,9 @@ impl QueryExecutor {
                     } else {
                         table_data.schema().clone()
                     };
-                    return Ok((schema, table_data.to_records()?));
+                    let mut rows = table_data.to_records()?;
+                    rows = self.apply_table_sample(rows, sample)?;
+                    return Ok((schema, rows));
                 }
 
                 if let Some(view_def) = self.catalog.get_view(&table_name) {
@@ -1711,7 +2657,8 @@ impl QueryExecutor {
                     let column_aliases = view_def.column_aliases.clone();
                     let view_result = self.execute_view_query(&view_query)?;
 
-                    let rows = view_result.to_records()?;
+                    let mut rows = view_result.to_records()?;
+                    rows = self.apply_table_sample(rows, sample)?;
                     let base_schema = view_result.schema().clone();
 
                     let schema = if !column_aliases.is_empty() {
@@ -1768,7 +2715,9 @@ impl QueryExecutor {
                     table_data.schema().clone()
                 };
 
-                Ok((schema, table_data.to_records()?))
+                let mut rows = table_data.to_records()?;
+                rows = self.apply_table_sample(rows, sample)?;
+                Ok((schema, rows))
             }
             TableFactor::NestedJoin {
                 table_with_joins, ..
@@ -1879,6 +2828,46 @@ impl QueryExecutor {
                 "Table factor not yet supported: {:?}",
                 table_factor
             ))),
+        }
+    }
+
+    fn apply_table_sample(
+        &self,
+        rows: Vec<Record>,
+        sample: &Option<ast::TableSampleKind>,
+    ) -> Result<Vec<Record>> {
+        let sample_spec = match sample {
+            Some(ast::TableSampleKind::BeforeTableAlias(s)) => s,
+            Some(ast::TableSampleKind::AfterTableAlias(s)) => s,
+            None => return Ok(rows),
+        };
+
+        let quantity = match &sample_spec.quantity {
+            Some(q) => q,
+            None => return Ok(rows),
+        };
+
+        let value = self.evaluate_literal_expr(&quantity.value)?;
+        let num = value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|f| f as i64))
+            .unwrap_or(0);
+
+        match &quantity.unit {
+            Some(ast::TableSampleUnit::Rows) => {
+                let limit = num.max(0) as usize;
+                Ok(rows.into_iter().take(limit).collect())
+            }
+            Some(ast::TableSampleUnit::Percent) | None => {
+                if num <= 0 {
+                    return Ok(Vec::new());
+                }
+                if num >= 100 {
+                    return Ok(rows);
+                }
+                let count = (rows.len() as f64 * (num as f64 / 100.0)).ceil() as usize;
+                Ok(rows.into_iter().take(count).collect())
+            }
         }
     }
 
@@ -2300,40 +3289,7 @@ impl QueryExecutor {
                     return false;
                 }
                 let name = func.name.to_string().to_uppercase();
-                if matches!(
-                    name.as_str(),
-                    "COUNT"
-                        | "SUM"
-                        | "AVG"
-                        | "MIN"
-                        | "MAX"
-                        | "ARRAY_AGG"
-                        | "STRING_AGG"
-                        | "GROUP_CONCAT"
-                        | "STDDEV"
-                        | "STDDEV_POP"
-                        | "STDDEV_SAMP"
-                        | "VARIANCE"
-                        | "VAR_POP"
-                        | "VAR_SAMP"
-                        | "COVAR_POP"
-                        | "COVAR_SAMP"
-                        | "CORR"
-                        | "BIT_AND"
-                        | "BIT_OR"
-                        | "BIT_XOR"
-                        | "BOOL_AND"
-                        | "BOOL_OR"
-                        | "EVERY"
-                        | "ANY_VALUE"
-                        | "APPROX_COUNT_DISTINCT"
-                        | "APPROX_QUANTILES"
-                        | "APPROX_TOP_COUNT"
-                        | "APPROX_TOP_SUM"
-                        | "HLL_COUNT_INIT"
-                        | "HLL_COUNT_MERGE"
-                        | "HLL_COUNT_MERGE_PARTIAL"
-                ) {
+                if self.is_aggregate_function(&name) {
                     return true;
                 }
                 if let ast::FunctionArguments::List(arg_list) = &func.args {
@@ -2353,6 +3309,8 @@ impl QueryExecutor {
             }
             Expr::UnaryOp { expr, .. } => self.expr_has_aggregate(expr),
             Expr::Nested(inner) => self.expr_has_aggregate(inner),
+            Expr::IsNull(inner) => self.expr_has_aggregate(inner),
+            Expr::IsNotNull(inner) => self.expr_has_aggregate(inner),
             Expr::Case {
                 conditions,
                 else_result,
@@ -2366,6 +3324,13 @@ impl QueryExecutor {
                     .unwrap_or(false)
             }
             Expr::Cast { expr, .. } => self.expr_has_aggregate(expr),
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                self.expr_has_aggregate(expr)
+                    || self.expr_has_aggregate(low)
+                    || self.expr_has_aggregate(high)
+            }
             _ => false,
         }
     }
@@ -2555,7 +3520,163 @@ impl QueryExecutor {
             });
         }
 
+        if let Some(qualify_expr) = &select.qualify {
+            let substituted_qualify =
+                self.substitute_aggregates_in_qualify(qualify_expr, &select.projection);
+            let qualify_has_window = self.expr_has_window_function(&substituted_qualify);
+
+            if qualify_has_window {
+                let window_results = self.compute_window_functions_with_qualify(
+                    &schema,
+                    &result_rows,
+                    &[],
+                    Some(&substituted_qualify),
+                )?;
+
+                let qualifying_indices = self.apply_qualify_filter(
+                    &schema,
+                    &result_rows,
+                    &substituted_qualify,
+                    &window_results,
+                )?;
+
+                result_rows = qualifying_indices
+                    .iter()
+                    .map(|&i| result_rows[i].clone())
+                    .collect();
+            } else {
+                let evaluator =
+                    Evaluator::with_user_functions(&schema, self.catalog.get_functions());
+                result_rows.retain(|row| {
+                    evaluator
+                        .evaluate_to_bool(&substituted_qualify, row)
+                        .unwrap_or(false)
+                });
+            }
+        }
+
         Ok((schema, result_rows))
+    }
+
+    fn substitute_aggregates_in_qualify(
+        &self,
+        qualify_expr: &Expr,
+        projection: &[SelectItem],
+    ) -> Expr {
+        let mut agg_to_alias: HashMap<String, String> = HashMap::new();
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if self.expr_has_aggregate(expr) {
+                        let expr_key = format!("{}", expr);
+                        agg_to_alias.insert(expr_key, alias.value.clone());
+                    }
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    if self.expr_has_aggregate(expr) {
+                        let expr_key = format!("{}", expr);
+                        let alias = self.expr_to_alias(expr, idx);
+                        agg_to_alias.insert(expr_key, alias);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.substitute_aggregate_in_expr(qualify_expr, &agg_to_alias)
+    }
+
+    fn substitute_aggregate_in_expr(
+        &self,
+        expr: &Expr,
+        agg_to_alias: &HashMap<String, String>,
+    ) -> Expr {
+        let expr_key = format!("{}", expr);
+        if let Some(alias) = agg_to_alias.get(&expr_key) {
+            return Expr::Identifier(ast::Ident::new(alias.clone()));
+        }
+
+        match expr {
+            Expr::Function(func) if func.over.is_some() => {
+                let new_over = func.over.as_ref().map(|over| match over {
+                    ast::WindowType::WindowSpec(spec) => {
+                        let new_partition_by: Vec<Expr> = spec
+                            .partition_by
+                            .iter()
+                            .map(|e| self.substitute_aggregate_in_expr(e, agg_to_alias))
+                            .collect();
+                        let new_order_by: Vec<ast::OrderByExpr> = spec
+                            .order_by
+                            .iter()
+                            .map(|ob| ast::OrderByExpr {
+                                expr: self.substitute_aggregate_in_expr(&ob.expr, agg_to_alias),
+                                options: ob.options,
+                                with_fill: ob.with_fill.clone(),
+                            })
+                            .collect();
+                        ast::WindowType::WindowSpec(ast::WindowSpec {
+                            partition_by: new_partition_by,
+                            order_by: new_order_by,
+                            window_frame: spec.window_frame.clone(),
+                            window_name: spec.window_name.clone(),
+                        })
+                    }
+                    ast::WindowType::NamedWindow(name) => {
+                        ast::WindowType::NamedWindow(name.clone())
+                    }
+                });
+
+                let new_args = match &func.args {
+                    ast::FunctionArguments::List(list) => {
+                        let new_list = ast::FunctionArgumentList {
+                            duplicate_treatment: list.duplicate_treatment,
+                            args: list
+                                .args
+                                .iter()
+                                .map(|arg| match arg {
+                                    ast::FunctionArg::Unnamed(unnamed_arg) => match unnamed_arg {
+                                        ast::FunctionArgExpr::Expr(e) => {
+                                            ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                                self.substitute_aggregate_in_expr(e, agg_to_alias),
+                                            ))
+                                        }
+                                        _ => arg.clone(),
+                                    },
+                                    _ => arg.clone(),
+                                })
+                                .collect(),
+                            clauses: list.clauses.clone(),
+                        };
+                        ast::FunctionArguments::List(new_list)
+                    }
+                    other => other.clone(),
+                };
+
+                Expr::Function(ast::Function {
+                    name: func.name.clone(),
+                    uses_odbc_syntax: func.uses_odbc_syntax,
+                    parameters: func.parameters.clone(),
+                    args: new_args,
+                    filter: func.filter.clone(),
+                    null_treatment: func.null_treatment,
+                    over: new_over,
+                    within_group: func.within_group.clone(),
+                })
+            }
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(self.substitute_aggregate_in_expr(left, agg_to_alias)),
+                op: op.clone(),
+                right: Box::new(self.substitute_aggregate_in_expr(right, agg_to_alias)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(self.substitute_aggregate_in_expr(inner, agg_to_alias)),
+            },
+            Expr::Nested(inner) => Expr::Nested(Box::new(
+                self.substitute_aggregate_in_expr(inner, agg_to_alias),
+            )),
+            _ => expr.clone(),
+        }
     }
 
     fn extract_group_by_exprs(&self, group_by: &ast::GroupByExpr) -> Vec<Expr> {
@@ -3190,6 +4311,65 @@ impl QueryExecutor {
                 active_indices,
                 cte_tables,
             ),
+            Expr::IsNull(inner) => {
+                let val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                    inner,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                    cte_tables,
+                )?;
+                Ok(Value::Bool(val.is_null()))
+            }
+            Expr::IsNotNull(inner) => {
+                let val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                    inner,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                    cte_tables,
+                )?;
+                Ok(Value::Bool(!val.is_null()))
+            }
+            Expr::Between {
+                expr: inner_expr,
+                low,
+                high,
+                negated,
+            } => {
+                let expr_val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                    inner_expr,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                    cte_tables,
+                )?;
+                let low_val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                    low,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                    cte_tables,
+                )?;
+                let high_val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                    high,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                    cte_tables,
+                )?;
+                evaluator.evaluate_between_values(&expr_val, &low_val, &high_val, *negated)
+            }
             _ => {
                 if let Some(row) = group_rows.first() {
                     evaluator.evaluate(expr, row)
@@ -3273,6 +4453,7 @@ impl QueryExecutor {
                 | "ARRAY_AGG"
                 | "STRING_AGG"
                 | "GROUP_CONCAT"
+                | "LISTAGG"
                 | "STDDEV"
                 | "STDDEV_POP"
                 | "STDDEV_SAMP"
@@ -3296,6 +4477,11 @@ impl QueryExecutor {
                 | "HLL_COUNT_INIT"
                 | "HLL_COUNT_MERGE"
                 | "HLL_COUNT_MERGE_PARTIAL"
+                | "COUNTIF"
+                | "COUNT_IF"
+                | "SUMIF"
+                | "SUM_IF"
+                | "XMLAGG"
         )
     }
 
@@ -4031,6 +5217,157 @@ impl QueryExecutor {
                 );
                 Ok(Value::string(format!("HLL_SKETCH:p14:{}", encoded)))
             }
+            "LISTAGG" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("LISTAGG requires an argument".to_string())
+                })?;
+                let separator = self
+                    .extract_second_function_arg(func)
+                    .and_then(|e| {
+                        if let Some(row) = group_rows.first() {
+                            evaluator
+                                .evaluate(&e, row)
+                                .ok()
+                                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+
+                let mut parts = Vec::new();
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if !val.is_null() {
+                        parts.push(val.to_string());
+                    }
+                }
+
+                Ok(Value::string(parts.join(&separator)))
+            }
+            "COUNTIF" | "COUNT_IF" => {
+                let condition_expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("COUNT_IF requires a condition argument".to_string())
+                })?;
+                let mut count = 0i64;
+                for row in group_rows {
+                    let cond = evaluator.evaluate(&condition_expr, row)?;
+                    if let Some(b) = cond.as_bool() {
+                        if b {
+                            count += 1;
+                        }
+                    }
+                }
+                Ok(Value::int64(count))
+            }
+            "SUMIF" | "SUM_IF" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("SUM_IF requires an expression argument".to_string())
+                })?;
+                let condition_expr = self.extract_second_function_arg(func).ok_or_else(|| {
+                    Error::InvalidQuery("SUM_IF requires a condition argument".to_string())
+                })?;
+
+                let mut sum_int: Option<i64> = None;
+                let mut sum_float: Option<f64> = None;
+
+                for row in group_rows {
+                    let cond = evaluator.evaluate(&condition_expr, row)?;
+                    let cond_true = cond.as_bool().unwrap_or(false);
+                    if !cond_true {
+                        continue;
+                    }
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    if let Some(i) = val.as_i64() {
+                        sum_int = Some(sum_int.unwrap_or(0) + i);
+                    } else if let Some(f) = val.as_f64() {
+                        sum_float = Some(sum_float.unwrap_or(0.0) + f);
+                    }
+                }
+
+                if let Some(s) = sum_float {
+                    Ok(Value::float64(s + sum_int.unwrap_or(0) as f64))
+                } else if let Some(s) = sum_int {
+                    Ok(Value::int64(s))
+                } else {
+                    Ok(Value::null())
+                }
+            }
+            "XMLAGG" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("XMLAGG requires an argument".to_string())
+                })?;
+
+                let mut parts = Vec::new();
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if !val.is_null() {
+                        parts.push(val.to_string());
+                    }
+                }
+
+                Ok(Value::string(parts.join("")))
+            }
+            "BIT_AND" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("BIT_AND requires an argument".to_string())
+                })?;
+                let mut result: Option<i64> = None;
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    if let Some(i) = val.as_i64() {
+                        result = Some(match result {
+                            None => i,
+                            Some(r) => r & i,
+                        });
+                    }
+                }
+                Ok(result.map(Value::int64).unwrap_or_else(Value::null))
+            }
+            "BIT_OR" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("BIT_OR requires an argument".to_string())
+                })?;
+                let mut result: Option<i64> = None;
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    if let Some(i) = val.as_i64() {
+                        result = Some(match result {
+                            None => i,
+                            Some(r) => r | i,
+                        });
+                    }
+                }
+                Ok(result.map(Value::int64).unwrap_or_else(Value::null))
+            }
+            "BIT_XOR" => {
+                let expr = arg_expr.ok_or_else(|| {
+                    Error::InvalidQuery("BIT_XOR requires an argument".to_string())
+                })?;
+                let mut result: Option<i64> = None;
+                for row in group_rows {
+                    let val = evaluator.evaluate(&expr, row)?;
+                    if val.is_null() {
+                        continue;
+                    }
+                    if let Some(i) = val.as_i64() {
+                        result = Some(match result {
+                            None => i,
+                            Some(r) => r ^ i,
+                        });
+                    }
+                }
+                Ok(result.map(Value::int64).unwrap_or_else(Value::null))
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Aggregate function {} not yet supported",
                 name
@@ -4198,17 +5535,31 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::UnnamedExpr(expr) => {
+                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
                     let val = evaluator
-                        .evaluate(expr, &sample_record)
+                        .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
                     let name = self.expr_to_alias(expr, idx);
-                    all_cols.push((name, val.data_type()));
+                    let data_type = if val.data_type() == DataType::Unknown {
+                        self.infer_expr_type(expr, input_schema)
+                            .unwrap_or(DataType::Unknown)
+                    } else {
+                        val.data_type()
+                    };
+                    all_cols.push((name, data_type));
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
+                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
                     let val = evaluator
-                        .evaluate(expr, &sample_record)
+                        .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
-                    all_cols.push((alias.value.clone(), val.data_type()));
+                    let data_type = if val.data_type() == DataType::Unknown {
+                        self.infer_expr_type(expr, input_schema)
+                            .unwrap_or(DataType::Unknown)
+                    } else {
+                        val.data_type()
+                    };
+                    all_cols.push((alias.value.clone(), data_type));
                 }
             }
         }
@@ -4262,7 +5613,8 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
-                        let val = evaluator.evaluate(expr, row)?;
+                        let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                        let val = evaluator.evaluate(&resolved_expr, row)?;
                         values.push(val);
                     }
                 }
@@ -4597,6 +5949,8 @@ impl QueryExecutor {
             return Ok(Table::empty(Schema::new()));
         }
 
+        let mut column_defaults = Vec::new();
+
         let fields: Vec<Field> = create
             .columns
             .iter()
@@ -4606,16 +5960,42 @@ impl QueryExecutor {
                     .options
                     .iter()
                     .any(|opt| matches!(opt.option, ast::ColumnOption::NotNull));
-                if nullable {
-                    Ok(Field::nullable(col.name.value.clone(), data_type))
-                } else {
-                    Ok(Field::required(col.name.value.clone(), data_type))
+
+                for opt in &col.options {
+                    if let ast::ColumnOption::Default(expr) = &opt.option {
+                        column_defaults.push(ColumnDefault {
+                            column_name: col.name.value.clone(),
+                            default_expr: expr.clone(),
+                        });
+                    }
                 }
+
+                let default_value = col.options.iter().find_map(|opt| {
+                    if let ast::ColumnOption::Default(expr) = &opt.option {
+                        self.evaluate_literal_expr(expr).ok()
+                    } else {
+                        None
+                    }
+                });
+                let mut field = if nullable {
+                    Field::nullable(col.name.value.clone(), data_type)
+                } else {
+                    Field::required(col.name.value.clone(), data_type)
+                };
+                if let Some(default) = default_value {
+                    field = field.with_default(default);
+                }
+                Ok(field)
             })
             .collect::<Result<Vec<_>>>()?;
 
         let schema = Schema::from_fields(fields);
         self.catalog.create_table(&table_name, schema)?;
+
+        if !column_defaults.is_empty() {
+            self.catalog
+                .set_table_defaults(&table_name, column_defaults);
+        }
 
         Ok(Table::empty(Schema::new()))
     }
@@ -4629,13 +6009,48 @@ impl QueryExecutor {
         if_not_exists: bool,
         materialized: bool,
     ) -> Result<Table> {
+        let view_name = name.to_string();
+
         if materialized {
-            return Err(Error::UnsupportedFeature(
-                "MATERIALIZED VIEW not yet supported".to_string(),
-            ));
+            let result_table = self.execute_query(query)?;
+            let schema = result_table.schema().clone();
+
+            if or_replace {
+                let _ = self.catalog.drop_table(&view_name);
+            } else if self.catalog.table_exists(&view_name) && !if_not_exists {
+                return Err(Error::invalid_query(format!(
+                    "Materialized view already exists: {}",
+                    view_name
+                )));
+            }
+
+            if self.catalog.table_exists(&view_name) {
+                return Ok(Table::empty(Schema::new()));
+            }
+
+            self.catalog.create_table(&view_name, schema)?;
+
+            let table_data = self.catalog.get_table_mut(&view_name).unwrap();
+            for i in 0..result_table.row_count() {
+                let row_values: Vec<Value> = result_table
+                    .schema()
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .map(|(col_idx, field)| {
+                        result_table
+                            .columns()
+                            .get(&field.name)
+                            .map(|col| col.get_value(i))
+                            .unwrap_or(Value::null())
+                    })
+                    .collect();
+                table_data.push_row(row_values)?;
+            }
+
+            return Ok(Table::empty(Schema::new()));
         }
 
-        let view_name = name.to_string();
         let column_aliases: Vec<String> = columns.iter().map(|c| c.name.value.clone()).collect();
         let query_string = query.to_string();
 
@@ -4692,13 +6107,46 @@ impl QueryExecutor {
     fn execute_create_function(&mut self, create: &ast::CreateFunction) -> Result<Table> {
         let name = create.name.to_string();
 
-        let body = match &create.function_body {
-            Some(CreateFunctionBody::AsBeforeOptions(expr)) => expr.clone(),
-            Some(CreateFunctionBody::AsAfterOptions(expr)) => expr.clone(),
+        let language = create
+            .language
+            .as_ref()
+            .map(|l| l.value.to_uppercase())
+            .unwrap_or_else(|| "SQL".to_string());
+
+        let body = match language.as_str() {
+            "JAVASCRIPT" | "JS" => {
+                let js_code = match &create.function_body {
+                    Some(CreateFunctionBody::AsBeforeOptions(expr)) => {
+                        self.extract_string_from_expr(expr)?
+                    }
+                    Some(CreateFunctionBody::AsAfterOptions(expr)) => {
+                        self.extract_string_from_expr(expr)?
+                    }
+                    _ => {
+                        return Err(Error::InvalidQuery(
+                            "JavaScript UDF requires AS 'code' body".to_string(),
+                        ));
+                    }
+                };
+                FunctionBody::JavaScript(js_code)
+            }
+            "SQL" | "" => {
+                let expr = match &create.function_body {
+                    Some(CreateFunctionBody::AsBeforeOptions(expr)) => expr.clone(),
+                    Some(CreateFunctionBody::AsAfterOptions(expr)) => expr.clone(),
+                    _ => {
+                        return Err(Error::UnsupportedFeature(
+                            "SQL UDF requires AS (expr) body".to_string(),
+                        ));
+                    }
+                };
+                FunctionBody::Sql(Box::new(expr))
+            }
             _ => {
-                return Err(Error::UnsupportedFeature(
-                    "Only SQL UDFs with AS (expr) are supported".to_string(),
-                ));
+                return Err(Error::UnsupportedFeature(format!(
+                    "Unsupported function language: {}. Supported: SQL, JAVASCRIPT",
+                    language
+                )));
             }
         };
 
@@ -4727,6 +6175,29 @@ impl QueryExecutor {
 
         self.catalog.create_function(func, create.or_replace)?;
         Ok(Table::empty(Schema::new()))
+    }
+
+    fn extract_string_from_expr(&self, expr: &Expr) -> Result<String> {
+        match expr {
+            Expr::Value(val_with_span) => match &val_with_span.value {
+                SqlValue::SingleQuotedString(s)
+                | SqlValue::DoubleQuotedString(s)
+                | SqlValue::TripleSingleQuotedString(s)
+                | SqlValue::TripleDoubleQuotedString(s)
+                | SqlValue::TripleSingleQuotedRawStringLiteral(s)
+                | SqlValue::TripleDoubleQuotedRawStringLiteral(s)
+                | SqlValue::SingleQuotedRawStringLiteral(s)
+                | SqlValue::DoubleQuotedRawStringLiteral(s) => Ok(s.clone()),
+                _ => Err(Error::InvalidQuery(format!(
+                    "Expected string literal for function body, got: {:?}",
+                    expr
+                ))),
+            },
+            _ => Err(Error::InvalidQuery(format!(
+                "Expected string literal for function body, got: {:?}",
+                expr
+            ))),
+        }
     }
 
     fn execute_drop_function(
@@ -4886,6 +6357,134 @@ impl QueryExecutor {
                 .collect::<Result<Vec<_>>>()?
         };
 
+        let default_row_values = self.compute_default_row_values(&table_name, &schema)?;
+
+        let source = insert
+            .source
+            .as_ref()
+            .ok_or_else(|| Error::InvalidQuery("INSERT requires VALUES or SELECT".to_string()))?;
+
+        let default_row_values: Vec<Value> = schema
+            .fields()
+            .iter()
+            .map(|f| f.default_value.clone().unwrap_or(Value::null()))
+            .collect();
+
+        match source.body.as_ref() {
+            SetExpr::Values(values) => {
+                for row_exprs in &values.rows {
+                    if row_exprs.len() != column_indices.len() {
+                        return Err(Error::InvalidQuery(format!(
+                            "Expected {} values, got {}",
+                            column_indices.len(),
+                            row_exprs.len()
+                        )));
+                    }
+
+                    let mut row_values = default_row_values.clone();
+                    for (expr_idx, &col_idx) in column_indices.iter().enumerate() {
+                        let col_name = &schema.fields()[col_idx].name;
+                        let val =
+                            self.evaluate_insert_expr(&row_exprs[expr_idx], &table_name, col_name)?;
+                        let target_type = &schema.fields()[col_idx].data_type;
+                        let coerced = self.coerce_value_to_type(val, target_type)?;
+                        row_values[col_idx] = coerced;
+                    }
+
+                    let table_data = self.catalog.get_table_mut(&table_name).unwrap();
+                    table_data.push_row(row_values)?;
+                }
+            }
+            SetExpr::Select(select) => {
+                let (_, rows) = self.evaluate_select_with_from(select)?;
+                let table_data = self.catalog.get_table_mut(&table_name).unwrap();
+                for row in rows {
+                    let values = row.values();
+                    if values.len() != column_indices.len() {
+                        return Err(Error::InvalidQuery(format!(
+                            "Expected {} values, got {}",
+                            column_indices.len(),
+                            values.len()
+                        )));
+                    }
+
+                    let mut row_values = default_row_values.clone();
+                    for (val_idx, &col_idx) in column_indices.iter().enumerate() {
+                        row_values[col_idx] = values[val_idx].clone();
+                    }
+                    table_data.push_row(row_values)?;
+                }
+            }
+            _ => {
+                return Err(Error::UnsupportedFeature(
+                    "INSERT source type not supported".to_string(),
+                ));
+            }
+        }
+
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn compute_default_row_values(&self, table_name: &str, schema: &Schema) -> Result<Vec<Value>> {
+        let mut row_values = vec![Value::null(); schema.field_count()];
+        for (i, field) in schema.fields().iter().enumerate() {
+            if let Some(default_expr) = self.catalog.get_column_default(table_name, &field.name) {
+                let val = self.evaluate_literal_expr(default_expr)?;
+                let coerced = self.coerce_value_to_type(val, &field.data_type)?;
+                row_values[i] = coerced;
+            }
+        }
+        Ok(row_values)
+    }
+
+    fn evaluate_insert_expr(
+        &self,
+        expr: &Expr,
+        table_name: &str,
+        column_name: &str,
+    ) -> Result<Value> {
+        if let Expr::Identifier(ident) = expr {
+            if ident.value.to_uppercase() == "DEFAULT" {
+                if let Some(default_expr) = self.catalog.get_column_default(table_name, column_name)
+                {
+                    return self.evaluate_literal_expr(default_expr);
+                } else {
+                    return Ok(Value::null());
+                }
+            }
+        }
+        self.evaluate_literal_expr(expr)
+    }
+
+    fn execute_insert_with_ctes(
+        &mut self,
+        insert: &ast::Insert,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Table> {
+        let table_name = insert.table.to_string();
+        let table_data = self
+            .catalog
+            .get_table_mut(&table_name)
+            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+
+        let schema = table_data.schema().clone();
+
+        let column_indices: Vec<usize> = if insert.columns.is_empty() {
+            (0..schema.field_count()).collect()
+        } else {
+            insert
+                .columns
+                .iter()
+                .map(|col| {
+                    schema
+                        .fields()
+                        .iter()
+                        .position(|f| f.name.to_uppercase() == col.value.to_uppercase())
+                        .ok_or_else(|| Error::ColumnNotFound(col.value.clone()))
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+
         let source = insert
             .source
             .as_ref()
@@ -4915,7 +6514,8 @@ impl QueryExecutor {
                 }
             }
             SetExpr::Select(select) => {
-                let (_, rows) = self.evaluate_select_with_from(select)?;
+                let result = self.execute_select_with_ctes(select, &None, &None, cte_tables)?;
+                let rows = result.to_records()?;
                 let table_data = self.catalog.get_table_mut(&table_name).unwrap();
                 for row in rows {
                     let values = row.values();
@@ -5004,6 +6604,12 @@ impl QueryExecutor {
     fn execute_delete(&mut self, delete: &ast::Delete) -> Result<Table> {
         let table_name = self.extract_delete_table_name(delete)?;
         let user_functions = self.catalog.get_functions().clone();
+
+        let resolved_selection = match &delete.selection {
+            Some(selection) => Some(self.resolve_subqueries_in_expr(selection)?),
+            None => None,
+        };
+
         let table_data = self
             .catalog
             .get_table_mut(&table_name)
@@ -5012,7 +6618,178 @@ impl QueryExecutor {
         let schema = table_data.schema().clone();
         let evaluator = Evaluator::with_user_functions(&schema, &user_functions);
 
-        match &delete.selection {
+        match resolved_selection {
+            Some(selection) => {
+                let num_rows = table_data.row_count();
+                let mut indices_to_delete = Vec::new();
+                for row_idx in 0..num_rows {
+                    let row = table_data.get_row(row_idx)?;
+                    if evaluator
+                        .evaluate_to_bool(&selection, &row)
+                        .unwrap_or(false)
+                    {
+                        indices_to_delete.push(row_idx);
+                    }
+                }
+                for idx in indices_to_delete.into_iter().rev() {
+                    table_data.remove_row(idx);
+                }
+            }
+            None => {
+                table_data.clear();
+            }
+        }
+
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn resolve_subqueries_in_expr(&self, expr: &Expr) -> Result<Expr> {
+        match expr {
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            } => {
+                let subquery_result = self.execute_query(subquery)?;
+                let values = self.table_column_to_expr_list(&subquery_result)?;
+                let resolved_expr = self.resolve_subqueries_in_expr(expr)?;
+                Ok(Expr::InList {
+                    expr: Box::new(resolved_expr),
+                    list: values,
+                    negated: *negated,
+                })
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let resolved_left = self.resolve_subqueries_in_expr(left)?;
+                let resolved_right = self.resolve_subqueries_in_expr(right)?;
+                Ok(Expr::BinaryOp {
+                    left: Box::new(resolved_left),
+                    op: op.clone(),
+                    right: Box::new(resolved_right),
+                })
+            }
+            Expr::UnaryOp { op, expr } => {
+                let resolved_expr = self.resolve_subqueries_in_expr(expr)?;
+                Ok(Expr::UnaryOp {
+                    op: *op,
+                    expr: Box::new(resolved_expr),
+                })
+            }
+            Expr::Nested(inner) => {
+                let resolved = self.resolve_subqueries_in_expr(inner)?;
+                Ok(Expr::Nested(Box::new(resolved)))
+            }
+            _ => Ok(expr.clone()),
+        }
+    }
+
+    fn table_column_to_expr_list(&self, table: &Table) -> Result<Vec<Expr>> {
+        if table.schema().fields().is_empty() {
+            return Ok(vec![]);
+        }
+        let column_name = &table.schema().fields()[0].name;
+        let column = table
+            .column_by_name(column_name)
+            .ok_or_else(|| Error::ColumnNotFound(column_name.clone()))?;
+
+        let mut exprs = Vec::with_capacity(table.row_count());
+        for i in 0..table.row_count() {
+            let value = column.get_value(i);
+            let sql_value = Self::value_to_sql_value(&value);
+            exprs.push(Expr::Value(ast::ValueWithSpan {
+                value: sql_value,
+                span: Span::empty(),
+            }));
+        }
+        Ok(exprs)
+    }
+
+    fn execute_update_with_ctes(
+        &mut self,
+        table: &ast::TableWithJoins,
+        assignments: &[ast::Assignment],
+        selection: Option<&Expr>,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Table> {
+        let table_name = self.extract_single_table_name(table)?;
+        let user_functions = self.catalog.get_functions().clone();
+
+        let resolved_selection = match selection {
+            Some(sel) => Some(self.resolve_scalar_subqueries_with_ctes(sel, cte_tables)?),
+            None => None,
+        };
+
+        let table_data = self
+            .catalog
+            .get_table_mut(&table_name)
+            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+
+        let schema = table_data.schema().clone();
+        let evaluator = Evaluator::with_user_functions(&schema, &user_functions);
+
+        let assignment_indices: Vec<(usize, &Expr)> = assignments
+            .iter()
+            .map(|a| {
+                let col_name = match &a.target {
+                    ast::AssignmentTarget::ColumnName(obj_name) => obj_name.to_string(),
+                    ast::AssignmentTarget::Tuple(_) => {
+                        return Err(Error::UnsupportedFeature(
+                            "Tuple assignment not supported".to_string(),
+                        ));
+                    }
+                };
+                let idx = schema
+                    .fields()
+                    .iter()
+                    .position(|f| f.name.to_uppercase() == col_name.to_uppercase())
+                    .ok_or_else(|| Error::ColumnNotFound(col_name.clone()))?;
+                Ok((idx, &a.value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let num_rows = table_data.row_count();
+        for row_idx in 0..num_rows {
+            let row = table_data.get_row(row_idx)?;
+            let should_update = match &resolved_selection {
+                Some(sel) => evaluator.evaluate_to_bool(sel, &row)?,
+                None => true,
+            };
+
+            if should_update {
+                let mut values = row.values().to_vec();
+                for (col_idx, expr) in &assignment_indices {
+                    let new_val = evaluator.evaluate(expr, &row)?;
+                    values[*col_idx] = new_val;
+                }
+                table_data.update_row(row_idx, values)?;
+            }
+        }
+
+        Ok(Table::empty(Schema::new()))
+    }
+
+    fn execute_delete_with_ctes(
+        &mut self,
+        delete: &ast::Delete,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Table> {
+        let table_name = self.extract_delete_table_name(delete)?;
+        let user_functions = self.catalog.get_functions().clone();
+
+        let resolved_selection = match &delete.selection {
+            Some(sel) => Some(self.resolve_scalar_subqueries_with_ctes(sel, cte_tables)?),
+            None => None,
+        };
+
+        let table_data = self
+            .catalog
+            .get_table_mut(&table_name)
+            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+
+        let schema = table_data.schema().clone();
+        let evaluator = Evaluator::with_user_functions(&schema, &user_functions);
+
+        match &resolved_selection {
             Some(selection) => {
                 let num_rows = table_data.row_count();
                 let mut indices_to_delete = Vec::new();
@@ -5057,13 +6834,22 @@ impl QueryExecutor {
                 ast::AlterTableOperation::AddColumn { column_def, .. } => {
                     let col_name = column_def.name.value.clone();
                     let data_type = self.sql_type_to_data_type(&column_def.data_type)?;
+
+                    let default_value = column_def.options.iter().find_map(|opt| {
+                        if let ast::ColumnOption::Default(expr) = &opt.option {
+                            self.evaluate_literal_expr(expr).ok()
+                        } else {
+                            None
+                        }
+                    });
+
                     let table_data = self
                         .catalog
                         .get_table_mut(&table_name)
                         .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
 
                     let field = Field::nullable(col_name, data_type);
-                    TableSchemaOps::add_column(table_data, field, None)?;
+                    TableSchemaOps::add_column(table_data, field, default_value)?;
                 }
                 ast::AlterTableOperation::DropColumn { column_names, .. } => {
                     let column_name = column_names.first().ok_or_else(|| {
@@ -5090,9 +6876,35 @@ impl QueryExecutor {
                 ast::AlterTableOperation::RenameTable {
                     table_name: new_name,
                 } => {
-                    let new_table_name = new_name.to_string();
+                    let new_table_name = match new_name {
+                        ast::RenameTableNameKind::To(name) => name.to_string(),
+                        ast::RenameTableNameKind::As(name) => name.to_string(),
+                    };
                     self.catalog.rename_table(&table_name, &new_table_name)?;
                 }
+                ast::AlterTableOperation::AddConstraint { .. } => {}
+                ast::AlterTableOperation::AlterColumn { column_name, op } => match op {
+                    ast::AlterColumnOperation::SetNotNull => {
+                        let table_data = self
+                            .catalog
+                            .get_table_mut(&table_name)
+                            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+                        table_data.set_column_not_null(&column_name.value)?;
+                    }
+                    ast::AlterColumnOperation::DropNotNull => {
+                        let table_data = self
+                            .catalog
+                            .get_table_mut(&table_name)
+                            .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
+                        table_data.set_column_nullable(&column_name.value)?;
+                    }
+                    _ => {
+                        return Err(Error::UnsupportedFeature(format!(
+                            "ALTER COLUMN operation not supported: {:?}",
+                            op
+                        )));
+                    }
+                },
                 _ => {
                     return Err(Error::UnsupportedFeature(format!(
                         "ALTER TABLE operation not supported: {:?}",
@@ -5147,9 +6959,20 @@ impl QueryExecutor {
     }
 
     fn resolve_scalar_subqueries(&self, expr: &Expr) -> Result<Expr> {
+        self.resolve_scalar_subqueries_with_ctes(expr, &HashMap::new())
+    }
+
+    fn resolve_scalar_subqueries_with_ctes(
+        &self,
+        expr: &Expr,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Expr> {
         match expr {
             Expr::Subquery(query) => {
-                let result = self.execute_query(query)?;
+                let mut merged_ctes = cte_tables.clone();
+                let inner_ctes = self.materialize_ctes(&query.with)?;
+                merged_ctes.extend(inner_ctes);
+                let result = self.execute_query_with_ctes(query, &merged_ctes)?;
                 let rows = result.to_records()?;
                 if rows.len() != 1 || result.schema().field_count() != 1 {
                     return Err(Error::InvalidQuery(
@@ -5160,8 +6983,8 @@ impl QueryExecutor {
                 Ok(self.value_to_expr(&value))
             }
             Expr::BinaryOp { left, op, right } => {
-                let resolved_left = self.resolve_scalar_subqueries(left)?;
-                let resolved_right = self.resolve_scalar_subqueries(right)?;
+                let resolved_left = self.resolve_scalar_subqueries_with_ctes(left, cte_tables)?;
+                let resolved_right = self.resolve_scalar_subqueries_with_ctes(right, cte_tables)?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(resolved_left),
                     op: op.clone(),
@@ -5169,14 +6992,14 @@ impl QueryExecutor {
                 })
             }
             Expr::UnaryOp { op, expr: inner } => {
-                let resolved = self.resolve_scalar_subqueries(inner)?;
+                let resolved = self.resolve_scalar_subqueries_with_ctes(inner, cte_tables)?;
                 Ok(Expr::UnaryOp {
                     op: *op,
                     expr: Box::new(resolved),
                 })
             }
             Expr::Nested(inner) => {
-                let resolved = self.resolve_scalar_subqueries(inner)?;
+                let resolved = self.resolve_scalar_subqueries_with_ctes(inner, cte_tables)?;
                 Ok(Expr::Nested(Box::new(resolved)))
             }
             Expr::Between {
@@ -5185,9 +7008,9 @@ impl QueryExecutor {
                 high,
                 negated,
             } => {
-                let resolved_expr = self.resolve_scalar_subqueries(expr)?;
-                let resolved_low = self.resolve_scalar_subqueries(low)?;
-                let resolved_high = self.resolve_scalar_subqueries(high)?;
+                let resolved_expr = self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
+                let resolved_low = self.resolve_scalar_subqueries_with_ctes(low, cte_tables)?;
+                let resolved_high = self.resolve_scalar_subqueries_with_ctes(high, cte_tables)?;
                 Ok(Expr::Between {
                     expr: Box::new(resolved_expr),
                     low: Box::new(resolved_low),
@@ -5196,11 +7019,11 @@ impl QueryExecutor {
                 })
             }
             Expr::IsNull(inner) => {
-                let resolved = self.resolve_scalar_subqueries(inner)?;
+                let resolved = self.resolve_scalar_subqueries_with_ctes(inner, cte_tables)?;
                 Ok(Expr::IsNull(Box::new(resolved)))
             }
             Expr::IsNotNull(inner) => {
-                let resolved = self.resolve_scalar_subqueries(inner)?;
+                let resolved = self.resolve_scalar_subqueries_with_ctes(inner, cte_tables)?;
                 Ok(Expr::IsNotNull(Box::new(resolved)))
             }
             Expr::Function(func) => {
@@ -5363,21 +7186,66 @@ impl QueryExecutor {
                     negated: *negated,
                 })
             }
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            } => {
+                let resolved_expr = self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
+                let mut merged_ctes = cte_tables.clone();
+                let inner_ctes = self.materialize_ctes(&subquery.with)?;
+                merged_ctes.extend(inner_ctes);
+                let result = self.execute_query_with_ctes(subquery, &merged_ctes)?;
+                let rows = result.to_records()?;
+                if result.schema().field_count() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "IN subquery must return exactly one column".to_string(),
+                    ));
+                }
+                let list: Vec<Expr> = rows
+                    .iter()
+                    .map(|row| self.value_to_expr(&row.values()[0]))
+                    .collect();
+                Ok(Expr::InList {
+                    expr: Box::new(resolved_expr),
+                    list,
+                    negated: *negated,
+                })
+            }
             _ => Ok(expr.clone()),
         }
     }
 
     fn value_to_expr(&self, value: &Value) -> Expr {
-        let sql_value = match value {
-            Value::Null => SqlValue::Null,
-            Value::Bool(b) => SqlValue::Boolean(*b),
-            Value::Int64(i) => SqlValue::Number(i.to_string(), false),
-            Value::Float64(f) => SqlValue::Number(f.to_string(), false),
-            Value::String(s) => SqlValue::SingleQuotedString(s.clone()),
-            Value::Numeric(n) => SqlValue::Number(n.to_string(), false),
-            _ => SqlValue::Null,
-        };
-        Expr::Value(sql_value.into())
+        match value {
+            Value::Array(arr) => {
+                let elements: Vec<Expr> = arr.iter().map(|v| self.value_to_expr(v)).collect();
+                Expr::Array(ast::Array {
+                    elem: elements,
+                    named: false,
+                })
+            }
+            _ => {
+                let sql_value = match value {
+                    Value::Null => SqlValue::Null,
+                    Value::Bool(b) => SqlValue::Boolean(*b),
+                    Value::Int64(i) => SqlValue::Number(i.to_string(), false),
+                    Value::Float64(f) => {
+                        let s = f.to_string();
+                        let s = if s.contains('.') || s.contains('e') || s.contains('E') {
+                            s
+                        } else {
+                            format!("{}.0", s)
+                        };
+                        SqlValue::Number(s, false)
+                    }
+                    Value::String(s) => SqlValue::SingleQuotedString(s.clone()),
+                    Value::Numeric(n) => SqlValue::Number(n.to_string(), false),
+                    _ => SqlValue::Null,
+                };
+                Expr::Value(sql_value.into())
+            }
+        }
     }
 
     fn expr_to_alias(&self, expr: &Expr, idx: usize) -> String {
@@ -5388,6 +7256,41 @@ impl QueryExecutor {
                 .map(|i| i.value.clone())
                 .unwrap_or_else(|| format!("_col{}", idx)),
             _ => format!("_col{}", idx),
+        }
+    }
+
+    fn infer_expr_type(&self, expr: &Expr, schema: &Schema) -> Option<DataType> {
+        match expr {
+            Expr::Identifier(ident) => {
+                let col_name = ident.value.to_uppercase();
+                schema
+                    .fields()
+                    .iter()
+                    .find(|f| {
+                        f.name.to_uppercase() == col_name
+                            || f.name.to_uppercase().ends_with(&format!(".{}", col_name))
+                    })
+                    .map(|f| f.data_type.clone())
+            }
+            Expr::CompoundIdentifier(parts) => {
+                let full_name = parts
+                    .iter()
+                    .map(|p| p.value.clone())
+                    .collect::<Vec<_>>()
+                    .join(".")
+                    .to_uppercase();
+                let col_name = parts.last().map(|p| p.value.to_uppercase())?;
+                schema
+                    .fields()
+                    .iter()
+                    .find(|f| {
+                        f.name.to_uppercase() == full_name
+                            || f.name.to_uppercase() == col_name
+                            || f.name.to_uppercase().ends_with(&format!(".{}", col_name))
+                    })
+                    .map(|f| f.data_type.clone())
+            }
+            _ => None,
         }
     }
 
@@ -5471,9 +7374,85 @@ impl QueryExecutor {
                 };
                 Ok(Value::interval(interval_val))
             }
+            Expr::Function(_) => {
+                let schema = Schema::default();
+                let record = Record::from_values(vec![]);
+                let evaluator = Evaluator::new(&schema);
+                evaluator.evaluate(expr, &record)
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = self.evaluate_literal_expr(left)?;
+                let right_val = self.evaluate_literal_expr(right)?;
+                self.evaluate_binary_op_values(&left_val, op, &right_val)
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Expression not supported in this context: {:?}",
                 expr
+            ))),
+        }
+    }
+
+    fn evaluate_binary_op_values(
+        &self,
+        left: &Value,
+        op: &ast::BinaryOperator,
+        right: &Value,
+    ) -> Result<Value> {
+        match op {
+            ast::BinaryOperator::Plus => {
+                if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
+                    return Ok(Value::int64(l + r));
+                }
+                if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+                    return Ok(Value::float64(l + r));
+                }
+                Err(Error::InvalidQuery(format!(
+                    "Cannot add {:?} and {:?}",
+                    left, right
+                )))
+            }
+            ast::BinaryOperator::Minus => {
+                if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
+                    return Ok(Value::int64(l - r));
+                }
+                if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+                    return Ok(Value::float64(l - r));
+                }
+                Err(Error::InvalidQuery(format!(
+                    "Cannot subtract {:?} and {:?}",
+                    left, right
+                )))
+            }
+            ast::BinaryOperator::Multiply => {
+                if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
+                    return Ok(Value::int64(l * r));
+                }
+                if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+                    return Ok(Value::float64(l * r));
+                }
+                Err(Error::InvalidQuery(format!(
+                    "Cannot multiply {:?} and {:?}",
+                    left, right
+                )))
+            }
+            ast::BinaryOperator::Divide => {
+                if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
+                    if r == 0 {
+                        return Err(Error::InvalidQuery("Division by zero".to_string()));
+                    }
+                    return Ok(Value::int64(l / r));
+                }
+                if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+                    return Ok(Value::float64(l / r));
+                }
+                Err(Error::InvalidQuery(format!(
+                    "Cannot divide {:?} and {:?}",
+                    left, right
+                )))
+            }
+            _ => Err(Error::UnsupportedFeature(format!(
+                "Binary operator {:?} not supported in literal expressions",
+                op
             ))),
         }
     }
@@ -5759,6 +7738,16 @@ impl QueryExecutor {
                 Ok(DataType::Struct(struct_fields))
             }
             ast::DataType::Interval { .. } => Ok(DataType::Interval),
+            ast::DataType::Custom(name, _) => {
+                let type_name = name.to_string().to_uppercase();
+                match type_name.as_str() {
+                    "GEOGRAPHY" => Ok(DataType::Geography),
+                    _ => Err(Error::UnsupportedFeature(format!(
+                        "Data type not yet supported: {:?}",
+                        sql_type
+                    ))),
+                }
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Data type not yet supported: {:?}",
                 sql_type
@@ -5810,6 +7799,16 @@ impl QueryExecutor {
         rows: &[Record],
         projection: &[SelectItem],
     ) -> Result<HashMap<String, Vec<Value>>> {
+        self.compute_window_functions_with_qualify(schema, rows, projection, None)
+    }
+
+    fn compute_window_functions_with_qualify(
+        &self,
+        schema: &Schema,
+        rows: &[Record],
+        projection: &[SelectItem],
+        qualify: Option<&Expr>,
+    ) -> Result<HashMap<String, Vec<Value>>> {
         let mut window_results: HashMap<String, Vec<Value>> = HashMap::new();
         let evaluator = Evaluator::with_user_functions(schema, self.catalog.get_functions());
 
@@ -5822,6 +7821,16 @@ impl QueryExecutor {
 
             self.collect_window_function_results(
                 expr,
+                schema,
+                rows,
+                &evaluator,
+                &mut window_results,
+            )?;
+        }
+
+        if let Some(qualify_expr) = qualify {
+            self.collect_window_function_results(
+                qualify_expr,
                 schema,
                 rows,
                 &evaluator,
@@ -6776,6 +8785,32 @@ impl QueryExecutor {
         Ok((output_schema, output_rows))
     }
 
+    fn apply_qualify_filter(
+        &self,
+        schema: &Schema,
+        rows: &[Record],
+        qualify_expr: &Expr,
+        window_results: &HashMap<String, Vec<Value>>,
+    ) -> Result<Vec<usize>> {
+        let mut qualifying_indices = Vec::new();
+
+        for (row_idx, row) in rows.iter().enumerate() {
+            let val = self.evaluate_expr_with_window_results(
+                qualify_expr,
+                schema,
+                row,
+                row_idx,
+                window_results,
+            )?;
+
+            if val.as_bool().unwrap_or_default() {
+                qualifying_indices.push(row_idx);
+            }
+        }
+
+        Ok(qualifying_indices)
+    }
+
     fn evaluate_expr_with_window_results(
         &self,
         expr: &Expr,
@@ -7151,6 +9186,230 @@ impl QueryExecutor {
         Ok((last_result, None))
     }
 
+    fn execute_loop(&mut self, loop_stmt: &LoopStatement) -> Result<(Table, Option<LoopControl>)> {
+        let max_iterations = 10000;
+        let mut iterations = 0;
+        let mut last_result = Table::empty(Schema::new());
+
+        while iterations < max_iterations {
+            let (result, control) = self.execute_script_body(&loop_stmt.body)?;
+            last_result = result;
+
+            match control {
+                Some(LoopControl::Break) => break,
+                Some(LoopControl::Return) => return Ok((last_result, Some(LoopControl::Return))),
+                Some(LoopControl::Continue) | None => {}
+            }
+
+            iterations += 1;
+        }
+
+        Ok((last_result, None))
+    }
+
+    fn execute_while_do(
+        &mut self,
+        while_stmt: &WhileDoStatement,
+    ) -> Result<(Table, Option<LoopControl>)> {
+        let max_iterations = 10000;
+        let mut iterations = 0;
+        let mut last_result = Table::empty(Schema::new());
+
+        while iterations < max_iterations {
+            let cond_result = self.execute_sql(&format!("SELECT {}", while_stmt.condition))?;
+            let records = cond_result.to_records()?;
+            let cond_val = records
+                .first()
+                .and_then(|r| r.values().first())
+                .cloned()
+                .unwrap_or(Value::null());
+
+            if !cond_val.as_bool().unwrap_or(false) {
+                break;
+            }
+
+            let (result, control) = self.execute_script_body(&while_stmt.body)?;
+            last_result = result;
+
+            match control {
+                Some(LoopControl::Break) => break,
+                Some(LoopControl::Return) => return Ok((last_result, Some(LoopControl::Return))),
+                Some(LoopControl::Continue) | None => {}
+            }
+
+            iterations += 1;
+        }
+
+        Ok((last_result, None))
+    }
+
+    fn execute_repeat(
+        &mut self,
+        repeat_stmt: &RepeatStatement,
+    ) -> Result<(Table, Option<LoopControl>)> {
+        let max_iterations = 10000;
+        let mut iterations = 0;
+        let mut last_result = Table::empty(Schema::new());
+
+        loop {
+            if iterations >= max_iterations {
+                break;
+            }
+
+            let (result, control) = self.execute_script_body(&repeat_stmt.body)?;
+            last_result = result;
+
+            match control {
+                Some(LoopControl::Break) => break,
+                Some(LoopControl::Return) => return Ok((last_result, Some(LoopControl::Return))),
+                Some(LoopControl::Continue) | None => {}
+            }
+
+            let cond_result =
+                self.execute_sql(&format!("SELECT {}", repeat_stmt.until_condition))?;
+            let records = cond_result.to_records()?;
+            let cond_val = records
+                .first()
+                .and_then(|r| r.values().first())
+                .cloned()
+                .unwrap_or(Value::null());
+
+            if cond_val.as_bool().unwrap_or(false) {
+                break;
+            }
+
+            iterations += 1;
+        }
+
+        Ok((last_result, None))
+    }
+
+    fn execute_for(&mut self, for_stmt: &ForStatement) -> Result<(Table, Option<LoopControl>)> {
+        let query_str = for_stmt.query.trim();
+        let query_to_execute = if query_str.starts_with('(') && query_str.ends_with(')') {
+            &query_str[1..query_str.len() - 1]
+        } else {
+            query_str
+        };
+        let query_result = self.execute_sql(query_to_execute)?;
+        let records = query_result.to_records()?;
+        let schema = query_result.schema();
+        let mut last_result = Table::empty(Schema::new());
+
+        self.push_scope();
+
+        let loop_var_name = for_stmt.loop_var.to_uppercase();
+
+        for record in records {
+            let struct_fields: Vec<(String, Value)> = schema
+                .fields()
+                .iter()
+                .zip(record.values().iter())
+                .map(|(f, v)| (f.name.clone(), v.clone()))
+                .collect();
+
+            let struct_value = Value::Struct(struct_fields);
+
+            self.declare_variable(&loop_var_name, DataType::Unknown, Some(struct_value));
+
+            let (result, control) = self.execute_script_body(&for_stmt.body)?;
+            last_result = result;
+
+            match control {
+                Some(LoopControl::Break) => break,
+                Some(LoopControl::Return) => {
+                    self.pop_scope();
+                    return Ok((last_result, Some(LoopControl::Return)));
+                }
+                Some(LoopControl::Continue) | None => {}
+            }
+        }
+
+        self.pop_scope();
+        Ok((last_result, None))
+    }
+
+    fn execute_leave_iterate(
+        &mut self,
+        is_leave: bool,
+        _label: Option<&str>,
+    ) -> Result<(Table, Option<LoopControl>)> {
+        if is_leave {
+            Ok((Table::empty(Schema::new()), Some(LoopControl::Break)))
+        } else {
+            Ok((Table::empty(Schema::new()), Some(LoopControl::Continue)))
+        }
+    }
+
+    fn execute_script_body(&mut self, body: &str) -> Result<(Table, Option<LoopControl>)> {
+        let statements = split_script_statements(body);
+        let mut last_result = Table::empty(Schema::new());
+        let mut control = None;
+
+        for stmt_sql in statements {
+            let stmt_sql = stmt_sql.trim();
+            if stmt_sql.is_empty() {
+                continue;
+            }
+
+            if let Some(loop_stmt) = parse_loop_statement(stmt_sql) {
+                let (result, ctrl) = self.execute_loop(&loop_stmt)?;
+                last_result = result;
+                control = ctrl;
+            } else if let Some(while_stmt) = parse_while_do_statement(stmt_sql) {
+                let (result, ctrl) = self.execute_while_do(&while_stmt)?;
+                last_result = result;
+                control = ctrl;
+            } else if let Some(repeat_stmt) = parse_repeat_statement(stmt_sql) {
+                let (result, ctrl) = self.execute_repeat(&repeat_stmt)?;
+                last_result = result;
+                control = ctrl;
+            } else if let Some(for_stmt) = parse_for_statement(stmt_sql) {
+                let (result, ctrl) = self.execute_for(&for_stmt)?;
+                last_result = result;
+                control = ctrl;
+            } else if let Some((is_leave, label)) = is_leave_or_iterate_statement(stmt_sql) {
+                let (result, ctrl) = self.execute_leave_iterate(is_leave, label.as_deref())?;
+                last_result = result;
+                control = ctrl;
+            } else {
+                let preprocessed = preprocess_loop_control_statements(stmt_sql);
+                let dialect = BigQueryDialect {};
+                match Parser::parse_sql(&dialect, &preprocessed) {
+                    Ok(parsed_stmts) => {
+                        if let Some(stmt) = parsed_stmts.first() {
+                            let exec_result = self.execute_statement_internal(stmt);
+                            match exec_result {
+                                Ok((result, ctrl)) => {
+                                    last_result = result;
+                                    control = ctrl;
+                                }
+                                Err(Error::InvalidQuery(msg)) if msg.contains("__LOOP_LEAVE__") => {
+                                    control = Some(LoopControl::Break);
+                                }
+                                Err(Error::InvalidQuery(msg))
+                                    if msg.contains("__LOOP_ITERATE__") =>
+                                {
+                                    control = Some(LoopControl::Continue);
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(Error::ParseError(e.to_string()));
+                    }
+                }
+            }
+
+            if control.is_some() {
+                break;
+            }
+        }
+
+        Ok((last_result, control))
+    }
+
     fn execute_begin_block(
         &mut self,
         statements: &[Statement],
@@ -7389,6 +9648,12 @@ impl QueryExecutor {
                     }
                 }
                 self.evaluate_literal_expr(expr)
+            }
+            Expr::Function(_) => {
+                let empty_schema = Schema::new();
+                let empty_record = Record::from_values(vec![]);
+                let evaluator = Evaluator::new(&empty_schema);
+                evaluator.evaluate(expr, &empty_record)
             }
             _ => self.evaluate_literal_expr(expr),
         }
