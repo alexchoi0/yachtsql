@@ -224,10 +224,10 @@ impl ExprPlanner {
             ast::Value::Number(n, _) => {
                 if let Ok(i) = n.parse::<i64>() {
                     Ok(Literal::Int64(i))
-                } else if let Ok(f) = n.parse::<f64>() {
-                    Ok(Literal::Float64(ordered_float::OrderedFloat(f)))
                 } else if let Ok(d) = n.parse::<Decimal>() {
                     Ok(Literal::Numeric(d))
+                } else if let Ok(f) = n.parse::<f64>() {
+                    Ok(Literal::Float64(ordered_float::OrderedFloat(f)))
                 } else {
                     Err(Error::parse_error(format!("Invalid number: {}", n)))
                 }

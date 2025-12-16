@@ -1056,6 +1056,7 @@ impl QueryExecutor {
             Value::Struct(_) => SqlValue::Null,
             Value::Json(j) => SqlValue::SingleQuotedString(j.to_string()),
             Value::Geography(g) => SqlValue::SingleQuotedString(g.to_string()),
+            Value::Range(r) => SqlValue::SingleQuotedString(format!("{:?}", r)),
         }
     }
 
@@ -4564,6 +4565,21 @@ impl QueryExecutor {
                 )?;
                 Ok(Value::Bool(!val.is_null()))
             }
+            Expr::Cast {
+                expr: inner_expr,
+                data_type,
+                ..
+            } => {
+                let val = self.evaluate_aggregate_expr_with_grouping(
+                    inner_expr,
+                    input_schema,
+                    group_rows,
+                    group_key,
+                    group_exprs,
+                    active_indices,
+                )?;
+                evaluator.cast_value(&val, data_type, false)
+            }
             Expr::Between {
                 expr: inner_expr,
                 low,
@@ -7564,6 +7580,9 @@ impl QueryExecutor {
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::int64(-i));
                 }
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(-d));
+                }
                 if let Some(f) = val.as_f64() {
                     return Ok(Value::float64(-f));
                 }
@@ -7632,12 +7651,6 @@ impl QueryExecutor {
                     _ => IntervalValue::new(0, amount as i32, 0),
                 };
                 Ok(Value::interval(interval_val))
-            }
-            Expr::Function(_) => {
-                let schema = Schema::default();
-                let record = Record::from_values(vec![]);
-                let evaluator = Evaluator::new(&schema);
-                evaluator.evaluate(expr, &record)
             }
             Expr::BinaryOp { left, op, right } => {
                 let left_val = self.evaluate_literal_expr(left)?;
@@ -7794,6 +7807,8 @@ impl QueryExecutor {
             SqlValue::Number(n, _) => {
                 if let Ok(i) = n.parse::<i64>() {
                     Ok(Value::int64(i))
+                } else if let Ok(d) = n.parse::<rust_decimal::Decimal>() {
+                    Ok(Value::numeric(d))
                 } else if let Ok(f) = n.parse::<f64>() {
                     Ok(Value::float64(f))
                 } else {
@@ -7879,6 +7894,12 @@ impl QueryExecutor {
                 }
                 if let Some(i) = value.as_i64() {
                     return Ok(Value::float64(i as f64));
+                }
+                if let Some(d) = value.as_numeric() {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(f) = d.to_f64() {
+                        return Ok(Value::float64(f));
+                    }
                 }
                 Ok(value)
             }

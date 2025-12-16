@@ -4,6 +4,7 @@ use std::fmt;
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25,6 +26,7 @@ pub enum DataType {
     Struct(Vec<StructField>),
     Array(Box<DataType>),
     Interval,
+    Range(Box<DataType>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -63,6 +65,7 @@ impl fmt::Display for DataType {
             }
             DataType::Array(inner) => write!(f, "ARRAY<{}>", inner),
             DataType::Interval => write!(f, "INTERVAL"),
+            DataType::Range(inner) => write!(f, "RANGE<{}>", inner),
         }
     }
 }
@@ -86,6 +89,14 @@ pub enum Value {
     Struct(Vec<(String, Value)>),
     Geography(String),
     Interval(IntervalValue),
+    Range(Box<RangeValue>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RangeValue {
+    pub start: Option<Box<Value>>,
+    pub end: Option<Box<Value>>,
+    pub element_type: DataType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +220,14 @@ impl Value {
         })
     }
 
+    pub fn range(start: Option<Value>, end: Option<Value>, element_type: DataType) -> Self {
+        Value::Range(Box::new(RangeValue {
+            start: start.map(Box::new),
+            end: end.map(Box::new),
+            element_type,
+        }))
+    }
+
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
@@ -246,6 +265,7 @@ impl Value {
             }
             Value::Geography(_) => DataType::Geography,
             Value::Interval(_) => DataType::Interval,
+            Value::Range(r) => DataType::Range(Box::new(r.element_type.clone())),
         }
     }
 
@@ -267,6 +287,7 @@ impl Value {
         match self {
             Value::Float64(v) => Some(v.0),
             Value::Int64(v) => Some(*v as f64),
+            Value::Numeric(v) => v.to_f64(),
             _ => None,
         }
     }
@@ -362,6 +383,13 @@ impl Value {
         }
     }
 
+    pub fn as_range(&self) -> Option<&RangeValue> {
+        match self {
+            Value::Range(r) => Some(r),
+            _ => None,
+        }
+    }
+
     pub fn into_string(self) -> Option<String> {
         match self {
             Value::String(s) => Some(s),
@@ -427,6 +455,19 @@ impl fmt::Debug for Value {
                 "INTERVAL {} months {} days {} nanos",
                 v.months, v.days, v.nanos
             ),
+            Value::Range(r) => {
+                write!(f, "RANGE(")?;
+                match &r.start {
+                    Some(s) => write!(f, "{:?}", s)?,
+                    None => write!(f, "UNBOUNDED")?,
+                }
+                write!(f, ", ")?;
+                match &r.end {
+                    Some(e) => write!(f, "{:?}", e)?,
+                    None => write!(f, "UNBOUNDED")?,
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -468,6 +509,19 @@ impl fmt::Display for Value {
             }
             Value::Geography(v) => write!(f, "{}", v),
             Value::Interval(v) => write!(f, "{}-{} {}", v.months, v.days, v.nanos),
+            Value::Range(r) => {
+                write!(f, "[")?;
+                match &r.start {
+                    Some(s) => write!(f, "{}", s)?,
+                    None => write!(f, "UNBOUNDED")?,
+                }
+                write!(f, ", ")?;
+                match &r.end {
+                    Some(e) => write!(f, "{}", e)?,
+                    None => write!(f, "UNBOUNDED")?,
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -506,6 +560,15 @@ impl std::hash::Hash for Value {
                 v.months.hash(state);
                 v.days.hash(state);
                 v.nanos.hash(state);
+            }
+            Value::Range(r) => {
+                r.element_type.hash(state);
+                if let Some(s) = &r.start {
+                    s.hash(state);
+                }
+                if let Some(e) = &r.end {
+                    e.hash(state);
+                }
             }
         }
     }

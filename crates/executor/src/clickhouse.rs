@@ -805,6 +805,8 @@ impl ClickHouseExecutor {
                 SqlValue::Number(n, _) => {
                     if let Ok(i) = n.parse::<i64>() {
                         Ok(Value::int64(i))
+                    } else if let Ok(d) = n.parse::<rust_decimal::Decimal>() {
+                        Ok(Value::numeric(d))
                     } else if let Ok(f) = n.parse::<f64>() {
                         Ok(Value::float64(f))
                     } else {

@@ -20,7 +20,7 @@ use geo_types::{
 use sqlparser::ast::{BinaryOperator, CastKind, Expr, UnaryOperator, Value as SqlValue};
 use wkt::TryFromWkt;
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::Value;
+use yachtsql_common::types::{DataType, Value};
 use yachtsql_storage::{Record, Schema};
 
 pub fn parse_byte_string_escapes(s: &str) -> Vec<u8> {
@@ -1507,6 +1507,12 @@ impl<'a> Evaluator<'a> {
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::int64(i));
                 }
+                if let Some(d) = val.as_numeric() {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(i) = d.to_i64() {
+                        return Ok(Value::int64(i));
+                    }
+                }
                 if let Some(f) = val.as_f64() {
                     if is_safe {
                         if f > i64::MAX as f64 || f < i64::MIN as f64 || !f.is_finite() {
@@ -1665,6 +1671,9 @@ impl<'a> Evaluator<'a> {
                 })
             }
             sqlparser::ast::DataType::Numeric(_) | sqlparser::ast::DataType::Decimal(_) => {
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(d));
+                }
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::numeric(rust_decimal::Decimal::from(i)));
                 }
@@ -1691,6 +1700,9 @@ impl<'a> Evaluator<'a> {
                 })
             }
             sqlparser::ast::DataType::BigNumeric(_) => {
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(d));
+                }
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::numeric(rust_decimal::Decimal::from(i)));
                 }
@@ -2081,6 +2093,34 @@ impl<'a> Evaluator<'a> {
         if let (Some(l), Some(r)) = (left.as_numeric(), right.as_numeric()) {
             return Ok(Value::bool_val(pred(l.cmp(&r))));
         }
+        if let Some(l) = left.as_numeric() {
+            if let Some(r) = right.as_i64() {
+                let r_dec = rust_decimal::Decimal::from(r);
+                return Ok(Value::bool_val(pred(l.cmp(&r_dec))));
+            }
+            if let Some(r) = right.as_f64() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(l_f64) = l.to_f64() {
+                    return Ok(Value::bool_val(pred(
+                        l_f64.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
+                    )));
+                }
+            }
+        }
+        if let Some(r) = right.as_numeric() {
+            if let Some(l) = left.as_i64() {
+                let l_dec = rust_decimal::Decimal::from(l);
+                return Ok(Value::bool_val(pred(l_dec.cmp(&r))));
+            }
+            if let Some(l) = left.as_f64() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(r_f64) = r.to_f64() {
+                    return Ok(Value::bool_val(pred(
+                        l.partial_cmp(&r_f64).unwrap_or(std::cmp::Ordering::Equal),
+                    )));
+                }
+            }
+        }
         if let (Some(l), Some(r)) = (left.as_bytes(), right.as_bytes()) {
             return Ok(Value::bool_val(pred(l.cmp(r))));
         }
@@ -2347,6 +2387,9 @@ impl<'a> Evaluator<'a> {
                 }
                 if let Some(f) = val.as_f64() {
                     return Ok(Value::float64(-f));
+                }
+                if let Some(d) = val.as_numeric() {
+                    return Ok(Value::numeric(-d));
                 }
                 Err(Error::TypeMismatch {
                     expected: "numeric".to_string(),
@@ -2845,6 +2888,12 @@ impl<'a> Evaluator<'a> {
                 }
                 if args[0].is_null() || args[1].is_null() {
                     return Ok(Value::null());
+                }
+                if let (Some(a), Some(b)) = (args[0].as_numeric(), args[1].as_numeric()) {
+                    if b.is_zero() {
+                        return Ok(Value::null());
+                    }
+                    return Ok(Value::numeric(a / b));
                 }
                 let divisor = args[1]
                     .as_f64()
@@ -3713,6 +3762,9 @@ impl<'a> Evaluator<'a> {
                 } else {
                     0
                 };
+                if let Some(d) = args[0].as_numeric() {
+                    return Ok(Value::numeric(d.trunc_with_scale(decimals as u32)));
+                }
                 if let Some(f) = args[0].as_f64() {
                     let multiplier = 10f64.powi(decimals);
                     return Ok(Value::float64((f * multiplier).trunc() / multiplier));
@@ -5706,12 +5758,29 @@ impl<'a> Evaluator<'a> {
                 Ok(Value::bool_val(false))
             }
             "RANGE" => {
-                let start = args.first().cloned().unwrap_or(Value::null());
-                let end = args.get(1).cloned().unwrap_or(Value::null());
-                Ok(Value::struct_val(vec![
-                    ("start".to_string(), start),
-                    ("end".to_string(), end),
-                ]))
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE requires exactly 2 arguments".to_string(),
+                    ));
+                }
+                let start = if args[0].is_null() {
+                    None
+                } else {
+                    Some(args[0].clone())
+                };
+                let end = if args[1].is_null() {
+                    None
+                } else {
+                    Some(args[1].clone())
+                };
+                let element_type = if let Some(s) = &start {
+                    s.data_type()
+                } else if let Some(e) = &end {
+                    e.data_type()
+                } else {
+                    DataType::Unknown
+                };
+                Ok(Value::range(start, end, element_type))
             }
             "JSON_ARRAY" => {
                 let json_arr: Vec<serde_json::Value> =
@@ -6623,38 +6692,197 @@ impl<'a> Evaluator<'a> {
                     Ok(Value::null())
                 }
             }
-            "RANGE_OVERLAPS" | "RANGE_CONTAINS" | "RANGE_INTERSECTS" => Ok(Value::bool_val(false)),
             "RANGE_START" => {
-                if args.is_empty() {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE_START requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
                     return Ok(Value::null());
                 }
-                match &args[0] {
-                    Value::Struct(fields) => {
-                        for (name, val) in fields {
-                            if name == "start" {
-                                return Ok(val.clone());
-                            }
-                        }
-                        Ok(Value::null())
+                if let Some(range) = args[0].as_range() {
+                    match &range.start {
+                        Some(s) => Ok((**s).clone()),
+                        None => Ok(Value::null()),
                     }
-                    _ => Ok(Value::null()),
+                } else {
+                    Err(Error::TypeMismatch {
+                        expected: "RANGE".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    })
                 }
             }
             "RANGE_END" => {
-                if args.is_empty() {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE_END requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
                     return Ok(Value::null());
                 }
-                match &args[0] {
-                    Value::Struct(fields) => {
-                        for (name, val) in fields {
-                            if name == "end" {
-                                return Ok(val.clone());
+                if let Some(range) = args[0].as_range() {
+                    match &range.end {
+                        Some(e) => Ok((**e).clone()),
+                        None => Ok(Value::null()),
+                    }
+                } else {
+                    Err(Error::TypeMismatch {
+                        expected: "RANGE".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    })
+                }
+            }
+            "RANGE_CONTAINS" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE_CONTAINS requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                if let Some(range) = args[0].as_range() {
+                    let value = &args[1];
+                    let start_ok = match &range.start {
+                        Some(s) => value >= &**s,
+                        None => true,
+                    };
+                    let end_ok = match &range.end {
+                        Some(e) => value < &**e,
+                        None => true,
+                    };
+                    Ok(Value::bool_val(start_ok && end_ok))
+                } else {
+                    Err(Error::TypeMismatch {
+                        expected: "RANGE".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    })
+                }
+            }
+            "RANGE_OVERLAPS" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE_OVERLAPS requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let r1 = args[0].as_range().ok_or_else(|| Error::TypeMismatch {
+                    expected: "RANGE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let r2 = args[1].as_range().ok_or_else(|| Error::TypeMismatch {
+                    expected: "RANGE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let r1_before_r2 = match (&r1.end, &r2.start) {
+                    (Some(e1), Some(s2)) => **e1 <= **s2,
+                    _ => false,
+                };
+                let r2_before_r1 = match (&r2.end, &r1.start) {
+                    (Some(e2), Some(s1)) => **e2 <= **s1,
+                    _ => false,
+                };
+                Ok(Value::bool_val(!r1_before_r2 && !r2_before_r1))
+            }
+            "RANGE_INTERSECT" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "RANGE_INTERSECT requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let r1 = args[0].as_range().ok_or_else(|| Error::TypeMismatch {
+                    expected: "RANGE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let r2 = args[1].as_range().ok_or_else(|| Error::TypeMismatch {
+                    expected: "RANGE".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let new_start = match (&r1.start, &r2.start) {
+                    (Some(s1), Some(s2)) => Some(if **s1 > **s2 {
+                        (**s1).clone()
+                    } else {
+                        (**s2).clone()
+                    }),
+                    (Some(s1), None) => Some((**s1).clone()),
+                    (None, Some(s2)) => Some((**s2).clone()),
+                    (None, None) => None,
+                };
+                let new_end = match (&r1.end, &r2.end) {
+                    (Some(e1), Some(e2)) => Some(if **e1 < **e2 {
+                        (**e1).clone()
+                    } else {
+                        (**e2).clone()
+                    }),
+                    (Some(e1), None) => Some((**e1).clone()),
+                    (None, Some(e2)) => Some((**e2).clone()),
+                    (None, None) => None,
+                };
+                if let (Some(s), Some(e)) = (&new_start, &new_end) {
+                    if s >= e {
+                        return Ok(Value::null());
+                    }
+                }
+                Ok(Value::range(new_start, new_end, r1.element_type.clone()))
+            }
+            "GENERATE_RANGE_ARRAY" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "GENERATE_RANGE_ARRAY requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let range = args[0].as_range().ok_or_else(|| Error::TypeMismatch {
+                    expected: "RANGE".to_string(),
+                    actual: args[0].data_type().to_string(),
+                })?;
+                let interval = args[1].as_interval().ok_or_else(|| Error::TypeMismatch {
+                    expected: "INTERVAL".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let mut result = Vec::new();
+                let start = match &range.start {
+                    Some(s) => (**s).clone(),
+                    None => return Ok(Value::null()),
+                };
+                let end = match &range.end {
+                    Some(e) => (**e).clone(),
+                    None => return Ok(Value::null()),
+                };
+                match (&start, interval.days) {
+                    (Value::Date(start_date), days) if days > 0 => {
+                        let mut current = *start_date;
+                        if let Some(end_date) = end.as_date() {
+                            while current < end_date {
+                                result.push(Value::Date(current));
+                                current += chrono::Duration::days(days as i64);
                             }
                         }
-                        Ok(Value::null())
                     }
-                    _ => Ok(Value::null()),
+                    (Value::Timestamp(start_ts), _) => {
+                        use chrono::Duration;
+                        let mut current = *start_ts;
+                        if let Some(end_ts) = end.as_timestamp() {
+                            let step = Duration::days(interval.days as i64)
+                                + Duration::nanoseconds(interval.nanos);
+                            while current < end_ts {
+                                result.push(Value::Timestamp(current));
+                                current += step;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
+                Ok(Value::Array(result))
             }
             "ROW_NUMBER" | "RANK" | "DENSE_RANK" | "PERCENT_RANK" | "CUME_DIST" | "NTILE" => {
                 Ok(Value::int64(1))

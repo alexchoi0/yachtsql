@@ -185,7 +185,7 @@ fn test_safe_divide_basic() {
     let result = executor
         .execute_sql("SELECT SAFE_DIVIDE(10.0, 2.0)")
         .unwrap();
-    assert_table_eq!(result, [[5.0]]);
+    assert_table_eq!(result, [[n("5")]]);
 }
 
 #[test]
