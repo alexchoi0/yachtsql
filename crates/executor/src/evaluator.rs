@@ -2777,6 +2777,62 @@ impl<'a> Evaluator<'a> {
                 }
                 Ok(args[0].clone())
             }
+            "TRANSFORM" => {
+                if args.len() != 4 {
+                    return Err(Error::InvalidQuery(
+                        "TRANSFORM requires 4 arguments: (value, from_array, to_array, default)"
+                            .to_string(),
+                    ));
+                }
+                let value = &args[0];
+                let from_array = args[1].as_array().ok_or_else(|| Error::TypeMismatch {
+                    expected: "ARRAY".to_string(),
+                    actual: args[1].data_type().to_string(),
+                })?;
+                let to_array = args[2].as_array().ok_or_else(|| Error::TypeMismatch {
+                    expected: "ARRAY".to_string(),
+                    actual: args[2].data_type().to_string(),
+                })?;
+                let default = &args[3];
+                if from_array.len() != to_array.len() {
+                    return Err(Error::InvalidQuery(
+                        "TRANSFORM: from_array and to_array must have the same length".to_string(),
+                    ));
+                }
+                for (i, from_val) in from_array.iter().enumerate() {
+                    if value == from_val {
+                        return Ok(to_array[i].clone());
+                    }
+                }
+                Ok(default.clone())
+            }
+            "ARRAYJOIN" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "arrayJoin requires 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                Ok(args[0].clone())
+            }
+            "SUMSTATE" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "sumState requires 1 argument".to_string(),
+                    ));
+                }
+                Ok(args[0].clone())
+            }
+            "RUNNINGACCUMULATE" => {
+                if args.len() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "runningAccumulate requires 1 argument".to_string(),
+                    ));
+                }
+                Ok(args[0].clone())
+            }
             _ => Err(Error::UnsupportedFeature(format!(
                 "Function not yet supported: {}",
                 name
