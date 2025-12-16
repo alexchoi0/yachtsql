@@ -272,7 +272,6 @@ fn test_safe_multiply() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_negate() {
     let mut executor = create_executor();
 
@@ -283,7 +282,6 @@ fn test_safe_negate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_add() {
     let mut executor = create_executor();
 
@@ -294,7 +292,6 @@ fn test_safe_add() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_subtract() {
     let mut executor = create_executor();
 
