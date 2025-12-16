@@ -83,7 +83,6 @@ fn test_safe_divide_by_zero() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_multiply() {
     let mut executor = create_executor();
     let result = executor
@@ -93,7 +92,6 @@ fn test_safe_multiply() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_negate() {
     let mut executor = create_executor();
     let result = executor
@@ -103,7 +101,6 @@ fn test_safe_negate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_add() {
     let mut executor = create_executor();
     let result = executor
@@ -113,7 +110,6 @@ fn test_safe_add() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_subtract() {
     let mut executor = create_executor();
     let result = executor
