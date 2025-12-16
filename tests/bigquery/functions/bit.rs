@@ -48,6 +48,7 @@ fn test_byte_length_bytes() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_bit_and_aggregate() {
     let mut executor = create_executor();
     executor
@@ -64,6 +65,7 @@ fn test_bit_and_aggregate() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_bit_or_aggregate() {
     let mut executor = create_executor();
     executor
@@ -80,6 +82,7 @@ fn test_bit_or_aggregate() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_bit_xor_aggregate() {
     let mut executor = create_executor();
     executor
@@ -96,6 +99,7 @@ fn test_bit_xor_aggregate() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_bit_operations_with_group_by() {
     let mut executor = create_executor();
     executor

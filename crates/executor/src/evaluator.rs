@@ -102,15 +102,23 @@ impl<'a> Evaluator<'a> {
                     .last()
                     .map(|i| i.value.to_uppercase())
                     .unwrap_or_default();
+                let full_upper = full_name.to_uppercase();
 
                 let idx = self
                     .schema
                     .fields()
                     .iter()
-                    .position(|f| {
-                        f.name.to_uppercase() == full_name.to_uppercase()
-                            || f.name.to_uppercase() == last_name
-                            || f.name.to_uppercase().ends_with(&format!(".{}", last_name))
+                    .position(|f| f.name.to_uppercase() == full_upper)
+                    .or_else(|| {
+                        self.schema
+                            .fields()
+                            .iter()
+                            .position(|f| f.name.to_uppercase() == last_name)
+                    })
+                    .or_else(|| {
+                        self.schema.fields().iter().position(|f| {
+                            f.name.to_uppercase().ends_with(&format!(".{}", last_name))
+                        })
                     })
                     .ok_or_else(|| Error::ColumnNotFound(full_name.clone()))?;
                 Ok(record.values().get(idx).cloned().unwrap_or(Value::null()))

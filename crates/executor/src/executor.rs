@@ -82,10 +82,34 @@ impl QueryExecutor {
     }
 
     fn execute_query(&self, query: &Query) -> Result<Table> {
-        match query.body.as_ref() {
-            SetExpr::Select(select) => {
-                self.execute_select(select, &query.order_by, &query.limit_clause)
+        let cte_tables = self.materialize_ctes(&query.with)?;
+        self.execute_query_with_ctes(query, &cte_tables)
+    }
+
+    fn materialize_ctes(&self, with_clause: &Option<ast::With>) -> Result<HashMap<String, Table>> {
+        let mut cte_tables = HashMap::new();
+        if let Some(with) = with_clause {
+            for cte in &with.cte_tables {
+                let name = cte.alias.name.value.to_uppercase();
+                let cte_result = self.execute_query_with_ctes(&cte.query, &cte_tables)?;
+                cte_tables.insert(name, cte_result);
             }
+        }
+        Ok(cte_tables)
+    }
+
+    fn execute_query_with_ctes(
+        &self,
+        query: &Query,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Table> {
+        match query.body.as_ref() {
+            SetExpr::Select(select) => self.execute_select_with_ctes(
+                select,
+                &query.order_by,
+                &query.limit_clause,
+                cte_tables,
+            ),
             SetExpr::Values(values) => self.execute_values(values),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Query type not yet supported: {:?}",
@@ -100,11 +124,21 @@ impl QueryExecutor {
         order_by: &Option<OrderBy>,
         limit_clause: &Option<LimitClause>,
     ) -> Result<Table> {
+        self.execute_select_with_ctes(select, order_by, limit_clause, &HashMap::new())
+    }
+
+    fn execute_select_with_ctes(
+        &self,
+        select: &Select,
+        order_by: &Option<OrderBy>,
+        limit_clause: &Option<LimitClause>,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Table> {
         let (pre_projection_schema, mut rows, do_projection) = if select.from.is_empty() {
             let (schema, rows) = self.evaluate_select_without_from(select)?;
             (schema, rows, false)
         } else {
-            self.evaluate_select_with_from_for_ordering(select, order_by)?
+            self.evaluate_select_with_from_for_ordering_ctes(select, order_by, cte_tables)?
         };
 
         if let Some(order_by) = order_by {
@@ -256,7 +290,16 @@ impl QueryExecutor {
         select: &Select,
         order_by: &Option<OrderBy>,
     ) -> Result<(Schema, Vec<Record>, bool)> {
-        let (input_schema, input_rows) = self.get_from_data(&select.from)?;
+        self.evaluate_select_with_from_for_ordering_ctes(select, order_by, &HashMap::new())
+    }
+
+    fn evaluate_select_with_from_for_ordering_ctes(
+        &self,
+        select: &Select,
+        order_by: &Option<OrderBy>,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<(Schema, Vec<Record>, bool)> {
+        let (input_schema, input_rows) = self.get_from_data_ctes(&select.from, cte_tables)?;
         let evaluator = Evaluator::new(&input_schema);
 
         let mut filtered_rows: Vec<Record> = if let Some(selection) = &select.selection {
@@ -380,15 +423,25 @@ impl QueryExecutor {
     }
 
     fn get_from_data(&self, from: &[TableWithJoins]) -> Result<(Schema, Vec<Record>)> {
+        self.get_from_data_ctes(from, &HashMap::new())
+    }
+
+    fn get_from_data_ctes(
+        &self,
+        from: &[TableWithJoins],
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<(Schema, Vec<Record>)> {
         if from.is_empty() {
             return Err(Error::InvalidQuery("FROM clause is empty".to_string()));
         }
 
         let first_table = &from[0];
-        let (mut schema, mut rows) = self.get_table_factor_data(&first_table.relation)?;
+        let (mut schema, mut rows) =
+            self.get_table_factor_data_ctes(&first_table.relation, cte_tables)?;
 
         for join in &first_table.joins {
-            let (right_schema, right_rows) = self.get_table_factor_data(&join.relation)?;
+            let (right_schema, right_rows) =
+                self.get_table_factor_data_ctes(&join.relation, cte_tables)?;
             (schema, rows) = self.execute_join(
                 &schema,
                 &rows,
@@ -400,12 +453,12 @@ impl QueryExecutor {
 
         for additional_from in from.iter().skip(1) {
             let (right_schema, right_rows) =
-                self.get_table_factor_data(&additional_from.relation)?;
+                self.get_table_factor_data_ctes(&additional_from.relation, cte_tables)?;
             (schema, rows) = self.execute_cross_join(&schema, &rows, &right_schema, &right_rows)?;
 
             for join in &additional_from.joins {
                 let (join_right_schema, join_right_rows) =
-                    self.get_table_factor_data(&join.relation)?;
+                    self.get_table_factor_data_ctes(&join.relation, cte_tables)?;
                 (schema, rows) = self.execute_join(
                     &schema,
                     &rows,
@@ -420,12 +473,23 @@ impl QueryExecutor {
     }
 
     fn get_table_factor_data(&self, table_factor: &TableFactor) -> Result<(Schema, Vec<Record>)> {
+        self.get_table_factor_data_ctes(table_factor, &HashMap::new())
+    }
+
+    fn get_table_factor_data_ctes(
+        &self,
+        table_factor: &TableFactor,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<(Schema, Vec<Record>)> {
         match table_factor {
             TableFactor::Table { name, alias, .. } => {
                 let table_name = name.to_string();
-                let table_data = self
-                    .catalog
-                    .get_table(&table_name)
+                let table_name_upper = table_name.to_uppercase();
+
+                let table_data = cte_tables
+                    .get(&table_name_upper)
+                    .cloned()
+                    .or_else(|| self.catalog.get_table(&table_name).cloned())
                     .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
 
                 let schema = if let Some(alias) = alias {
@@ -453,9 +517,10 @@ impl QueryExecutor {
                 table_with_joins, ..
             } => {
                 let (mut schema, mut rows) =
-                    self.get_table_factor_data(&table_with_joins.relation)?;
+                    self.get_table_factor_data_ctes(&table_with_joins.relation, cte_tables)?;
                 for join in &table_with_joins.joins {
-                    let (right_schema, right_rows) = self.get_table_factor_data(&join.relation)?;
+                    let (right_schema, right_rows) =
+                        self.get_table_factor_data_ctes(&join.relation, cte_tables)?;
                     (schema, rows) = self.execute_join(
                         &schema,
                         &rows,
@@ -515,30 +580,34 @@ impl QueryExecutor {
         );
 
         match join_op {
-            ast::JoinOperator::Inner(constraint) => self.execute_inner_join(
-                &combined_schema,
-                left_schema,
-                left_rows,
-                right_schema,
-                right_rows,
-                constraint,
-            ),
-            ast::JoinOperator::LeftOuter(constraint) => self.execute_left_join(
-                &combined_schema,
-                left_schema,
-                left_rows,
-                right_schema,
-                right_rows,
-                constraint,
-            ),
-            ast::JoinOperator::RightOuter(constraint) => self.execute_right_join(
-                &combined_schema,
-                left_schema,
-                left_rows,
-                right_schema,
-                right_rows,
-                constraint,
-            ),
+            ast::JoinOperator::Inner(constraint) | ast::JoinOperator::Join(constraint) => self
+                .execute_inner_join(
+                    &combined_schema,
+                    left_schema,
+                    left_rows,
+                    right_schema,
+                    right_rows,
+                    constraint,
+                ),
+            ast::JoinOperator::Left(constraint) | ast::JoinOperator::LeftOuter(constraint) => self
+                .execute_left_join(
+                    &combined_schema,
+                    left_schema,
+                    left_rows,
+                    right_schema,
+                    right_rows,
+                    constraint,
+                ),
+            ast::JoinOperator::Right(constraint) | ast::JoinOperator::RightOuter(constraint) => {
+                self.execute_right_join(
+                    &combined_schema,
+                    left_schema,
+                    left_rows,
+                    right_schema,
+                    right_rows,
+                    constraint,
+                )
+            }
             ast::JoinOperator::FullOuter(constraint) => self.execute_full_join(
                 &combined_schema,
                 left_schema,
@@ -2735,10 +2804,59 @@ impl QueryExecutor {
                 }
             }
             "SUM" | "AVG" | "COUNT" | "MIN" | "MAX" => {
-                let agg_result =
-                    self.compute_window_aggregate(name, func, rows, sorted_indices, evaluator)?;
-                for _ in 0..partition_size {
-                    results.push(agg_result.clone());
+                let over = func.over.as_ref().unwrap();
+                let (has_order_by, frame) = match over {
+                    ast::WindowType::WindowSpec(spec) => {
+                        (!spec.order_by.is_empty(), spec.window_frame.as_ref())
+                    }
+                    _ => (false, None),
+                };
+
+                if let Some(frame) = frame {
+                    for curr_pos in 0..partition_size {
+                        let start_idx =
+                            self.compute_frame_start(&frame.start_bound, curr_pos, partition_size);
+                        let end_idx = self.compute_frame_end(
+                            frame.end_bound.as_ref(),
+                            curr_pos,
+                            partition_size,
+                        );
+                        let frame_indices: Vec<usize> = if start_idx <= end_idx {
+                            sorted_indices[start_idx..=end_idx]
+                                .iter()
+                                .copied()
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                        let agg_result = self.compute_window_aggregate(
+                            name,
+                            func,
+                            rows,
+                            &frame_indices,
+                            evaluator,
+                        )?;
+                        results.push(agg_result);
+                    }
+                } else if has_order_by {
+                    for end_pos in 0..partition_size {
+                        let running_indices: Vec<usize> =
+                            sorted_indices[..=end_pos].iter().copied().collect();
+                        let agg_result = self.compute_window_aggregate(
+                            name,
+                            func,
+                            rows,
+                            &running_indices,
+                            evaluator,
+                        )?;
+                        results.push(agg_result);
+                    }
+                } else {
+                    let agg_result =
+                        self.compute_window_aggregate(name, func, rows, sorted_indices, evaluator)?;
+                    for _ in 0..partition_size {
+                        results.push(agg_result.clone());
+                    }
                 }
             }
             "PERCENT_RANK" => {
@@ -2853,6 +2971,59 @@ impl QueryExecutor {
             }
         }
         Ok(None)
+    }
+
+    fn extract_numeric_offset(&self, expr: &Expr) -> Option<usize> {
+        match expr {
+            Expr::Value(vws) => match &vws.value {
+                ast::Value::Number(n, _) => n.parse().ok(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn compute_frame_start(
+        &self,
+        bound: &ast::WindowFrameBound,
+        curr_pos: usize,
+        _partition_size: usize,
+    ) -> usize {
+        match bound {
+            ast::WindowFrameBound::Preceding(None) => 0,
+            ast::WindowFrameBound::Preceding(Some(expr)) => {
+                let offset = self.extract_numeric_offset(expr).unwrap_or(0);
+                curr_pos.saturating_sub(offset)
+            }
+            ast::WindowFrameBound::CurrentRow => curr_pos,
+            ast::WindowFrameBound::Following(None) => curr_pos,
+            ast::WindowFrameBound::Following(Some(expr)) => {
+                let offset = self.extract_numeric_offset(expr).unwrap_or(0);
+                curr_pos + offset
+            }
+        }
+    }
+
+    fn compute_frame_end(
+        &self,
+        bound: Option<&ast::WindowFrameBound>,
+        curr_pos: usize,
+        partition_size: usize,
+    ) -> usize {
+        match bound {
+            None => curr_pos,
+            Some(ast::WindowFrameBound::Preceding(None)) => 0,
+            Some(ast::WindowFrameBound::Preceding(Some(expr))) => {
+                let offset = self.extract_numeric_offset(expr).unwrap_or(0);
+                curr_pos.saturating_sub(offset)
+            }
+            Some(ast::WindowFrameBound::CurrentRow) => curr_pos,
+            Some(ast::WindowFrameBound::Following(None)) => partition_size.saturating_sub(1),
+            Some(ast::WindowFrameBound::Following(Some(expr))) => {
+                let offset = self.extract_numeric_offset(expr).unwrap_or(0);
+                (curr_pos + offset).min(partition_size.saturating_sub(1))
+            }
+        }
     }
 
     fn compute_window_aggregate(
