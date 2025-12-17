@@ -4912,6 +4912,13 @@ impl<'a> Evaluator<'a> {
                                 arg.as_i64()
                                     .map(|n| format!("{:.prec$}", n as f64, prec = precision))
                             })
+                            .or_else(|| {
+                                arg.as_numeric().and_then(|n| {
+                                    use rust_decimal::prelude::ToPrimitive;
+                                    n.to_f64()
+                                        .map(|f| format!("{:.prec$}", f, prec = precision))
+                                })
+                            })
                             .unwrap_or_default();
                         result = format!("{}{}{}", &result[..pos], replacement, &result[end_pos..]);
                     }
@@ -7934,6 +7941,38 @@ impl<'a> Evaluator<'a> {
             Expr::IsNotNull(inner) => {
                 Expr::IsNotNull(Box::new(self.substitute_udf_params(inner, params, args)))
             }
+            Expr::Struct { values, fields } => Expr::Struct {
+                values: values
+                    .iter()
+                    .map(|v| {
+                        if let Expr::Identifier(ident) = v {
+                            let ident_upper = ident.value.to_uppercase();
+                            for (i, param) in params.iter().enumerate() {
+                                let param_name = match &param.name {
+                                    Some(n) => n.value.to_uppercase(),
+                                    None => continue,
+                                };
+                                if param_name == ident_upper {
+                                    return Expr::Named {
+                                        expr: Box::new(args[i].clone()),
+                                        name: ident.clone(),
+                                    };
+                                }
+                            }
+                        }
+                        self.substitute_udf_params(v, params, args)
+                    })
+                    .collect(),
+                fields: fields.clone(),
+            },
+            Expr::Array(arr) => Expr::Array(sqlparser::ast::Array {
+                elem: arr
+                    .elem
+                    .iter()
+                    .map(|e| self.substitute_udf_params(e, params, args))
+                    .collect(),
+                named: arr.named,
+            }),
             _ => expr.clone(),
         }
     }
