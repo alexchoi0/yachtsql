@@ -352,8 +352,8 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             ast::GroupByExpr::All(_) => {}
             ast::GroupByExpr::Expressions(exprs, _) => {
                 for expr in exprs {
-                    let planned = ExprPlanner::plan_expr(expr, input.schema())?;
-                    let name = self.expr_name(expr);
+                    let (planned, name) =
+                        self.resolve_group_by_expr(expr, input.schema(), &select.projection)?;
                     let data_type = self.infer_expr_type(&planned, input.schema());
                     fields.push(PlanField::new(name, data_type));
                     group_by_exprs.push(planned);
@@ -386,6 +386,33 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             aggregates: aggregate_exprs,
             schema: PlanSchema::from_fields(fields),
         })
+    }
+
+    fn resolve_group_by_expr(
+        &self,
+        expr: &ast::Expr,
+        input_schema: &PlanSchema,
+        projection: &[ast::SelectItem],
+    ) -> Result<(Expr, String)> {
+        if let ast::Expr::Identifier(ident) = expr {
+            let alias_name = &ident.value;
+            for item in projection {
+                if let ast::SelectItem::ExprWithAlias {
+                    expr: proj_expr,
+                    alias,
+                } = item
+                {
+                    if !alias.value.eq_ignore_ascii_case(alias_name) {
+                        continue;
+                    }
+                    let planned = ExprPlanner::plan_expr(proj_expr, input_schema)?;
+                    return Ok((planned, alias.value.clone()));
+                }
+            }
+        }
+        let planned = ExprPlanner::plan_expr(expr, input_schema)?;
+        let name = self.expr_name(expr);
+        Ok((planned, name))
     }
 
     fn plan_order_by(&self, input: LogicalPlan, order_by: &ast::OrderBy) -> Result<LogicalPlan> {

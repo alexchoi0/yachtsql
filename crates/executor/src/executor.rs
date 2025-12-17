@@ -3390,7 +3390,8 @@ impl QueryExecutor {
         cte_tables: &HashMap<String, Table>,
     ) -> Result<(Schema, Vec<Record>)> {
         let evaluator = Evaluator::with_user_functions(input_schema, self.catalog.get_functions());
-        let group_exprs = self.extract_group_by_exprs(&select.group_by);
+        let group_exprs =
+            self.extract_group_by_exprs_with_projection(&select.group_by, &select.projection);
         let grouping_sets = self.extract_grouping_sets(&select.group_by);
 
         let group_by_is_empty = group_exprs.is_empty() && grouping_sets.is_none();
@@ -3555,7 +3556,147 @@ impl QueryExecutor {
             }
         }
 
+        let has_window_funcs = self.has_window_functions(&select.projection);
+        if has_window_funcs {
+            let substituted_projection =
+                self.substitute_aggregates_in_projection(&select.projection);
+            let window_results = self.compute_window_functions_with_qualify(
+                &schema,
+                &result_rows,
+                &substituted_projection,
+                None,
+            )?;
+
+            return self.project_rows_with_windows_for_aggregates(
+                &schema,
+                &result_rows,
+                &substituted_projection,
+                &window_results,
+            );
+        }
+
         Ok((schema, result_rows))
+    }
+
+    fn substitute_aggregates_in_projection(&self, projection: &[SelectItem]) -> Vec<SelectItem> {
+        let mut agg_to_alias: HashMap<String, String> = HashMap::new();
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if self.expr_has_aggregate(expr) {
+                        let expr_key = format!("{}", expr);
+                        agg_to_alias.insert(expr_key, alias.value.clone());
+                    }
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    if self.expr_has_aggregate(expr) {
+                        let expr_key = format!("{}", expr);
+                        let alias = self.expr_to_alias(expr, idx);
+                        agg_to_alias.insert(expr_key, alias);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        projection
+            .iter()
+            .map(|item| match item {
+                SelectItem::UnnamedExpr(expr) => {
+                    SelectItem::UnnamedExpr(self.substitute_aggregate_in_expr(expr, &agg_to_alias))
+                }
+                SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias {
+                    expr: self.substitute_aggregate_in_expr(expr, &agg_to_alias),
+                    alias: alias.clone(),
+                },
+                other => other.clone(),
+            })
+            .collect()
+    }
+
+    fn project_rows_with_windows_for_aggregates(
+        &self,
+        schema: &Schema,
+        rows: &[Record],
+        projection: &[SelectItem],
+        window_results: &HashMap<String, Vec<Value>>,
+    ) -> Result<(Schema, Vec<Record>)> {
+        let mut output_rows = Vec::new();
+        let mut output_fields: Vec<Field> = Vec::new();
+        let mut window_col_indices: Vec<Option<String>> = Vec::new();
+
+        for item in projection.iter() {
+            match item {
+                SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+                    if let Expr::Function(func) = expr {
+                        if func.over.is_some() {
+                            let func_key = format!("{:?}", func);
+                            window_col_indices.push(Some(func_key));
+                            continue;
+                        }
+                    }
+                    window_col_indices.push(None);
+                }
+                _ => {
+                    window_col_indices.push(None);
+                }
+            }
+        }
+
+        for (row_idx, row) in rows.iter().enumerate() {
+            let mut row_values = Vec::new();
+            let mut non_window_col_idx = 0;
+
+            for (col_idx, item) in projection.iter().enumerate() {
+                match item {
+                    SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+                        let name = match item {
+                            SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
+                            _ => self.expr_to_alias(expr, col_idx),
+                        };
+
+                        if let Some(func_key) = &window_col_indices[col_idx] {
+                            if let Some(values) = window_results.get(func_key) {
+                                row_values.push(values[row_idx].clone());
+                                if row_idx == 0 {
+                                    let dt = values
+                                        .first()
+                                        .map(|v| v.data_type())
+                                        .unwrap_or(DataType::Unknown);
+                                    output_fields.push(Field::nullable(name, dt));
+                                }
+                                continue;
+                            }
+                        }
+
+                        let val = row
+                            .values()
+                            .get(non_window_col_idx)
+                            .cloned()
+                            .unwrap_or(Value::null());
+                        row_values.push(val.clone());
+                        non_window_col_idx += 1;
+                        if row_idx == 0 {
+                            output_fields.push(Field::nullable(name, val.data_type()));
+                        }
+                    }
+                    SelectItem::Wildcard(_) => {
+                        for (i, field) in schema.fields().iter().enumerate() {
+                            row_values.push(row.values()[i].clone());
+                            if row_idx == 0 {
+                                output_fields.push(field.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            output_rows.push(Record::from_values(row_values));
+        }
+
+        let output_schema = Schema::from_fields(output_fields);
+        Ok((output_schema, output_rows))
     }
 
     fn substitute_aggregates_in_qualify(
@@ -3680,6 +3821,14 @@ impl QueryExecutor {
     }
 
     fn extract_group_by_exprs(&self, group_by: &ast::GroupByExpr) -> Vec<Expr> {
+        self.extract_group_by_exprs_with_projection(group_by, &[])
+    }
+
+    fn extract_group_by_exprs_with_projection(
+        &self,
+        group_by: &ast::GroupByExpr,
+        projection: &[SelectItem],
+    ) -> Vec<Expr> {
         match group_by {
             ast::GroupByExpr::Expressions(exprs, _) => {
                 let mut result = Vec::new();
@@ -3687,20 +3836,26 @@ impl QueryExecutor {
                     match expr {
                         Expr::Rollup(rollup_exprs) => {
                             for inner in rollup_exprs {
-                                result.extend(inner.clone());
+                                for e in inner {
+                                    result.push(self.resolve_group_by_alias(e, projection));
+                                }
                             }
                         }
                         Expr::Cube(cube_exprs) => {
                             for inner in cube_exprs {
-                                result.extend(inner.clone());
+                                for e in inner {
+                                    result.push(self.resolve_group_by_alias(e, projection));
+                                }
                             }
                         }
                         Expr::GroupingSets(sets_exprs) => {
                             for set in sets_exprs {
-                                result.extend(set.clone());
+                                for e in set {
+                                    result.push(self.resolve_group_by_alias(e, projection));
+                                }
                             }
                         }
-                        _ => result.push(expr.clone()),
+                        _ => result.push(self.resolve_group_by_alias(expr, projection)),
                     }
                 }
                 let mut seen = HashMap::new();
@@ -3719,6 +3874,23 @@ impl QueryExecutor {
             }
             ast::GroupByExpr::All(_) => vec![],
         }
+    }
+
+    fn resolve_group_by_alias(&self, expr: &Expr, projection: &[SelectItem]) -> Expr {
+        if let Expr::Identifier(ident) = expr {
+            for item in projection {
+                if let SelectItem::ExprWithAlias {
+                    expr: proj_expr,
+                    alias,
+                } = item
+                {
+                    if alias.value.eq_ignore_ascii_case(&ident.value) {
+                        return proj_expr.clone();
+                    }
+                }
+            }
+        }
+        expr.clone()
     }
 
     fn extract_grouping_sets(&self, group_by: &ast::GroupByExpr) -> Option<Vec<Vec<usize>>> {
@@ -4161,7 +4333,38 @@ impl QueryExecutor {
                     Ok(Value::null())
                 }
             }
-            Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
+            Expr::Identifier(ident) => {
+                for (i, ge) in group_exprs.iter().enumerate() {
+                    if self.exprs_equal(expr, ge) && i < group_key.len() {
+                        return Ok(group_key[i].clone());
+                    }
+                }
+                if let Some(row) = group_rows.first() {
+                    match evaluator.evaluate(expr, row) {
+                        Ok(val) => Ok(val),
+                        Err(Error::ColumnNotFound(name)) => {
+                            let upper = name.to_uppercase();
+                            match upper.as_str() {
+                                "MICROSECOND" | "MILLISECOND" | "SECOND" | "MINUTE" | "HOUR"
+                                | "DAY" | "DAYOFWEEK" | "DAYOFYEAR" | "WEEK" | "MONTH"
+                                | "QUARTER" | "YEAR" => Ok(Value::string(upper)),
+                                _ => Err(Error::ColumnNotFound(name)),
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    let upper = ident.value.to_uppercase();
+                    match upper.as_str() {
+                        "MICROSECOND" | "MILLISECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY"
+                        | "DAYOFWEEK" | "DAYOFYEAR" | "WEEK" | "MONTH" | "QUARTER" | "YEAR" => {
+                            Ok(Value::string(upper))
+                        }
+                        _ => Ok(Value::null()),
+                    }
+                }
+            }
+            Expr::CompoundIdentifier(_) => {
                 for (i, ge) in group_exprs.iter().enumerate() {
                     if self.exprs_equal(expr, ge) && i < group_key.len() {
                         return Ok(group_key[i].clone());
@@ -8142,9 +8345,22 @@ impl QueryExecutor {
                     .as_i64()
                     .unwrap_or(1) as usize;
                 let n = n.max(1);
-                for i in 0..partition_size {
-                    let bucket = (i * n / partition_size) + 1;
+                let base_size = partition_size / n;
+                let extra = partition_size % n;
+                let mut bucket = 1usize;
+                let mut in_bucket = 0usize;
+                for _ in 0..partition_size {
+                    let bucket_size = if bucket <= extra {
+                        base_size + 1
+                    } else {
+                        base_size
+                    };
                     results.push(Value::int64(bucket as i64));
+                    in_bucket += 1;
+                    if in_bucket >= bucket_size && bucket < n {
+                        bucket += 1;
+                        in_bucket = 0;
+                    }
                 }
             }
             "LAG" => {
@@ -8961,6 +9177,27 @@ impl QueryExecutor {
                     ),
                     None => Ok(Value::null()),
                 }
+            }
+            Expr::Function(func) if func.over.is_none() => {
+                let mut args_with_window = Vec::new();
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg
+                        {
+                            let val = self.evaluate_expr_with_window_results(
+                                arg_expr,
+                                schema,
+                                record,
+                                row_idx,
+                                window_results,
+                            )?;
+                            args_with_window.push(val);
+                        }
+                    }
+                }
+
+                let name = func.name.to_string().to_uppercase();
+                evaluator.evaluate_function(&name, &args_with_window, func, record)
             }
             _ => match evaluator.evaluate(expr, record) {
                 Ok(val) => Ok(val),
