@@ -509,6 +509,23 @@ impl<'a> Evaluator<'a> {
                             }
                             return Err(Error::ColumnNotFound(full_name.clone()));
                         }
+                        if let Some(json_val) = base_val.as_json() {
+                            let mut current = json_val.clone();
+                            for part in &parts[1..] {
+                                match &current {
+                                    serde_json::Value::Object(obj) => {
+                                        current = obj
+                                            .get(&part.value)
+                                            .cloned()
+                                            .unwrap_or(serde_json::Value::Null);
+                                    }
+                                    _ => {
+                                        return Ok(Value::null());
+                                    }
+                                }
+                            }
+                            return Ok(Value::json(current));
+                        }
                     }
                     if let Some(base_idx) = self
                         .schema
@@ -1165,6 +1182,17 @@ impl<'a> Evaluator<'a> {
                                 .find(|(name, _)| name.to_uppercase() == field_name)
                                 .map(|(_, v)| v.clone())
                                 .unwrap_or_else(Value::null);
+                        } else if let Some(json_val) = current.as_json() {
+                            let field_name = &ident.value;
+                            match json_val {
+                                serde_json::Value::Object(obj) => {
+                                    let found = obj.get(field_name).cloned();
+                                    current = found.map(Value::json).unwrap_or_else(Value::null);
+                                }
+                                _ => {
+                                    return Ok(Value::null());
+                                }
+                            }
                         } else {
                             return Ok(Value::null());
                         }
@@ -1532,6 +1560,24 @@ impl<'a> Evaluator<'a> {
                 if let Some(b) = val.as_bool() {
                     return Ok(Value::int64(if b { 1 } else { 0 }));
                 }
+                if let Some(jv) = val.as_json() {
+                    match jv {
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                return Ok(Value::int64(i));
+                            }
+                            if let Some(f) = n.as_f64() {
+                                return Ok(Value::int64(f as i64));
+                            }
+                        }
+                        serde_json::Value::String(s) => {
+                            if let Ok(i) = s.parse::<i64>() {
+                                return Ok(Value::int64(i));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if is_safe {
                     return Ok(Value::null());
                 }
@@ -1556,6 +1602,21 @@ impl<'a> Evaluator<'a> {
                 if let Some(s) = val.as_str() {
                     if let Ok(f) = s.parse::<f64>() {
                         return Ok(Value::float64(f));
+                    }
+                }
+                if let Some(jv) = val.as_json() {
+                    match jv {
+                        serde_json::Value::Number(n) => {
+                            if let Some(f) = n.as_f64() {
+                                return Ok(Value::float64(f));
+                            }
+                        }
+                        serde_json::Value::String(s) => {
+                            if let Ok(f) = s.parse::<f64>() {
+                                return Ok(Value::float64(f));
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 if is_safe {
@@ -1583,6 +1644,13 @@ impl<'a> Evaluator<'a> {
                         }
                     }
                 }
+                if let Some(jv) = val.as_json() {
+                    match jv {
+                        serde_json::Value::String(s) => return Ok(Value::string(s.clone())),
+                        serde_json::Value::Null => return Ok(Value::null()),
+                        other => return Ok(Value::string(other.to_string())),
+                    }
+                }
                 Ok(Value::string(val.to_string()))
             }
             sqlparser::ast::DataType::Boolean | sqlparser::ast::DataType::Bool => {
@@ -1599,6 +1667,21 @@ impl<'a> Evaluator<'a> {
                     }
                     if lower == "false" || lower == "0" || lower == "no" {
                         return Ok(Value::bool_val(false));
+                    }
+                }
+                if let Some(jv) = val.as_json() {
+                    match jv {
+                        serde_json::Value::Bool(b) => return Ok(Value::bool_val(*b)),
+                        serde_json::Value::String(s) => {
+                            let lower = s.to_lowercase();
+                            if lower == "true" || lower == "1" || lower == "yes" {
+                                return Ok(Value::bool_val(true));
+                            }
+                            if lower == "false" || lower == "0" || lower == "no" {
+                                return Ok(Value::bool_val(false));
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 if is_safe {
@@ -3025,6 +3108,24 @@ impl<'a> Evaluator<'a> {
                 if let Some(f) = args[0].as_f64() {
                     return Ok(Value::int64(f as i64));
                 }
+                if let Some(jv) = args[0].as_json() {
+                    match jv {
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                return Ok(Value::int64(i));
+                            }
+                            if let Some(f) = n.as_f64() {
+                                return Ok(Value::int64(f as i64));
+                            }
+                        }
+                        serde_json::Value::String(s) => {
+                            if let Ok(i) = s.parse::<i64>() {
+                                return Ok(Value::int64(i));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if let Some(s) = args[0].as_str() {
                     if let Ok(i) = s.parse::<i64>() {
                         return Ok(Value::int64(i));
@@ -3049,6 +3150,21 @@ impl<'a> Evaluator<'a> {
                 }
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::float64(i as f64));
+                }
+                if let Some(jv) = args[0].as_json() {
+                    match jv {
+                        serde_json::Value::Number(n) => {
+                            if let Some(f) = n.as_f64() {
+                                return Ok(Value::float64(f));
+                            }
+                        }
+                        serde_json::Value::String(s) => {
+                            if let Ok(f) = s.parse::<f64>() {
+                                return Ok(Value::float64(f));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(s) = args[0].as_str() {
                     if let Ok(f) = s.parse::<f64>() {
@@ -3090,6 +3206,21 @@ impl<'a> Evaluator<'a> {
                 }
                 if let Some(i) = args[0].as_i64() {
                     return Ok(Value::bool_val(i != 0));
+                }
+                if let Some(jv) = args[0].as_json() {
+                    match jv {
+                        serde_json::Value::Bool(b) => return Ok(Value::bool_val(*b)),
+                        serde_json::Value::String(s) => {
+                            let lower = s.to_lowercase();
+                            if lower == "true" || lower == "1" {
+                                return Ok(Value::bool_val(true));
+                            }
+                            if lower == "false" || lower == "0" {
+                                return Ok(Value::bool_val(false));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(s) = args[0].as_str() {
                     let lower = s.to_lowercase();
@@ -3373,9 +3504,15 @@ impl<'a> Evaluator<'a> {
                 if args[0].is_null() || args[1].is_null() {
                     return Ok(Value::null());
                 }
-                let json_str = args[0].as_str().unwrap_or_default();
                 let path = args[1].as_str().unwrap_or_default();
-                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let json_val_opt = if let Some(jv) = args[0].as_json() {
+                    Some(jv.clone())
+                } else if let Some(s) = args[0].as_str() {
+                    serde_json::from_str::<serde_json::Value>(s).ok()
+                } else {
+                    None
+                };
+                if let Some(json_val) = json_val_opt {
                     let result = self.json_path_extract(&json_val, path);
                     return Ok(result
                         .map(|v| Value::string(v.to_string()))
@@ -5746,9 +5883,7 @@ impl<'a> Evaluator<'a> {
             "JSON_ARRAY" => {
                 let json_arr: Vec<serde_json::Value> =
                     args.iter().map(|v| self.value_to_json(v)).collect();
-                Ok(Value::string(
-                    serde_json::Value::Array(json_arr).to_string(),
-                ))
+                Ok(Value::json(serde_json::Value::Array(json_arr)))
             }
             "JSON_OBJECT" => {
                 let mut obj = serde_json::Map::new();
@@ -7706,6 +7841,9 @@ impl<'a> Evaluator<'a> {
     fn value_to_json(&self, value: &Value) -> serde_json::Value {
         if value.is_null() {
             return serde_json::Value::Null;
+        }
+        if let Some(jv) = value.as_json() {
+            return jv.clone();
         }
         if let Some(b) = value.as_bool() {
             return serde_json::Value::Bool(b);

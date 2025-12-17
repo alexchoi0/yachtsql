@@ -180,7 +180,7 @@ fn test_json_object() {
 fn test_json_array() {
     let mut executor = create_executor();
     let result = executor
-        .execute_sql("SELECT JSON_ARRAY(1, 2, 'three')")
+        .execute_sql("SELECT TO_JSON_STRING(JSON_ARRAY(1, 2, 'three'))")
         .unwrap();
     assert_table_eq!(result, [["[1,2,\"three\"]"]]);
 }
