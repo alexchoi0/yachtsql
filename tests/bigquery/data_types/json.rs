@@ -114,7 +114,6 @@ fn test_json_dot_notation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_subscript_notation() {
     let mut executor = create_executor();
     executor
@@ -161,7 +160,6 @@ fn test_to_json_string() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_type() {
     let mut executor = create_executor();
 
@@ -172,7 +170,6 @@ fn test_json_type() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_type_object() {
     let mut executor = create_executor();
 
@@ -181,7 +178,6 @@ fn test_json_type_object() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_type_array() {
     let mut executor = create_executor();
 
@@ -190,7 +186,6 @@ fn test_json_type_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_type_number() {
     let mut executor = create_executor();
 
@@ -201,7 +196,6 @@ fn test_json_type_number() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_type_boolean() {
     let mut executor = create_executor();
 
@@ -212,7 +206,6 @@ fn test_json_type_boolean() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_query() {
     let mut executor = create_executor();
 
@@ -223,7 +216,6 @@ fn test_json_query() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_query_array() {
     let mut executor = create_executor();
 
@@ -234,7 +226,6 @@ fn test_json_query_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_value_array() {
     let mut executor = create_executor();
 
@@ -309,29 +300,26 @@ fn test_json_set() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_strip_nulls() {
     let mut executor = create_executor();
 
     let result = executor
-        .execute_sql("SELECT TO_JSON_STRING(JSON_STRIP_NULLS(JSON '{\"a\": 1, \"b\": null}'))")
+        .execute_sql("SELECT JSON_STRIP_NULLS(JSON '{\"a\": 1, \"b\": null}')")
         .unwrap();
     assert_table_eq!(result, [["{\"a\":1}"]]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_json_remove() {
     let mut executor = create_executor();
 
     let result = executor
-        .execute_sql("SELECT TO_JSON_STRING(JSON_REMOVE(JSON '{\"a\": 1, \"b\": 2}', '$.b'))")
+        .execute_sql("SELECT JSON_REMOVE(JSON '{\"a\": 1, \"b\": 2}', '$.b')")
         .unwrap();
     assert_table_eq!(result, [["{\"a\":1}"]]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_lax_json_value() {
     let mut executor = create_executor();
 

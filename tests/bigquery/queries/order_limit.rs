@@ -103,7 +103,6 @@ fn test_limit_larger_than_result() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_offset_larger_than_result() {
     let mut executor = create_executor();
     setup_table(&mut executor);

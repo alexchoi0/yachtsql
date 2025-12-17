@@ -20,7 +20,6 @@ fn test_bignumeric_literal() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_in_table() {
     let mut executor = create_executor();
     executor
@@ -51,7 +50,6 @@ fn test_bignumeric_in_table() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_arithmetic() {
     let mut executor = create_executor();
     let result = executor
@@ -61,7 +59,6 @@ fn test_numeric_arithmetic() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_multiplication() {
     let mut executor = create_executor();
     let result = executor
@@ -71,7 +68,6 @@ fn test_numeric_multiplication() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_division() {
     let mut executor = create_executor();
     let result = executor
@@ -97,7 +93,6 @@ fn test_numeric_sum() {
 }
 
 #[test]
-#[ignore = "Re-enable after sccache update"]
 fn test_numeric_avg() {
     let mut executor = create_executor();
     executor
@@ -123,7 +118,6 @@ fn test_numeric_comparison() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_equality() {
     let mut executor = create_executor();
     let result = executor
@@ -133,7 +127,6 @@ fn test_numeric_equality() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_cast_from_int() {
     let mut executor = create_executor();
     let result = executor
@@ -143,7 +136,6 @@ fn test_numeric_cast_from_int() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_cast_from_float() {
     let mut executor = create_executor();
     let result = executor
@@ -153,7 +145,6 @@ fn test_numeric_cast_from_float() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_cast_from_string() {
     let mut executor = create_executor();
     let result = executor
@@ -181,7 +172,6 @@ fn test_numeric_trunc() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_numeric_abs() {
     let mut executor = create_executor();
     let result = executor
@@ -223,7 +213,6 @@ fn test_numeric_order_by() {
 }
 
 #[test]
-#[ignore = "Re-enable after sccache update"]
 fn test_numeric_group_by() {
     let mut executor = create_executor();
     executor

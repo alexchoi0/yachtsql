@@ -19,7 +19,6 @@ fn setup_tables(executor: &mut QueryExecutor) {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_subquery_in_where_in() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -32,7 +31,6 @@ fn test_subquery_in_where_in() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_subquery_in_where_not_in() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -104,7 +102,6 @@ fn test_cte_with_star() {
 }
 
 #[test]
-#[ignore = "ARRAY<STRUCT<...>> literal parsing and struct.* expansion not supported"]
 fn test_array_struct_offset_star() {
     let mut executor = create_executor();
 
@@ -158,7 +155,6 @@ fn test_select_star_replace() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_subquery_with_aggregation() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -171,7 +167,6 @@ fn test_subquery_with_aggregation() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_exists_subquery() {
     let mut executor = create_executor();
     setup_tables(&mut executor);
@@ -184,7 +179,6 @@ fn test_exists_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_not_exists_subquery() {
     let mut executor = create_executor();
 
@@ -209,7 +203,6 @@ fn test_not_exists_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_nested_subquery() {
     let mut executor = create_executor();
     setup_tables(&mut executor);

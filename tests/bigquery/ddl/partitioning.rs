@@ -71,7 +71,6 @@ fn test_partition_by_timestamp() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_partition_by_datetime() {
     let mut executor = create_executor();
 

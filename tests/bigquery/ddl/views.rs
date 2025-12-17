@@ -213,7 +213,6 @@ fn test_nested_views() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_materialized_view() {
     let mut executor = create_executor();
     setup_base_table(&mut executor);

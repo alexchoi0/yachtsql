@@ -212,7 +212,6 @@ fn test_restore_from_snapshot() {
 }
 
 #[test]
-#[ignore = "Requires STRUCT type support"]
 fn test_snapshot_complex_table() {
     let mut executor = create_executor();
     executor

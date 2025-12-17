@@ -59,7 +59,6 @@ fn test_bytes_concat() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_bytes_substr() {
     let mut executor = create_executor();
     let result = executor

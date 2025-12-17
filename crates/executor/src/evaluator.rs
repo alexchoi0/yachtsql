@@ -20,7 +20,7 @@ use geo_types::{
 use sqlparser::ast::{BinaryOperator, CastKind, Expr, UnaryOperator, Value as SqlValue};
 use wkt::TryFromWkt;
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::Value;
+use yachtsql_common::types::{DataType, Value};
 use yachtsql_storage::{Record, Schema};
 
 pub fn parse_byte_string_escapes(s: &str) -> Vec<u8> {
@@ -401,9 +401,18 @@ impl<'a> Evaluator<'a> {
                             self.schema.fields().iter().position(|f| {
                                 f.name.to_uppercase().ends_with(&format!(".{}", name))
                             })
-                        })
-                        .ok_or_else(|| Error::ColumnNotFound(ident.value.clone()))?;
-                Ok(record.values().get(idx).cloned().unwrap_or(Value::null()))
+                        });
+                if let Some(idx) = idx {
+                    return Ok(record.values().get(idx).cloned().unwrap_or(Value::null()));
+                }
+                match name.as_str() {
+                    "MICROSECOND" | "MILLISECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY"
+                    | "WEEK" | "MONTH" | "QUARTER" | "YEAR" | "DAYOFWEEK" | "DAYOFYEAR"
+                    | "ISOYEAR" | "ISOWEEK" | "DATE" | "DATETIME" | "TIME" => {
+                        Ok(Value::string(name))
+                    }
+                    _ => Err(Error::ColumnNotFound(ident.value.clone())),
+                }
             }
 
             Expr::CompoundIdentifier(parts) => {
@@ -1220,6 +1229,47 @@ impl<'a> Evaluator<'a> {
         match subscript {
             sqlparser::ast::Subscript::Index { index } => {
                 let idx_val = self.evaluate(index, record)?;
+
+                if let Some(json_val) = base_val.as_json() {
+                    if let Some(key) = idx_val.as_str() {
+                        match json_val {
+                            serde_json::Value::Object(obj) => {
+                                return Ok(obj
+                                    .get(key)
+                                    .cloned()
+                                    .map(Value::json)
+                                    .unwrap_or_else(Value::null));
+                            }
+                            _ => return Ok(Value::null()),
+                        }
+                    } else if let Some(idx) = idx_val.as_i64() {
+                        match json_val {
+                            serde_json::Value::Array(arr) => {
+                                let idx_usize = if idx >= 0 {
+                                    idx as usize
+                                } else {
+                                    let len = arr.len() as i64;
+                                    if -idx > len {
+                                        return Ok(Value::null());
+                                    }
+                                    (len + idx) as usize
+                                };
+                                return Ok(arr
+                                    .get(idx_usize)
+                                    .cloned()
+                                    .map(Value::json)
+                                    .unwrap_or_else(Value::null));
+                            }
+                            _ => return Ok(Value::null()),
+                        }
+                    } else {
+                        return Err(Error::TypeMismatch {
+                            expected: "STRING or INT64".to_string(),
+                            actual: idx_val.data_type().to_string(),
+                        });
+                    }
+                }
+
                 let idx = idx_val.as_i64().ok_or_else(|| Error::TypeMismatch {
                     expected: "INT64".to_string(),
                     actual: idx_val.data_type().to_string(),
@@ -1258,7 +1308,7 @@ impl<'a> Evaluator<'a> {
                     }
                 } else {
                     Err(Error::TypeMismatch {
-                        expected: "ARRAY or STRING".to_string(),
+                        expected: "ARRAY, STRING, or JSON".to_string(),
                         actual: base_val.data_type().to_string(),
                     })
                 }
@@ -1276,28 +1326,106 @@ impl<'a> Evaluator<'a> {
         else_result: Option<&Expr>,
         record: &Record,
     ) -> Result<Value> {
-        match operand {
+        let target_type = self.infer_case_result_type(conditions, else_result, record);
+
+        let result = match operand {
             Some(op_expr) => {
                 let op_val = self.evaluate(op_expr, record)?;
+                let mut matched = None;
                 for cond in conditions {
                     let when_val = self.evaluate(&cond.condition, record)?;
                     if op_val == when_val {
-                        return self.evaluate(&cond.result, record);
+                        matched = Some(self.evaluate(&cond.result, record)?);
+                        break;
                     }
                 }
+                matched
             }
             None => {
+                let mut matched = None;
                 for cond in conditions {
                     let cond_val = self.evaluate(&cond.condition, record)?;
                     if let Some(true) = cond_val.as_bool() {
-                        return self.evaluate(&cond.result, record);
+                        matched = Some(self.evaluate(&cond.result, record)?);
+                        break;
                     }
+                }
+                matched
+            }
+        };
+
+        let result = match result {
+            Some(v) => v,
+            None => match else_result {
+                Some(else_expr) => self.evaluate(else_expr, record)?,
+                None => Value::null(),
+            },
+        };
+
+        Ok(self.coerce_case_result(result, target_type))
+    }
+
+    fn infer_case_result_type(
+        &self,
+        conditions: &[sqlparser::ast::CaseWhen],
+        else_result: Option<&Expr>,
+        record: &Record,
+    ) -> Option<DataType> {
+        let mut has_float64 = false;
+        let mut has_numeric = false;
+
+        for cond in conditions {
+            if let Ok(val) = self.evaluate(&cond.result, record) {
+                match val.data_type() {
+                    DataType::Float64 => has_float64 = true,
+                    DataType::Numeric(_) => has_numeric = true,
+                    _ => {}
                 }
             }
         }
-        match else_result {
-            Some(else_expr) => self.evaluate(else_expr, record),
-            None => Ok(Value::null()),
+
+        if let Some(else_expr) = else_result {
+            if let Ok(val) = self.evaluate(else_expr, record) {
+                match val.data_type() {
+                    DataType::Float64 => has_float64 = true,
+                    DataType::Numeric(_) => has_numeric = true,
+                    _ => {}
+                }
+            }
+        }
+
+        if has_numeric {
+            Some(DataType::Numeric(None))
+        } else if has_float64 {
+            Some(DataType::Float64)
+        } else {
+            None
+        }
+    }
+
+    fn coerce_case_result(&self, value: Value, target_type: Option<DataType>) -> Value {
+        match target_type {
+            Some(DataType::Float64) => {
+                if let Some(i) = value.as_i64() {
+                    Value::float64(i as f64)
+                } else {
+                    value
+                }
+            }
+            Some(DataType::Numeric(_)) => {
+                if let Some(i) = value.as_i64() {
+                    Value::numeric(rust_decimal::Decimal::from(i))
+                } else if let Some(f) = value.as_f64() {
+                    if let Some(d) = rust_decimal::Decimal::from_f64_retain(f) {
+                        Value::numeric(d)
+                    } else {
+                        value
+                    }
+                } else {
+                    value
+                }
+            }
+            _ => value,
         }
     }
 
@@ -1848,6 +1976,9 @@ impl<'a> Evaluator<'a> {
                 })
             }
             sqlparser::ast::DataType::Numeric(_) | sqlparser::ast::DataType::Decimal(_) => {
+                if let Some(dec) = val.as_numeric() {
+                    return Ok(Value::numeric(dec));
+                }
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::numeric(rust_decimal::Decimal::from(i)));
                 }
@@ -1874,6 +2005,9 @@ impl<'a> Evaluator<'a> {
                 })
             }
             sqlparser::ast::DataType::BigNumeric(_) => {
+                if let Some(dec) = val.as_numeric() {
+                    return Ok(Value::numeric(dec));
+                }
                 if let Some(i) = val.as_i64() {
                     return Ok(Value::numeric(rust_decimal::Decimal::from(i)));
                 }
@@ -2297,6 +2431,75 @@ impl<'a> Evaluator<'a> {
         })
     }
 
+    fn values_equal_for_nullif(&self, left: &Value, right: &Value) -> bool {
+        if left.is_null() && right.is_null() {
+            return true;
+        }
+        if left.is_null() || right.is_null() {
+            return false;
+        }
+        if let (Some(l), Some(r)) = (left.as_i64(), right.as_i64()) {
+            return l == r;
+        }
+        if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+            return l == r;
+        }
+        if let Some(l) = left.as_i64() {
+            if let Some(r) = right.as_f64() {
+                return (l as f64) == r;
+            }
+        }
+        if let Some(l) = left.as_f64() {
+            if let Some(r) = right.as_i64() {
+                return l == (r as f64);
+            }
+        }
+        if let (Some(l), Some(r)) = (left.as_str(), right.as_str()) {
+            return l == r;
+        }
+        if let (Some(l), Some(r)) = (left.as_numeric(), right.as_numeric()) {
+            return l == r;
+        }
+        if let Some(l) = left.as_f64() {
+            if let Some(r) = right.as_numeric() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(r_f64) = r.to_f64() {
+                    return l == r_f64;
+                }
+            }
+        }
+        if let Some(l) = left.as_numeric() {
+            if let Some(r) = right.as_f64() {
+                use rust_decimal::prelude::ToPrimitive;
+                if let Some(l_f64) = l.to_f64() {
+                    return l_f64 == r;
+                }
+            }
+        }
+        if let Some(l) = left.as_i64() {
+            if let Some(r) = right.as_numeric() {
+                let l_dec = rust_decimal::Decimal::from(l);
+                return l_dec == r;
+            }
+        }
+        if let Some(l) = left.as_numeric() {
+            if let Some(r) = right.as_i64() {
+                let r_dec = rust_decimal::Decimal::from(r);
+                return l == r_dec;
+            }
+        }
+        if let (Some(l), Some(r)) = (left.as_bool(), right.as_bool()) {
+            return l == r;
+        }
+        if let (Some(l), Some(r)) = (left.as_date(), right.as_date()) {
+            return l == r;
+        }
+        if let (Some(l), Some(r)) = (left.as_timestamp(), right.as_timestamp()) {
+            return l == r;
+        }
+        left == right
+    }
+
     fn numeric_op<F, G, H>(
         &self,
         left: &Value,
@@ -2586,7 +2789,7 @@ impl<'a> Evaluator<'a> {
                         "NULLIF requires 2 arguments".to_string(),
                     ));
                 }
-                if args[0] == args[1] {
+                if self.values_equal_for_nullif(&args[0], &args[1]) {
                     Ok(Value::null())
                 } else {
                     Ok(args[0].clone())
@@ -3985,6 +4188,15 @@ impl<'a> Evaluator<'a> {
                 }
                 if args[0].is_null() {
                     return Ok(Value::null());
+                }
+                if let Some(ts) = args[0].as_timestamp() {
+                    return Ok(Value::date(ts.date_naive()));
+                }
+                if let Some(dt) = args[0].as_datetime() {
+                    return Ok(Value::date(dt.date()));
+                }
+                if let Some(d) = args[0].as_date() {
+                    return Ok(Value::date(d));
                 }
                 if let Some(s) = args[0].as_str() {
                     if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
@@ -6130,6 +6342,86 @@ impl<'a> Evaluator<'a> {
                     serde_json::Value::Array(arr) => {
                         let values: Vec<Value> =
                             arr.iter().map(|v| Value::json(v.clone())).collect();
+                        Ok(Value::array(values))
+                    }
+                    _ => Ok(Value::null()),
+                }
+            }
+            "JSON_EXTRACT_ARRAY" => {
+                if args.is_empty() {
+                    return Err(Error::InvalidQuery(
+                        "JSON_EXTRACT_ARRAY requires at least 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let json_val = if let Some(jv) = args[0].as_json() {
+                    jv.clone()
+                } else if let Some(s) = args[0].as_str() {
+                    serde_json::from_str::<serde_json::Value>(s)
+                        .map_err(|_| Error::InvalidQuery("Invalid JSON".to_string()))?
+                } else {
+                    return Err(Error::TypeMismatch {
+                        expected: "JSON or STRING".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    });
+                };
+                let target = if args.len() > 1 {
+                    let path = args[1].as_str().unwrap_or("$");
+                    self.json_path_extract(&json_val, path)
+                        .unwrap_or(serde_json::Value::Null)
+                } else {
+                    json_val
+                };
+                match target {
+                    serde_json::Value::Array(arr) => {
+                        let values: Vec<Value> =
+                            arr.iter().map(|v| Value::json(v.clone())).collect();
+                        Ok(Value::array(values))
+                    }
+                    _ => Ok(Value::null()),
+                }
+            }
+            "JSON_EXTRACT_STRING_ARRAY" => {
+                if args.is_empty() {
+                    return Err(Error::InvalidQuery(
+                        "JSON_EXTRACT_STRING_ARRAY requires at least 1 argument".to_string(),
+                    ));
+                }
+                if args[0].is_null() {
+                    return Ok(Value::null());
+                }
+                let json_val = if let Some(jv) = args[0].as_json() {
+                    jv.clone()
+                } else if let Some(s) = args[0].as_str() {
+                    serde_json::from_str::<serde_json::Value>(s)
+                        .map_err(|_| Error::InvalidQuery("Invalid JSON".to_string()))?
+                } else {
+                    return Err(Error::TypeMismatch {
+                        expected: "JSON or STRING".to_string(),
+                        actual: args[0].data_type().to_string(),
+                    });
+                };
+                let target = if args.len() > 1 {
+                    let path = args[1].as_str().unwrap_or("$");
+                    self.json_path_extract(&json_val, path)
+                        .unwrap_or(serde_json::Value::Null)
+                } else {
+                    json_val
+                };
+                match target {
+                    serde_json::Value::Array(arr) => {
+                        let values: Vec<Value> = arr
+                            .iter()
+                            .map(|v| match v {
+                                serde_json::Value::String(s) => Value::string(s.clone()),
+                                serde_json::Value::Number(n) => Value::string(n.to_string()),
+                                serde_json::Value::Bool(b) => Value::string(b.to_string()),
+                                serde_json::Value::Null => Value::null(),
+                                _ => Value::null(),
+                            })
+                            .collect();
                         Ok(Value::array(values))
                     }
                     _ => Ok(Value::null()),

@@ -99,7 +99,6 @@ fn test_struct_comparison_false() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_struct_in_where() {
     let mut executor = create_executor();
     executor
@@ -116,7 +115,6 @@ fn test_struct_in_where() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_struct_in_group_by() {
     let mut executor = create_executor();
     executor
@@ -133,7 +131,6 @@ fn test_struct_in_group_by() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_struct_in_order_by() {
     let mut executor = create_executor();
     executor
@@ -159,7 +156,6 @@ fn test_struct_with_array_field() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_struct_unnest() {
     let mut executor = create_executor();
     let result = executor

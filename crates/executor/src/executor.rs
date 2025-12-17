@@ -2449,8 +2449,12 @@ impl QueryExecutor {
         }
 
         let (schema, mut rows) = if do_projection {
-            let (schema, mut projected_rows) =
-                self.project_rows(&pre_projection_schema, &rows, &select.projection)?;
+            let (schema, mut projected_rows) = self.project_rows_with_ctes(
+                &pre_projection_schema,
+                &rows,
+                &select.projection,
+                cte_tables,
+            )?;
             if select.distinct.is_some() {
                 let mut seen = std::collections::HashSet::new();
                 projected_rows.retain(|row| {
@@ -2564,16 +2568,31 @@ impl QueryExecutor {
 
         let mut filtered_rows: Vec<Record> = if let Some(selection) = &select.selection {
             let substituted_selection = self.substitute_variables(selection);
-            let resolved_selection = self.resolve_scalar_subqueries(&substituted_selection)?;
-            input_rows
-                .iter()
-                .filter(|row| {
-                    evaluator
-                        .evaluate_to_bool(&resolved_selection, row)
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect()
+            if self.expr_contains_exists(&substituted_selection) {
+                let mut result = Vec::new();
+                for row in &input_rows {
+                    if self.evaluate_exists_expr(
+                        &substituted_selection,
+                        &input_schema,
+                        row,
+                        &HashMap::new(),
+                    )? {
+                        result.push(row.clone());
+                    }
+                }
+                result
+            } else {
+                let resolved_selection = self.resolve_scalar_subqueries(&substituted_selection)?;
+                input_rows
+                    .iter()
+                    .filter(|row| {
+                        evaluator
+                            .evaluate_to_bool(&resolved_selection, row)
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect()
+            }
         } else {
             input_rows.clone()
         };
@@ -2690,16 +2709,32 @@ impl QueryExecutor {
 
         let mut filtered_rows: Vec<Record> = if let Some(selection) = &select.selection {
             let substituted_selection = self.substitute_variables(selection);
-            let resolved_selection = self.resolve_scalar_subqueries(&substituted_selection)?;
-            input_rows
-                .iter()
-                .filter(|row| {
-                    evaluator
-                        .evaluate_to_bool(&resolved_selection, row)
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect()
+            if self.expr_contains_exists(&substituted_selection) {
+                let mut result = Vec::new();
+                for row in &input_rows {
+                    if self.evaluate_exists_expr(
+                        &substituted_selection,
+                        &input_schema,
+                        row,
+                        cte_tables,
+                    )? {
+                        result.push(row.clone());
+                    }
+                }
+                result
+            } else {
+                let resolved_selection =
+                    self.resolve_scalar_subqueries_with_ctes(&substituted_selection, cte_tables)?;
+                input_rows
+                    .iter()
+                    .filter(|row| {
+                        evaluator
+                            .evaluate_to_bool(&resolved_selection, row)
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect()
+            }
         } else {
             input_rows.clone()
         };
@@ -2709,13 +2744,41 @@ impl QueryExecutor {
             && !matches!(select.group_by, ast::GroupByExpr::All(_));
 
         if has_aggregates || has_group_by {
+            let order_by_agg_exprs =
+                self.get_order_by_aggregate_exprs_not_in_projection(order_by, &select.projection);
+
+            if order_by_agg_exprs.is_empty() {
+                let (schema, rows) = self.execute_aggregate_query_with_ctes(
+                    &input_schema,
+                    &filtered_rows,
+                    select,
+                    cte_tables,
+                )?;
+                return Ok((schema, rows, false));
+            }
+
+            let mut extended_projection = select.projection.clone();
+            for (idx, expr) in order_by_agg_exprs.iter().enumerate() {
+                let alias_name = format!("__order_agg_{}", idx);
+                extended_projection.push(SelectItem::ExprWithAlias {
+                    expr: expr.clone(),
+                    alias: ast::Ident::new(alias_name),
+                });
+            }
+
+            let extended_select = Select {
+                projection: extended_projection,
+                ..select.clone()
+            };
+
             let (schema, rows) = self.execute_aggregate_query_with_ctes(
                 &input_schema,
                 &filtered_rows,
-                select,
+                &extended_select,
                 cte_tables,
             )?;
-            return Ok((schema, rows, false));
+
+            return Ok((schema, rows, true));
         }
 
         let has_window_funcs = self.has_window_functions(&select.projection);
@@ -2733,7 +2796,7 @@ impl QueryExecutor {
                 select.qualify.as_ref(),
             )?;
 
-            if let Some(qualify_expr) = &select.qualify {
+            let (final_rows, final_window_results) = if let Some(qualify_expr) = &select.qualify {
                 let qualifying_indices = self.apply_qualify_filter(
                     &input_schema,
                     &filtered_rows,
@@ -2755,20 +2818,34 @@ impl QueryExecutor {
                     })
                     .collect();
 
-                let (schema, rows) = self.project_rows_with_windows(
+                (filtered, new_window_results)
+            } else {
+                (filtered_rows.clone(), window_results)
+            };
+
+            let needs_deferred = order_by.as_ref().is_some_and(|ob| {
+                self.order_by_references_non_projected_columns(
                     &input_schema,
-                    &filtered,
                     &select.projection,
-                    &new_window_results,
+                    ob,
+                )
+            });
+
+            if needs_deferred {
+                let (extended_schema, extended_rows) = self.create_extended_rows_with_windows(
+                    &input_schema,
+                    &final_rows,
+                    &select.projection,
+                    &final_window_results,
                 )?;
-                return Ok((schema, rows, false));
+                return Ok((extended_schema, extended_rows, true));
             }
 
             let (schema, rows) = self.project_rows_with_windows(
                 &input_schema,
-                &filtered_rows,
+                &final_rows,
                 &select.projection,
-                &window_results,
+                &final_window_results,
             )?;
             return Ok((schema, rows, false));
         }
@@ -2791,8 +2868,12 @@ impl QueryExecutor {
         if needs_deferred_projection {
             Ok((input_schema, filtered_rows, true))
         } else {
-            let (output_schema, mut output_rows) =
-                self.project_rows(&input_schema, &filtered_rows, &select.projection)?;
+            let (output_schema, mut output_rows) = self.project_rows_with_ctes(
+                &input_schema,
+                &filtered_rows,
+                &select.projection,
+                cte_tables,
+            )?;
             if select.distinct.is_some() {
                 let mut seen = std::collections::HashSet::new();
                 output_rows.retain(|row| {
@@ -2842,11 +2923,10 @@ impl QueryExecutor {
                 Expr::Identifier(ident) => {
                     let col_name = ident.value.to_uppercase();
                     if !projected_columns.contains(&col_name) {
-                        if input_schema
-                            .fields()
-                            .iter()
-                            .any(|f| f.name.to_uppercase() == col_name)
-                        {
+                        if input_schema.fields().iter().any(|f| {
+                            let f_upper = f.name.to_uppercase();
+                            f_upper == col_name || f_upper.ends_with(&format!(".{}", col_name))
+                        }) {
                             return true;
                         }
                     }
@@ -2919,6 +2999,69 @@ impl QueryExecutor {
             Expr::Nested(inner) => {
                 self.expr_references_non_projected(inner, projected_columns, input_schema)
             }
+            _ => false,
+        }
+    }
+
+    fn get_order_by_aggregate_exprs_not_in_projection(
+        &self,
+        order_by: &Option<OrderBy>,
+        projection: &[SelectItem],
+    ) -> Vec<Expr> {
+        let Some(order_by) = order_by else {
+            return vec![];
+        };
+
+        let exprs = match &order_by.kind {
+            OrderByKind::Expressions(exprs) => exprs,
+            OrderByKind::All(_) => return vec![],
+        };
+
+        let projected_expr_keys: std::collections::HashSet<String> = projection
+            .iter()
+            .filter_map(|item| match item {
+                SelectItem::UnnamedExpr(expr) => Some(self.normalize_expr_key(expr)),
+                SelectItem::ExprWithAlias { expr, .. } => Some(self.normalize_expr_key(expr)),
+                _ => None,
+            })
+            .collect();
+
+        let mut result = Vec::new();
+        for order_expr in exprs {
+            if self.expr_contains_aggregate(&order_expr.expr) {
+                let key = self.normalize_expr_key(&order_expr.expr);
+                if !projected_expr_keys.contains(&key) {
+                    result.push(order_expr.expr.clone());
+                }
+            }
+        }
+        result
+    }
+
+    fn expr_contains_aggregate(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if self.is_aggregate_function(&name) && func.over.is_none() {
+                    return true;
+                }
+                if let ast::FunctionArguments::List(args) = &func.args {
+                    for arg in &args.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) = arg {
+                            if self.expr_contains_aggregate(e) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.expr_contains_aggregate(left) || self.expr_contains_aggregate(right)
+            }
+            Expr::UnaryOp { expr, .. } => self.expr_contains_aggregate(expr),
+            Expr::Nested(inner) => self.expr_contains_aggregate(inner),
+            Expr::Cast { expr, .. } => self.expr_contains_aggregate(expr),
             _ => false,
         }
     }
@@ -3057,6 +3200,7 @@ impl QueryExecutor {
                                         format!("{}.{}", prefix, f.name),
                                         f.data_type.clone(),
                                     )
+                                    .with_source_table(prefix.clone())
                                 })
                                 .collect(),
                         )
@@ -4147,6 +4291,10 @@ impl QueryExecutor {
             ast::FunctionArgExpr::Wildcard => "*".to_string(),
             ast::FunctionArgExpr::QualifiedWildcard(name) => format!("{}.*", name),
         }
+    }
+
+    fn normalize_expr_key_from_name(&self, name: &str) -> String {
+        name.to_uppercase()
     }
 
     fn collect_aggregate_subexprs(
@@ -5242,8 +5390,27 @@ impl QueryExecutor {
             }
             Expr::Value(v) => self.sql_value_to_value(&v.value),
             Expr::Subquery(query) => {
-                let result = self.execute_query_with_ctes(query, cte_tables)?;
+                let outer_row = if !group_rows.is_empty() {
+                    (*group_rows[0]).clone()
+                } else {
+                    let mut group_fields = Vec::new();
+                    for (idx, expr) in group_exprs.iter().enumerate() {
+                        let name = self.expr_to_alias(expr, idx);
+                        let val = group_key.get(idx).cloned().unwrap_or(Value::null());
+                        group_fields.push(Field::nullable(name, val.data_type()));
+                    }
+                    Record::from_values(group_key.to_vec())
+                };
+                let substituted_query =
+                    self.substitute_outer_refs_in_query(query, input_schema, &outer_row);
+                let mut merged_ctes = cte_tables.clone();
+                let inner_ctes = self.materialize_ctes(&substituted_query.with)?;
+                merged_ctes.extend(inner_ctes);
+                let result = self.execute_query_with_ctes(&substituted_query, &merged_ctes)?;
                 let rows = result.to_records()?;
+                if rows.is_empty() {
+                    return Ok(Value::null());
+                }
                 if rows.len() != 1 || result.schema().field_count() != 1 {
                     return Err(Error::InvalidQuery(
                         "Scalar subquery must return exactly one row and one column".to_string(),
@@ -6447,9 +6614,23 @@ impl QueryExecutor {
         rows: &[Record],
         projection: &[SelectItem],
     ) -> Result<(Schema, Vec<Record>)> {
-        let resolved_projection = self.resolve_projection_subqueries(projection)?;
+        self.project_rows_with_ctes(input_schema, rows, projection, &HashMap::new())
+    }
 
-        if self.has_array_join(&resolved_projection) {
+    fn project_rows_with_ctes(
+        &self,
+        input_schema: &Schema,
+        rows: &[Record],
+        projection: &[SelectItem],
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<(Schema, Vec<Record>)> {
+        if let Some(result) = self.try_project_from_precomputed(input_schema, rows, projection) {
+            return result;
+        }
+
+        if self.has_array_join(projection) {
+            let resolved_projection =
+                self.resolve_projection_subqueries_with_ctes(projection, cte_tables)?;
             return self.project_rows_with_array_join(input_schema, rows, &resolved_projection);
         }
 
@@ -6460,7 +6641,7 @@ impl QueryExecutor {
 
         let mut all_cols: Vec<(String, DataType)> = Vec::new();
 
-        for (idx, item) in resolved_projection.iter().enumerate() {
+        for (idx, item) in projection.iter().enumerate() {
             match item {
                 SelectItem::Wildcard(opts) => {
                     let except_cols = Self::get_except_columns(opts);
@@ -6480,14 +6661,19 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::QualifiedWildcard(name, opts) => {
-                    let table_name = name.to_string();
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
                     let except_cols = Self::get_except_columns(opts);
                     let replace_map = Self::get_replace_map(opts);
                     for field in input_schema.fields() {
-                        let matches_table = field
+                        let matches_source = field
                             .source_table
                             .as_ref()
                             .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
                         if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                             if let Some(replace_expr) = replace_map.get(&field.name.to_lowercase())
                             {
@@ -6502,7 +6688,12 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::UnnamedExpr(expr) => {
-                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                    let resolved_expr = self.resolve_scalar_subqueries_with_row_context(
+                        expr,
+                        cte_tables,
+                        input_schema,
+                        &sample_record,
+                    )?;
                     let val = evaluator
                         .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
@@ -6516,7 +6707,12 @@ impl QueryExecutor {
                     all_cols.push((name, data_type));
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                    let resolved_expr = self.resolve_scalar_subqueries_with_row_context(
+                        expr,
+                        cte_tables,
+                        input_schema,
+                        &sample_record,
+                    )?;
                     let val = evaluator
                         .evaluate(&resolved_expr, &sample_record)
                         .unwrap_or(Value::null());
@@ -6540,7 +6736,7 @@ impl QueryExecutor {
         let mut output_rows = Vec::with_capacity(rows.len());
         for row in rows {
             let mut values = Vec::new();
-            for item in &resolved_projection {
+            for item in projection {
                 match item {
                     SelectItem::Wildcard(opts) => {
                         let except_cols = Self::get_except_columns(opts);
@@ -6559,14 +6755,19 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::QualifiedWildcard(name, opts) => {
-                        let table_name = name.to_string();
+                        let table_name = name.to_string().trim_end_matches(".*").to_string();
                         let except_cols = Self::get_except_columns(opts);
                         let replace_map = Self::get_replace_map(opts);
                         for (i, field) in input_schema.fields().iter().enumerate() {
-                            let matches_table = field
+                            let matches_source = field
                                 .source_table
                                 .as_ref()
                                 .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                            let matches_prefix = field
+                                .name
+                                .to_uppercase()
+                                .starts_with(&format!("{}.", table_name.to_uppercase()));
+                            let matches_table = matches_source || matches_prefix;
                             if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                                 if let Some(replace_expr) =
                                     replace_map.get(&field.name.to_lowercase())
@@ -6580,7 +6781,12 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
-                        let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                        let resolved_expr = self.resolve_scalar_subqueries_with_row_context(
+                            expr,
+                            cte_tables,
+                            input_schema,
+                            row,
+                        )?;
                         let val = evaluator.evaluate(&resolved_expr, row)?;
                         values.push(val);
                     }
@@ -6592,16 +6798,106 @@ impl QueryExecutor {
         Ok((output_schema, output_rows))
     }
 
+    fn try_project_from_precomputed(
+        &self,
+        input_schema: &Schema,
+        rows: &[Record],
+        projection: &[SelectItem],
+    ) -> Option<Result<(Schema, Vec<Record>)>> {
+        let mut proj_col_names: Vec<String> = Vec::new();
+        let mut output_col_names: Vec<String> = Vec::new();
+
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::Wildcard(_) => {
+                    for field in input_schema.fields() {
+                        if !field.name.starts_with("__proj_") {
+                            proj_col_names.push(format!("__proj_{}", field.name));
+                            output_col_names.push(field.name.clone());
+                        }
+                    }
+                }
+                SelectItem::QualifiedWildcard(name, _) => {
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
+                    for field in input_schema.fields() {
+                        let matches_source = field
+                            .source_table
+                            .as_ref()
+                            .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
+                        if matches_table && !field.name.starts_with("__proj_") {
+                            proj_col_names.push(format!("__proj_{}", field.name));
+                            output_col_names.push(field.name.clone());
+                        }
+                    }
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    let name = self.expr_to_alias(expr, idx);
+                    proj_col_names.push(format!("__proj_{}", name));
+                    output_col_names.push(name);
+                }
+                SelectItem::ExprWithAlias { alias, .. } => {
+                    proj_col_names.push(format!("__proj_{}", alias.value));
+                    output_col_names.push(alias.value.clone());
+                }
+            }
+        }
+
+        let mut proj_col_indices: Vec<usize> = Vec::new();
+        for proj_name in &proj_col_names {
+            let idx = input_schema
+                .fields()
+                .iter()
+                .position(|f| &f.name == proj_name)?;
+            proj_col_indices.push(idx);
+        }
+
+        let output_fields: Vec<Field> = proj_col_indices
+            .iter()
+            .zip(output_col_names.iter())
+            .map(|(&idx, name)| {
+                let field = &input_schema.fields()[idx];
+                Field::nullable(name.clone(), field.data_type.clone())
+            })
+            .collect();
+        let output_schema = Schema::from_fields(output_fields);
+
+        let output_rows: Vec<Record> = rows
+            .iter()
+            .map(|row| {
+                let values: Vec<Value> = proj_col_indices
+                    .iter()
+                    .map(|&idx| row.values()[idx].clone())
+                    .collect();
+                Record::from_values(values)
+            })
+            .collect();
+
+        Some(Ok((output_schema, output_rows)))
+    }
+
     fn resolve_projection_subqueries(&self, projection: &[SelectItem]) -> Result<Vec<SelectItem>> {
+        self.resolve_projection_subqueries_with_ctes(projection, &HashMap::new())
+    }
+
+    fn resolve_projection_subqueries_with_ctes(
+        &self,
+        projection: &[SelectItem],
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<Vec<SelectItem>> {
         projection
             .iter()
             .map(|item| match item {
                 SelectItem::UnnamedExpr(expr) => {
-                    let resolved = self.resolve_scalar_subqueries(expr)?;
+                    let resolved = self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
                     Ok(SelectItem::UnnamedExpr(resolved))
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    let resolved = self.resolve_scalar_subqueries(expr)?;
+                    let resolved = self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
                     Ok(SelectItem::ExprWithAlias {
                         expr: resolved,
                         alias: alias.clone(),
@@ -6634,13 +6930,18 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::QualifiedWildcard(name, opts) => {
-                    let table_name = name.to_string();
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
                     let except_cols = Self::get_except_columns(opts);
                     for field in input_schema.fields() {
-                        let matches_table = field
+                        let matches_source = field
                             .source_table
                             .as_ref()
                             .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
                         if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                             all_cols.push((field.name.clone(), field.data_type.clone()));
                         }
@@ -6708,13 +7009,18 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::QualifiedWildcard(name, opts) => {
-                        let table_name = name.to_string();
+                        let table_name = name.to_string().trim_end_matches(".*").to_string();
                         let except_cols = Self::get_except_columns(opts);
                         for (i, field) in input_schema.fields().iter().enumerate() {
-                            let matches_table = field
+                            let matches_source = field
                                 .source_table
                                 .as_ref()
                                 .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                            let matches_prefix = field
+                                .name
+                                .to_uppercase()
+                                .starts_with(&format!("{}.", table_name.to_uppercase()));
+                            let matches_table = matches_source || matches_prefix;
                             if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                                 base_values.push(row.values()[i].clone());
                             }
@@ -6761,14 +7067,43 @@ impl QueryExecutor {
             OrderByKind::All(_) => return Ok(()),
         };
 
+        let mut agg_counter = 0;
+        let mut expr_col_indices: Vec<Option<usize>> = Vec::new();
+        for oe in exprs {
+            let key = self.normalize_expr_key(&oe.expr);
+            let col_idx = schema
+                .fields()
+                .iter()
+                .position(|f| {
+                    let f_upper = f.name.to_uppercase();
+                    f_upper == key || f_upper.ends_with(&format!(".{}", key))
+                })
+                .or_else(|| {
+                    if self.expr_contains_aggregate(&oe.expr) {
+                        let col_name = format!("__order_agg_{}", agg_counter);
+                        agg_counter += 1;
+                        schema.fields().iter().position(|f| f.name == col_name)
+                    } else {
+                        None
+                    }
+                });
+            expr_col_indices.push(col_idx);
+        }
+
         rows.sort_by(|a, b| {
-            for order_expr in exprs {
-                let a_val = evaluator
-                    .evaluate(&order_expr.expr, a)
-                    .unwrap_or(Value::null());
-                let b_val = evaluator
-                    .evaluate(&order_expr.expr, b)
-                    .unwrap_or(Value::null());
+            for (idx, order_expr) in exprs.iter().enumerate() {
+                let (a_val, b_val) = if let Some(col_idx) = expr_col_indices[idx] {
+                    (a.values()[col_idx].clone(), b.values()[col_idx].clone())
+                } else {
+                    (
+                        evaluator
+                            .evaluate(&order_expr.expr, a)
+                            .unwrap_or(Value::null()),
+                        evaluator
+                            .evaluate(&order_expr.expr, b)
+                            .unwrap_or(Value::null()),
+                    )
+                };
 
                 let asc = order_expr.options.asc.unwrap_or(true);
                 let nulls_first = order_expr.options.nulls_first.unwrap_or(!asc);
@@ -8158,7 +8493,8 @@ impl QueryExecutor {
                             .map(|arg| match arg {
                                 ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
                                     ast::FunctionArgExpr::Expr(e) => {
-                                        let resolved = self.resolve_scalar_subqueries(e)?;
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_ctes(e, cte_tables)?;
                                         Ok(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
                                             resolved,
                                         )))
@@ -8171,7 +8507,8 @@ impl QueryExecutor {
                                     operator,
                                 } => match arg {
                                     ast::FunctionArgExpr::Expr(e) => {
-                                        let resolved = self.resolve_scalar_subqueries(e)?;
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_ctes(e, cte_tables)?;
                                         Ok(ast::FunctionArg::Named {
                                             name: name.clone(),
                                             arg: ast::FunctionArgExpr::Expr(resolved),
@@ -8190,7 +8527,8 @@ impl QueryExecutor {
                                     operator,
                                 } => match arg {
                                     ast::FunctionArgExpr::Expr(e) => {
-                                        let resolved = self.resolve_scalar_subqueries(e)?;
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_ctes(e, cte_tables)?;
                                         Ok(ast::FunctionArg::ExprNamed {
                                             name: name.clone(),
                                             arg: ast::FunctionArgExpr::Expr(resolved),
@@ -8232,14 +8570,16 @@ impl QueryExecutor {
             } => {
                 let resolved_operand = operand
                     .as_ref()
-                    .map(|o| self.resolve_scalar_subqueries(o))
+                    .map(|o| self.resolve_scalar_subqueries_with_ctes(o, cte_tables))
                     .transpose()?
                     .map(Box::new);
                 let resolved_conditions: Vec<ast::CaseWhen> = conditions
                     .iter()
                     .map(|cw| {
-                        let resolved_cond = self.resolve_scalar_subqueries(&cw.condition)?;
-                        let resolved_result = self.resolve_scalar_subqueries(&cw.result)?;
+                        let resolved_cond =
+                            self.resolve_scalar_subqueries_with_ctes(&cw.condition, cte_tables)?;
+                        let resolved_result =
+                            self.resolve_scalar_subqueries_with_ctes(&cw.result, cte_tables)?;
                         Ok(ast::CaseWhen {
                             condition: resolved_cond,
                             result: resolved_result,
@@ -8248,7 +8588,7 @@ impl QueryExecutor {
                     .collect::<Result<Vec<_>>>()?;
                 let resolved_else = else_result
                     .as_ref()
-                    .map(|e| self.resolve_scalar_subqueries(e))
+                    .map(|e| self.resolve_scalar_subqueries_with_ctes(e, cte_tables))
                     .transpose()?
                     .map(Box::new);
                 Ok(Expr::Case {
@@ -8265,7 +8605,7 @@ impl QueryExecutor {
                 format,
                 kind,
             } => {
-                let resolved = self.resolve_scalar_subqueries(inner)?;
+                let resolved = self.resolve_scalar_subqueries_with_ctes(inner, cte_tables)?;
                 Ok(Expr::Cast {
                     expr: Box::new(resolved),
                     data_type: data_type.clone(),
@@ -8278,10 +8618,10 @@ impl QueryExecutor {
                 list,
                 negated,
             } => {
-                let resolved_expr = self.resolve_scalar_subqueries(expr)?;
+                let resolved_expr = self.resolve_scalar_subqueries_with_ctes(expr, cte_tables)?;
                 let resolved_list: Vec<Expr> = list
                     .iter()
-                    .map(|e| self.resolve_scalar_subqueries(e))
+                    .map(|e| self.resolve_scalar_subqueries_with_ctes(e, cte_tables))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Expr::InList {
                     expr: Box::new(resolved_expr),
@@ -8313,6 +8653,226 @@ impl QueryExecutor {
                     expr: Box::new(resolved_expr),
                     list,
                     negated: *negated,
+                })
+            }
+            Expr::Exists { subquery, negated } => Ok(Expr::Exists {
+                subquery: subquery.clone(),
+                negated: *negated,
+            }),
+            _ => Ok(expr.clone()),
+        }
+    }
+
+    fn resolve_scalar_subqueries_with_row_context(
+        &self,
+        expr: &Expr,
+        cte_tables: &HashMap<String, Table>,
+        outer_schema: &Schema,
+        outer_row: &Record,
+    ) -> Result<Expr> {
+        match expr {
+            Expr::Subquery(query) => {
+                let substituted_query =
+                    self.substitute_outer_refs_in_query(query, outer_schema, outer_row);
+                let mut merged_ctes = cte_tables.clone();
+                let inner_ctes = self.materialize_ctes(&substituted_query.with)?;
+                merged_ctes.extend(inner_ctes);
+                let result = self.execute_query_with_ctes(&substituted_query, &merged_ctes)?;
+                let rows = result.to_records()?;
+                if rows.is_empty() {
+                    return Ok(self.value_to_expr(&Value::null()));
+                }
+                if rows.len() != 1 || result.schema().field_count() != 1 {
+                    return Err(Error::InvalidQuery(
+                        "Scalar subquery must return exactly one row and one column".to_string(),
+                    ));
+                }
+                let value = rows[0].values()[0].clone();
+                Ok(self.value_to_expr(&value))
+            }
+            Expr::Function(func) => {
+                let func_name = func.name.to_string().to_uppercase();
+                if let ast::FunctionArguments::Subquery(q) = &func.args {
+                    let substituted_query =
+                        self.substitute_outer_refs_in_query(q, outer_schema, outer_row);
+                    let mut merged_ctes = cte_tables.clone();
+                    let inner_ctes = self.materialize_ctes(&substituted_query.with)?;
+                    merged_ctes.extend(inner_ctes);
+                    let result = self.execute_query_with_ctes(&substituted_query, &merged_ctes)?;
+                    let rows = result.to_records()?;
+                    if func_name == "ARRAY" {
+                        if result.schema().field_count() != 1 {
+                            return Err(Error::InvalidQuery(
+                                "ARRAY() subquery must return exactly one column".to_string(),
+                            ));
+                        }
+                        let values: Vec<Value> =
+                            rows.iter().map(|r| r.values()[0].clone()).collect();
+                        let array_val = Value::array(values);
+                        return Ok(self.value_to_expr(&array_val));
+                    }
+                    if rows.is_empty() {
+                        return Ok(self.value_to_expr(&Value::null()));
+                    }
+                    if rows.len() != 1 || result.schema().field_count() != 1 {
+                        return Err(Error::InvalidQuery(
+                            "Scalar subquery must return exactly one row and one column"
+                                .to_string(),
+                        ));
+                    }
+                    let value = rows[0].values()[0].clone();
+                    return Ok(self.value_to_expr(&value));
+                }
+                let new_args = match &func.args {
+                    ast::FunctionArguments::None => ast::FunctionArguments::None,
+                    ast::FunctionArguments::Subquery(_) => unreachable!(),
+                    ast::FunctionArguments::List(list) => {
+                        let new_list_args: Vec<ast::FunctionArg> = list
+                            .args
+                            .iter()
+                            .map(|arg| match arg {
+                                ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                                    ast::FunctionArgExpr::Expr(e) => {
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_row_context(
+                                                e,
+                                                cte_tables,
+                                                outer_schema,
+                                                outer_row,
+                                            )?;
+                                        Ok(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                            resolved,
+                                        )))
+                                    }
+                                    other => Ok(ast::FunctionArg::Unnamed(other.clone())),
+                                },
+                                ast::FunctionArg::Named {
+                                    name,
+                                    arg,
+                                    operator,
+                                } => match arg {
+                                    ast::FunctionArgExpr::Expr(e) => {
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_row_context(
+                                                e,
+                                                cte_tables,
+                                                outer_schema,
+                                                outer_row,
+                                            )?;
+                                        Ok(ast::FunctionArg::Named {
+                                            name: name.clone(),
+                                            arg: ast::FunctionArgExpr::Expr(resolved),
+                                            operator: operator.clone(),
+                                        })
+                                    }
+                                    other => Ok(ast::FunctionArg::Named {
+                                        name: name.clone(),
+                                        arg: other.clone(),
+                                        operator: operator.clone(),
+                                    }),
+                                },
+                                ast::FunctionArg::ExprNamed {
+                                    name,
+                                    arg,
+                                    operator,
+                                } => match arg {
+                                    ast::FunctionArgExpr::Expr(e) => {
+                                        let resolved = self
+                                            .resolve_scalar_subqueries_with_row_context(
+                                                e,
+                                                cte_tables,
+                                                outer_schema,
+                                                outer_row,
+                                            )?;
+                                        Ok(ast::FunctionArg::ExprNamed {
+                                            name: name.clone(),
+                                            arg: ast::FunctionArgExpr::Expr(resolved),
+                                            operator: operator.clone(),
+                                        })
+                                    }
+                                    other => Ok(ast::FunctionArg::ExprNamed {
+                                        name: name.clone(),
+                                        arg: other.clone(),
+                                        operator: operator.clone(),
+                                    }),
+                                },
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        ast::FunctionArguments::List(ast::FunctionArgumentList {
+                            duplicate_treatment: list.duplicate_treatment,
+                            args: new_list_args,
+                            clauses: list.clauses.clone(),
+                        })
+                    }
+                };
+                Ok(Expr::Function(ast::Function {
+                    name: func.name.clone(),
+                    uses_odbc_syntax: func.uses_odbc_syntax,
+                    args: new_args,
+                    filter: func.filter.clone(),
+                    null_treatment: func.null_treatment,
+                    over: func.over.clone(),
+                    within_group: func.within_group.clone(),
+                    parameters: func.parameters.clone(),
+                }))
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let resolved_left = self.resolve_scalar_subqueries_with_row_context(
+                    left,
+                    cte_tables,
+                    outer_schema,
+                    outer_row,
+                )?;
+                let resolved_right = self.resolve_scalar_subqueries_with_row_context(
+                    right,
+                    cte_tables,
+                    outer_schema,
+                    outer_row,
+                )?;
+                Ok(Expr::BinaryOp {
+                    left: Box::new(resolved_left),
+                    op: op.clone(),
+                    right: Box::new(resolved_right),
+                })
+            }
+            Expr::UnaryOp { op, expr: inner } => {
+                let resolved = self.resolve_scalar_subqueries_with_row_context(
+                    inner,
+                    cte_tables,
+                    outer_schema,
+                    outer_row,
+                )?;
+                Ok(Expr::UnaryOp {
+                    op: *op,
+                    expr: Box::new(resolved),
+                })
+            }
+            Expr::Nested(inner) => {
+                let resolved = self.resolve_scalar_subqueries_with_row_context(
+                    inner,
+                    cte_tables,
+                    outer_schema,
+                    outer_row,
+                )?;
+                Ok(Expr::Nested(Box::new(resolved)))
+            }
+            Expr::Cast {
+                expr: inner,
+                data_type,
+                format,
+                kind,
+            } => {
+                let resolved = self.resolve_scalar_subqueries_with_row_context(
+                    inner,
+                    cte_tables,
+                    outer_schema,
+                    outer_row,
+                )?;
+                Ok(Expr::Cast {
+                    expr: Box::new(resolved),
+                    data_type: data_type.clone(),
+                    format: format.clone(),
+                    kind: kind.clone(),
                 })
             }
             _ => Ok(expr.clone()),
@@ -8348,6 +8908,215 @@ impl QueryExecutor {
                 };
                 Expr::Value(sql_value.into())
             }
+        }
+    }
+
+    fn expr_contains_exists(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Exists { .. } => true,
+            Expr::BinaryOp { left, right, .. } => {
+                self.expr_contains_exists(left) || self.expr_contains_exists(right)
+            }
+            Expr::UnaryOp { expr, .. } => self.expr_contains_exists(expr),
+            Expr::Nested(inner) => self.expr_contains_exists(inner),
+            _ => false,
+        }
+    }
+
+    fn evaluate_exists_expr(
+        &self,
+        expr: &Expr,
+        outer_schema: &Schema,
+        outer_row: &Record,
+        cte_tables: &HashMap<String, Table>,
+    ) -> Result<bool> {
+        match expr {
+            Expr::Exists { subquery, negated } => {
+                let substituted_query =
+                    self.substitute_outer_refs_in_query(subquery, outer_schema, outer_row);
+                let mut merged_ctes = cte_tables.clone();
+                let inner_ctes = self.materialize_ctes(&substituted_query.with)?;
+                merged_ctes.extend(inner_ctes);
+                let result = self.execute_query_with_ctes(&substituted_query, &merged_ctes)?;
+                let exists = result.row_count() > 0;
+                Ok(if *negated { !exists } else { exists })
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let left_has_exists = self.expr_contains_exists(left);
+                let right_has_exists = self.expr_contains_exists(right);
+
+                match op {
+                    ast::BinaryOperator::And => {
+                        let left_result = if left_has_exists {
+                            self.evaluate_exists_expr(left, outer_schema, outer_row, cte_tables)?
+                        } else {
+                            let evaluator = Evaluator::with_user_functions(
+                                outer_schema,
+                                self.catalog.get_functions(),
+                            );
+                            evaluator.evaluate_to_bool(left, outer_row).unwrap_or(false)
+                        };
+                        if !left_result {
+                            return Ok(false);
+                        }
+                        if right_has_exists {
+                            self.evaluate_exists_expr(right, outer_schema, outer_row, cte_tables)
+                        } else {
+                            let evaluator = Evaluator::with_user_functions(
+                                outer_schema,
+                                self.catalog.get_functions(),
+                            );
+                            Ok(evaluator
+                                .evaluate_to_bool(right, outer_row)
+                                .unwrap_or(false))
+                        }
+                    }
+                    ast::BinaryOperator::Or => {
+                        let left_result = if left_has_exists {
+                            self.evaluate_exists_expr(left, outer_schema, outer_row, cte_tables)?
+                        } else {
+                            let evaluator = Evaluator::with_user_functions(
+                                outer_schema,
+                                self.catalog.get_functions(),
+                            );
+                            evaluator.evaluate_to_bool(left, outer_row).unwrap_or(false)
+                        };
+                        if left_result {
+                            return Ok(true);
+                        }
+                        if right_has_exists {
+                            self.evaluate_exists_expr(right, outer_schema, outer_row, cte_tables)
+                        } else {
+                            let evaluator = Evaluator::with_user_functions(
+                                outer_schema,
+                                self.catalog.get_functions(),
+                            );
+                            Ok(evaluator
+                                .evaluate_to_bool(right, outer_row)
+                                .unwrap_or(false))
+                        }
+                    }
+                    _ => {
+                        let evaluator = Evaluator::with_user_functions(
+                            outer_schema,
+                            self.catalog.get_functions(),
+                        );
+                        Ok(evaluator.evaluate_to_bool(expr, outer_row).unwrap_or(false))
+                    }
+                }
+            }
+            Expr::UnaryOp {
+                op: ast::UnaryOperator::Not,
+                expr: inner,
+            } => {
+                let result =
+                    self.evaluate_exists_expr(inner, outer_schema, outer_row, cte_tables)?;
+                Ok(!result)
+            }
+            Expr::Nested(inner) => {
+                self.evaluate_exists_expr(inner, outer_schema, outer_row, cte_tables)
+            }
+            _ => {
+                let evaluator =
+                    Evaluator::with_user_functions(outer_schema, self.catalog.get_functions());
+                Ok(evaluator.evaluate_to_bool(expr, outer_row).unwrap_or(false))
+            }
+        }
+    }
+
+    fn substitute_outer_refs_in_query(
+        &self,
+        query: &Query,
+        outer_schema: &Schema,
+        outer_row: &Record,
+    ) -> Query {
+        let mut new_query = query.clone();
+        new_query.body =
+            Box::new(self.substitute_outer_refs_in_set_expr(&query.body, outer_schema, outer_row));
+        new_query
+    }
+
+    fn substitute_outer_refs_in_set_expr(
+        &self,
+        set_expr: &SetExpr,
+        outer_schema: &Schema,
+        outer_row: &Record,
+    ) -> SetExpr {
+        match set_expr {
+            SetExpr::Select(select) => {
+                let mut new_select = select.as_ref().clone();
+                if let Some(selection) = &select.selection {
+                    new_select.selection = Some(self.substitute_outer_refs_in_expr(
+                        selection,
+                        outer_schema,
+                        outer_row,
+                    ));
+                }
+                SetExpr::Select(Box::new(new_select))
+            }
+            _ => set_expr.clone(),
+        }
+    }
+
+    fn substitute_outer_refs_in_expr(
+        &self,
+        expr: &Expr,
+        outer_schema: &Schema,
+        outer_row: &Record,
+    ) -> Expr {
+        match expr {
+            Expr::CompoundIdentifier(parts) => {
+                if parts.len() == 2 {
+                    let table_alias = parts[0].value.to_uppercase();
+                    let column_name = parts[1].value.to_uppercase();
+                    for (i, field) in outer_schema.fields().iter().enumerate() {
+                        let field_upper = field.name.to_uppercase();
+                        if field_upper == column_name
+                            || field_upper == format!("{}.{}", table_alias, column_name)
+                            || field
+                                .source_table
+                                .as_ref()
+                                .is_some_and(|t| t.to_uppercase() == table_alias)
+                                && field_upper.ends_with(&column_name)
+                        {
+                            return self.value_to_expr(&outer_row.values()[i]);
+                        }
+                    }
+                }
+                expr.clone()
+            }
+            Expr::Identifier(ident) => {
+                let col_name = ident.value.to_uppercase();
+                for (i, field) in outer_schema.fields().iter().enumerate() {
+                    if field.name.to_uppercase() == col_name {
+                        return self.value_to_expr(&outer_row.values()[i]);
+                    }
+                }
+                expr.clone()
+            }
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(self.substitute_outer_refs_in_expr(left, outer_schema, outer_row)),
+                op: op.clone(),
+                right: Box::new(self.substitute_outer_refs_in_expr(right, outer_schema, outer_row)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(self.substitute_outer_refs_in_expr(inner, outer_schema, outer_row)),
+            },
+            Expr::Nested(inner) => Expr::Nested(Box::new(self.substitute_outer_refs_in_expr(
+                inner,
+                outer_schema,
+                outer_row,
+            ))),
+            Expr::IsNull(inner) => Expr::IsNull(Box::new(self.substitute_outer_refs_in_expr(
+                inner,
+                outer_schema,
+                outer_row,
+            ))),
+            Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(
+                self.substitute_outer_refs_in_expr(inner, outer_schema, outer_row),
+            )),
+            _ => expr.clone(),
         }
     }
 
@@ -8393,6 +9162,135 @@ impl QueryExecutor {
                     })
                     .map(|f| f.data_type.clone())
             }
+            Expr::Function(func) => {
+                let func_name = func.name.to_string().to_uppercase();
+                match func_name.as_str() {
+                    "ROUND" | "TRUNC" | "TRUNCATE" | "FLOOR" | "CEIL" | "CEILING" | "ABS"
+                    | "SQRT" | "POWER" | "POW" | "EXP" | "LN" | "LOG" | "LOG10" | "SIN" | "COS"
+                    | "TAN" | "ASIN" | "ACOS" | "ATAN" | "ATAN2" | "SIGN" | "MOD" | "DIV"
+                    | "SAFE_DIVIDE" | "IEEE_DIVIDE" => Some(DataType::Float64),
+                    "SUM" | "AVG" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VAR_POP"
+                    | "VAR_SAMP" | "VARIANCE" => Some(DataType::Float64),
+                    "COUNT" | "COUNT_IF" => Some(DataType::Int64),
+                    "MIN" | "MAX" => {
+                        if let ast::FunctionArguments::List(list) = &func.args {
+                            if let Some(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e))) =
+                                list.args.first()
+                            {
+                                return self.infer_expr_type(e, schema);
+                            }
+                        }
+                        None
+                    }
+                    "COALESCE" | "IFNULL" | "NVL" | "NULLIF" => {
+                        if let ast::FunctionArguments::List(list) = &func.args {
+                            for arg in &list.args {
+                                if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) =
+                                    arg
+                                {
+                                    if let Some(dt) = self.infer_expr_type(e, schema) {
+                                        if dt != DataType::Unknown {
+                                            return Some(dt);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    }
+                    "LENGTH" | "CHAR_LENGTH" | "CHARACTER_LENGTH" | "BYTE_LENGTH"
+                    | "OCTET_LENGTH" | "BIT_LENGTH" | "INSTR" | "LOCATE" | "POSITION"
+                    | "STRPOS" | "ASCII" => Some(DataType::Int64),
+                    "UPPER" | "LOWER" | "TRIM" | "LTRIM" | "RTRIM" | "LPAD" | "RPAD" | "CONCAT"
+                    | "SUBSTR" | "SUBSTRING" | "REPLACE" | "REVERSE" | "REPEAT" | "LEFT"
+                    | "RIGHT" | "FORMAT" | "TO_HEX" | "FROM_HEX" | "TO_BASE64" | "FROM_BASE64"
+                    | "REGEXP_REPLACE" => Some(DataType::String),
+                    "DATE" | "CURRENT_DATE" | "DATE_ADD" | "DATE_SUB" | "DATE_TRUNC" => {
+                        Some(DataType::Date)
+                    }
+                    "TIME" | "CURRENT_TIME" | "TIME_ADD" | "TIME_SUB" | "TIME_TRUNC" => {
+                        Some(DataType::Time)
+                    }
+                    "DATETIME" | "CURRENT_DATETIME" | "DATETIME_ADD" | "DATETIME_SUB"
+                    | "DATETIME_TRUNC" => Some(DataType::DateTime),
+                    "TIMESTAMP" | "CURRENT_TIMESTAMP" | "TIMESTAMP_ADD" | "TIMESTAMP_SUB"
+                    | "TIMESTAMP_TRUNC" => Some(DataType::Timestamp),
+                    "BOOL" | "STARTS_WITH" | "ENDS_WITH" | "CONTAINS" | "REGEXP_CONTAINS" => {
+                        Some(DataType::Bool)
+                    }
+                    _ => None,
+                }
+            }
+            Expr::BinaryOp { left, op, right } => match op {
+                ast::BinaryOperator::Plus
+                | ast::BinaryOperator::Minus
+                | ast::BinaryOperator::Multiply
+                | ast::BinaryOperator::Divide
+                | ast::BinaryOperator::Modulo => {
+                    let left_type = self.infer_expr_type(left, schema);
+                    let right_type = self.infer_expr_type(right, schema);
+                    match (left_type, right_type) {
+                        (Some(DataType::Float64), _) | (_, Some(DataType::Float64)) => {
+                            Some(DataType::Float64)
+                        }
+                        (Some(DataType::Numeric(_)), _) | (_, Some(DataType::Numeric(_))) => {
+                            Some(DataType::Numeric(None))
+                        }
+                        (Some(DataType::Int64), Some(DataType::Int64)) => {
+                            if matches!(op, ast::BinaryOperator::Divide) {
+                                Some(DataType::Float64)
+                            } else {
+                                Some(DataType::Int64)
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+                ast::BinaryOperator::Eq
+                | ast::BinaryOperator::NotEq
+                | ast::BinaryOperator::Lt
+                | ast::BinaryOperator::LtEq
+                | ast::BinaryOperator::Gt
+                | ast::BinaryOperator::GtEq
+                | ast::BinaryOperator::And
+                | ast::BinaryOperator::Or => Some(DataType::Bool),
+                _ => None,
+            },
+            Expr::UnaryOp { op, expr } => match op {
+                ast::UnaryOperator::Minus | ast::UnaryOperator::Plus => {
+                    self.infer_expr_type(expr, schema)
+                }
+                ast::UnaryOperator::Not => Some(DataType::Bool),
+                _ => None,
+            },
+            Expr::Nested(inner) => self.infer_expr_type(inner, schema),
+            Expr::Value(val) => match &val.value {
+                ast::Value::Number(_, _) => Some(DataType::Float64),
+                ast::Value::SingleQuotedString(_) | ast::Value::DoubleQuotedString(_) => {
+                    Some(DataType::String)
+                }
+                ast::Value::Boolean(_) => Some(DataType::Bool),
+                ast::Value::Null => None,
+                _ => None,
+            },
+            Expr::Case {
+                conditions,
+                else_result,
+                ..
+            } => {
+                for cw in conditions {
+                    if let Some(dt) = self.infer_expr_type(&cw.result, schema) {
+                        if dt != DataType::Unknown {
+                            return Some(dt);
+                        }
+                    }
+                }
+                if let Some(else_expr) = else_result {
+                    return self.infer_expr_type(else_expr, schema);
+                }
+                None
+            }
+            Expr::Cast { data_type, .. } => self.sql_type_to_data_type(data_type).ok(),
             _ => None,
         }
     }
@@ -8877,7 +9775,29 @@ impl QueryExecutor {
 
     fn expr_has_window_function(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Function(func) => func.over.is_some(),
+            Expr::Function(func) => {
+                if func.over.is_some() {
+                    return true;
+                }
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    arg_list.args.iter().any(|arg| match arg {
+                        ast::FunctionArg::Named { arg, .. } | ast::FunctionArg::Unnamed(arg) => {
+                            match arg {
+                                ast::FunctionArgExpr::Expr(e) => self.expr_has_window_function(e),
+                                ast::FunctionArgExpr::Wildcard
+                                | ast::FunctionArgExpr::QualifiedWildcard(_) => false,
+                            }
+                        }
+                        ast::FunctionArg::ExprNamed { arg, .. } => match arg {
+                            ast::FunctionArgExpr::Expr(e) => self.expr_has_window_function(e),
+                            ast::FunctionArgExpr::Wildcard
+                            | ast::FunctionArgExpr::QualifiedWildcard(_) => false,
+                        },
+                    })
+                } else {
+                    false
+                }
+            }
             Expr::BinaryOp { left, right, .. } => {
                 self.expr_has_window_function(left) || self.expr_has_window_function(right)
             }
@@ -8895,6 +9815,7 @@ impl QueryExecutor {
                     .as_ref()
                     .is_some_and(|e| self.expr_has_window_function(e))
             }
+            Expr::Cast { expr, .. } => self.expr_has_window_function(expr),
             _ => false,
         }
     }
@@ -9565,6 +10486,39 @@ impl QueryExecutor {
                 let results = self.compute_single_window_function(func, schema, rows, evaluator)?;
                 window_results.insert(key, results);
             }
+            Expr::Function(func) => {
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        match arg {
+                            ast::FunctionArg::Named { arg, .. }
+                            | ast::FunctionArg::Unnamed(arg) => match arg {
+                                ast::FunctionArgExpr::Expr(e) => {
+                                    self.collect_window_function_results(
+                                        e,
+                                        schema,
+                                        rows,
+                                        evaluator,
+                                        window_results,
+                                    )?;
+                                }
+                                ast::FunctionArgExpr::Wildcard
+                                | ast::FunctionArgExpr::QualifiedWildcard(_) => {}
+                            },
+                            ast::FunctionArg::ExprNamed { arg, .. } => {
+                                if let ast::FunctionArgExpr::Expr(e) = arg {
+                                    self.collect_window_function_results(
+                                        e,
+                                        schema,
+                                        rows,
+                                        evaluator,
+                                        window_results,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Expr::BinaryOp { left, right, .. } => {
                 self.collect_window_function_results(
                     left,
@@ -9593,6 +10547,15 @@ impl QueryExecutor {
             Expr::Nested(inner) => {
                 self.collect_window_function_results(
                     inner,
+                    schema,
+                    rows,
+                    evaluator,
+                    window_results,
+                )?;
+            }
+            Expr::Cast { expr, .. } => {
+                self.collect_window_function_results(
+                    expr,
                     schema,
                     rows,
                     evaluator,
@@ -10525,13 +11488,18 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::QualifiedWildcard(name, opts) => {
-                    let table_name = name.to_string();
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
                     let except_cols = Self::get_except_columns(opts);
                     for field in input_schema.fields() {
-                        let matches_table = field
+                        let matches_source = field
                             .source_table
                             .as_ref()
                             .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
                         if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                             all_cols.push((field.name.clone(), field.data_type.clone()));
                         }
@@ -10579,13 +11547,18 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::QualifiedWildcard(name, opts) => {
-                        let table_name = name.to_string();
+                        let table_name = name.to_string().trim_end_matches(".*").to_string();
                         let except_cols = Self::get_except_columns(opts);
                         for (i, field) in input_schema.fields().iter().enumerate() {
-                            let matches_table = field
+                            let matches_source = field
                                 .source_table
                                 .as_ref()
                                 .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                            let matches_prefix = field
+                                .name
+                                .to_uppercase()
+                                .starts_with(&format!("{}.", table_name.to_uppercase()));
+                            let matches_table = matches_source || matches_prefix;
                             if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                                 values.push(row.values()[i].clone());
                             }
@@ -10609,6 +11582,123 @@ impl QueryExecutor {
         Ok((output_schema, output_rows))
     }
 
+    fn create_extended_rows_with_windows(
+        &self,
+        input_schema: &Schema,
+        rows: &[Record],
+        projection: &[SelectItem],
+        window_results: &HashMap<String, Vec<Value>>,
+    ) -> Result<(Schema, Vec<Record>)> {
+        let mut extended_fields: Vec<Field> = input_schema.fields().to_vec();
+        let mut projection_col_names: Vec<String> = Vec::new();
+
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::Wildcard(_) => {
+                    for field in input_schema.fields() {
+                        projection_col_names.push(format!("__proj_{}", field.name));
+                        extended_fields.push(Field::nullable(
+                            format!("__proj_{}", field.name),
+                            field.data_type.clone(),
+                        ));
+                    }
+                }
+                SelectItem::QualifiedWildcard(name, _) => {
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
+                    for field in input_schema.fields() {
+                        let matches_source = field
+                            .source_table
+                            .as_ref()
+                            .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
+                        if matches_table {
+                            projection_col_names.push(format!("__proj_{}", field.name));
+                            extended_fields.push(Field::nullable(
+                                format!("__proj_{}", field.name),
+                                field.data_type.clone(),
+                            ));
+                        }
+                    }
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    let name = self.expr_to_alias(expr, idx);
+                    let proj_name = format!("__proj_{}", name);
+                    projection_col_names.push(proj_name.clone());
+                    let data_type = self.infer_expr_type_with_windows(
+                        expr,
+                        input_schema,
+                        rows,
+                        window_results,
+                    )?;
+                    extended_fields.push(Field::nullable(proj_name, data_type));
+                }
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    let proj_name = format!("__proj_{}", alias.value);
+                    projection_col_names.push(proj_name.clone());
+                    let data_type = self.infer_expr_type_with_windows(
+                        expr,
+                        input_schema,
+                        rows,
+                        window_results,
+                    )?;
+                    extended_fields.push(Field::nullable(proj_name, data_type));
+                }
+            }
+        }
+
+        let extended_schema = Schema::from_fields(extended_fields);
+
+        let mut extended_rows = Vec::with_capacity(rows.len());
+        for (row_idx, row) in rows.iter().enumerate() {
+            let mut values: Vec<Value> = row.values().to_vec();
+
+            for item in projection {
+                match item {
+                    SelectItem::Wildcard(_) => {
+                        for val in row.values() {
+                            values.push(val.clone());
+                        }
+                    }
+                    SelectItem::QualifiedWildcard(name, _) => {
+                        let table_name = name.to_string().trim_end_matches(".*").to_string();
+                        for (i, field) in input_schema.fields().iter().enumerate() {
+                            let matches_source = field
+                                .source_table
+                                .as_ref()
+                                .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                            let matches_prefix = field
+                                .name
+                                .to_uppercase()
+                                .starts_with(&format!("{}.", table_name.to_uppercase()));
+                            let matches_table = matches_source || matches_prefix;
+                            if matches_table {
+                                values.push(row.values()[i].clone());
+                            }
+                        }
+                    }
+                    SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+                        let val = self.evaluate_expr_with_window_results(
+                            expr,
+                            input_schema,
+                            row,
+                            row_idx,
+                            window_results,
+                        )?;
+                        values.push(val);
+                    }
+                }
+            }
+
+            extended_rows.push(Record::from_values(values));
+        }
+
+        Ok((extended_schema, extended_rows))
+    }
+
     fn project_rows_with_windows_and_aggregates(
         &self,
         input_schema: &Schema,
@@ -10630,13 +11720,18 @@ impl QueryExecutor {
                     }
                 }
                 SelectItem::QualifiedWildcard(name, opts) => {
-                    let table_name = name.to_string();
+                    let table_name = name.to_string().trim_end_matches(".*").to_string();
                     let except_cols = Self::get_except_columns(opts);
                     for field in input_schema.fields() {
-                        let matches_table = field
+                        let matches_source = field
                             .source_table
                             .as_ref()
                             .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                        let matches_prefix = field
+                            .name
+                            .to_uppercase()
+                            .starts_with(&format!("{}.", table_name.to_uppercase()));
+                        let matches_table = matches_source || matches_prefix;
                         if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                             all_cols.push((field.name.clone(), field.data_type.clone()));
                         }
@@ -10686,13 +11781,18 @@ impl QueryExecutor {
                         }
                     }
                     SelectItem::QualifiedWildcard(name, opts) => {
-                        let table_name = name.to_string();
+                        let table_name = name.to_string().trim_end_matches(".*").to_string();
                         let except_cols = Self::get_except_columns(opts);
                         for (i, field) in input_schema.fields().iter().enumerate() {
-                            let matches_table = field
+                            let matches_source = field
                                 .source_table
                                 .as_ref()
                                 .is_some_and(|t| t.eq_ignore_ascii_case(&table_name));
+                            let matches_prefix = field
+                                .name
+                                .to_uppercase()
+                                .starts_with(&format!("{}.", table_name.to_uppercase()));
+                            let matches_table = matches_source || matches_prefix;
                             if matches_table && !except_cols.contains(&field.name.to_lowercase()) {
                                 values.push(row.values()[i].clone());
                             }

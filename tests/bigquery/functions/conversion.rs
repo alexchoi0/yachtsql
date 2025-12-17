@@ -53,7 +53,6 @@ fn test_safe_cast_valid() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_safe_cast_invalid() {
     let mut executor = create_executor();
     let result = executor
