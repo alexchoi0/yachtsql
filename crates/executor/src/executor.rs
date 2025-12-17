@@ -785,6 +785,159 @@ fn preprocess_range_types(sql: &str) -> String {
     RANGE_TYPE_RE.replace_all(sql, "RANGE_$1").to_string()
 }
 
+fn preprocess_grouping_sets(sql: &str) -> String {
+    use regex::Regex;
+    lazy_static::lazy_static! {
+        static ref GROUPING_SETS_RE: Regex = Regex::new(r"(?i)\bGROUPING\s+SETS\s*\(").unwrap();
+        static ref ROLLUP_RE: Regex = Regex::new(r"(?i)\bROLLUP\s*\(([^)]+)\)").unwrap();
+        static ref CUBE_RE: Regex = Regex::new(r"(?i)\bCUBE\s*\(([^)]+)\)").unwrap();
+    }
+
+    if !GROUPING_SETS_RE.is_match(sql) {
+        return sql.to_string();
+    }
+
+    let result = ROLLUP_RE.replace_all(sql, |caps: &regex::Captures| {
+        let cols_str = &caps[1];
+        let cols: Vec<&str> = cols_str.split(',').map(|s| s.trim()).collect();
+        let mut sets = Vec::new();
+        for i in (0..=cols.len()).rev() {
+            if i == 0 {
+                sets.push("()".to_string());
+            } else {
+                sets.push(format!("({})", cols[..i].join(", ")));
+            }
+        }
+        sets.join(", ")
+    });
+
+    let result = CUBE_RE.replace_all(&result, |caps: &regex::Captures| {
+        let cols_str = &caps[1];
+        let cols: Vec<&str> = cols_str.split(',').map(|s| s.trim()).collect();
+        let n = cols.len();
+        let mut sets = Vec::new();
+        for mask in 0..(1 << n) {
+            let mut subset = Vec::new();
+            for (i, col) in cols.iter().enumerate().take(n) {
+                if mask & (1 << i) != 0 {
+                    subset.push(*col);
+                }
+            }
+            if subset.is_empty() {
+                sets.push("()".to_string());
+            } else {
+                sets.push(format!("({})", subset.join(", ")));
+            }
+        }
+        sets.join(", ")
+    });
+
+    result.to_string()
+}
+
+fn preprocess_typed_array_literals(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let chars: Vec<char> = sql.chars().collect();
+    let upper_chars: Vec<char> = sql.to_uppercase().chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            result.push(c);
+            if c == string_char && (i == 0 || chars[i - 1] != '\\') {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == '\'' || c == '"' {
+            in_string = true;
+            string_char = c;
+            result.push(c);
+            i += 1;
+            continue;
+        }
+
+        if i + 5 < chars.len()
+            && upper_chars[i..i + 5].iter().collect::<String>() == "ARRAY"
+            && (i == 0 || !upper_chars[i - 1].is_alphanumeric())
+        {
+            let mut j = i + 5;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '<' {
+                let mut angle_depth = 1;
+                j += 1;
+                while j < chars.len() && angle_depth > 0 {
+                    match chars[j] {
+                        '<' => angle_depth += 1,
+                        '>' => angle_depth -= 1,
+                        '\'' | '"' => {
+                            let q = chars[j];
+                            j += 1;
+                            while j < chars.len() && chars[j] != q {
+                                j += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                if angle_depth == 0 {
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+                    if j < chars.len() && chars[j] == '[' {
+                        result.push_str("ARRAY");
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        result.push(c);
+        i += 1;
+    }
+    result
+}
+
+fn preprocess_nested_angle_brackets(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len() * 2);
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            result.push(c);
+            if c == string_char && (i == 0 || chars[i - 1] != '\\') {
+                in_string = false;
+            }
+        } else if c == '\'' || c == '"' {
+            in_string = true;
+            string_char = c;
+            result.push(c);
+        } else if c == '>' && i + 1 < chars.len() && chars[i + 1] == '>' {
+            result.push('>');
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+        i += 1;
+    }
+    result
+}
+
 fn preprocess_loop_control_statements(sql: &str) -> String {
     let mut result = String::with_capacity(sql.len());
     let chars: Vec<char> = sql.chars().collect();
@@ -1457,6 +1610,9 @@ impl QueryExecutor {
 
         let dialect = BigQueryDialect {};
         let preprocessed_sql = preprocess_range_types(sql);
+        let preprocessed_sql = preprocess_grouping_sets(&preprocessed_sql);
+        let preprocessed_sql = preprocess_typed_array_literals(&preprocessed_sql);
+        let preprocessed_sql = preprocess_nested_angle_brackets(&preprocessed_sql);
         let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
             .map_err(|e| Error::ParseError(e.to_string()))?;
 
