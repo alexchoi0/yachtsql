@@ -3708,8 +3708,11 @@ impl QueryExecutor {
                 .collect()
         };
 
+        let has_window_funcs = self.has_window_functions(&select.projection);
+
         let mut result_rows = Vec::new();
         let mut output_fields: Option<Vec<Field>> = None;
+        let mut window_col_indices: Vec<usize> = Vec::new();
 
         for (group_key, group_rows, active_indices) in &groups {
             if let Some(having) = &select.having {
@@ -3735,30 +3738,40 @@ impl QueryExecutor {
             for (idx, item) in select.projection.iter().enumerate() {
                 match item {
                     SelectItem::UnnamedExpr(expr) => {
-                        let val = self.evaluate_aggregate_expr_with_grouping_ctes(
-                            expr,
-                            input_schema,
-                            group_rows,
-                            group_key,
-                            &group_exprs,
-                            active_indices,
-                            cte_tables,
-                        )?;
+                        if has_window_funcs && self.expr_has_window_function(expr) {
+                            window_col_indices.push(idx);
+                            row_values.push(Value::null());
+                        } else {
+                            let val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                                expr,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                &group_exprs,
+                                active_indices,
+                                cte_tables,
+                            )?;
+                            row_values.push(val);
+                        }
                         field_names.push(self.expr_to_alias(expr, idx));
-                        row_values.push(val);
                     }
                     SelectItem::ExprWithAlias { expr, alias } => {
-                        let val = self.evaluate_aggregate_expr_with_grouping_ctes(
-                            expr,
-                            input_schema,
-                            group_rows,
-                            group_key,
-                            &group_exprs,
-                            active_indices,
-                            cte_tables,
-                        )?;
+                        if has_window_funcs && self.expr_has_window_function(expr) {
+                            window_col_indices.push(idx);
+                            row_values.push(Value::null());
+                        } else {
+                            let val = self.evaluate_aggregate_expr_with_grouping_ctes(
+                                expr,
+                                input_schema,
+                                group_rows,
+                                group_key,
+                                &group_exprs,
+                                active_indices,
+                                cte_tables,
+                            )?;
+                            row_values.push(val);
+                        }
                         field_names.push(alias.value.clone());
-                        row_values.push(val);
                     }
                     SelectItem::Wildcard(_) => {
                         for (i, val) in group_key.iter().enumerate() {
@@ -3804,7 +3817,48 @@ impl QueryExecutor {
             result_rows.push(Record::from_values(row_values));
         }
 
-        let schema = Schema::from_fields(output_fields.unwrap_or_default());
+        let mut schema = Schema::from_fields(output_fields.unwrap_or_default());
+
+        if has_window_funcs && !window_col_indices.is_empty() {
+            let substituted_projection =
+                self.substitute_aggregates_in_projection(&select.projection);
+            let window_results =
+                self.compute_window_functions(&schema, &result_rows, &substituted_projection)?;
+
+            for (row_idx, row) in result_rows.iter_mut().enumerate() {
+                let mut new_values: Vec<Value> = row.values().to_vec();
+                for &col_idx in &window_col_indices {
+                    let item = &substituted_projection[col_idx];
+                    let expr = match item {
+                        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+                        _ => continue,
+                    };
+                    let val = self.evaluate_expr_with_window_results(
+                        expr,
+                        &schema,
+                        row,
+                        row_idx,
+                        &window_results,
+                    )?;
+                    new_values[col_idx] = val;
+                }
+                *row = Record::from_values(new_values);
+            }
+
+            let mut new_fields: Vec<Field> = schema.fields().to_vec();
+            for &col_idx in &window_col_indices {
+                if !result_rows.is_empty() {
+                    let val = result_rows[0]
+                        .values()
+                        .get(col_idx)
+                        .cloned()
+                        .unwrap_or(Value::null());
+                    new_fields[col_idx] =
+                        Field::nullable(new_fields[col_idx].name.clone(), val.data_type());
+                }
+            }
+            schema = Schema::from_fields(new_fields);
+        }
 
         let has_window_funcs = self.has_window_functions(&select.projection);
         if has_window_funcs {
@@ -4037,6 +4091,42 @@ impl QueryExecutor {
         self.substitute_aggregate_in_expr(qualify_expr, &agg_to_alias)
     }
 
+    fn substitute_aggregates_in_projection(&self, projection: &[SelectItem]) -> Vec<SelectItem> {
+        let mut agg_to_alias: HashMap<String, String> = HashMap::new();
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if self.expr_has_aggregate(expr) && !self.expr_has_window_function(expr) {
+                        let expr_key = format!("{}", expr);
+                        agg_to_alias.insert(expr_key, alias.value.clone());
+                    }
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    if self.expr_has_aggregate(expr) && !self.expr_has_window_function(expr) {
+                        let expr_key = format!("{}", expr);
+                        let alias = self.expr_to_alias(expr, idx);
+                        agg_to_alias.insert(expr_key, alias);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        projection
+            .iter()
+            .map(|item| match item {
+                SelectItem::UnnamedExpr(expr) => {
+                    SelectItem::UnnamedExpr(self.substitute_aggregate_in_expr(expr, &agg_to_alias))
+                }
+                SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias {
+                    expr: self.substitute_aggregate_in_expr(expr, &agg_to_alias),
+                    alias: alias.clone(),
+                },
+                other => other.clone(),
+            })
+            .collect()
+    }
+
     fn substitute_aggregate_in_expr(
         &self,
         expr: &Expr,
@@ -4180,6 +4270,39 @@ impl QueryExecutor {
             }
             ast::GroupByExpr::All(_) => vec![],
         }
+    }
+
+    fn resolve_group_by_aliases(
+        &self,
+        group_exprs: &[Expr],
+        projection: &[SelectItem],
+    ) -> Vec<Expr> {
+        let mut alias_map: HashMap<String, Expr> = HashMap::new();
+        for (idx, item) in projection.iter().enumerate() {
+            match item {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    alias_map.insert(alias.value.to_uppercase(), expr.clone());
+                }
+                SelectItem::UnnamedExpr(expr) => {
+                    let name = self.expr_to_alias(expr, idx);
+                    alias_map.insert(name.to_uppercase(), expr.clone());
+                }
+                _ => {}
+            }
+        }
+
+        group_exprs
+            .iter()
+            .map(|expr| {
+                if let Expr::Identifier(ident) = expr {
+                    let name = ident.value.to_uppercase();
+                    if let Some(resolved) = alias_map.get(&name) {
+                        return resolved.clone();
+                    }
+                }
+                expr.clone()
+            })
+            .collect()
     }
 
     fn extract_grouping_sets(&self, group_by: &ast::GroupByExpr) -> Option<Vec<Vec<usize>>> {
@@ -10765,6 +10888,26 @@ impl QueryExecutor {
                 } else {
                     Ok(Value::null())
                 }
+            }
+            Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                let mut evaluated_args = Vec::new();
+                if let ast::FunctionArguments::List(arg_list) = &func.args {
+                    for arg in &arg_list.args {
+                        if let ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(arg_expr)) = arg
+                        {
+                            let val = self.evaluate_expr_with_window_results(
+                                arg_expr,
+                                schema,
+                                record,
+                                row_idx,
+                                window_results,
+                            )?;
+                            evaluated_args.push(val);
+                        }
+                    }
+                }
+                evaluator.evaluate_function(&name, &evaluated_args, func, record)
             }
             Expr::BinaryOp { left, op, right } => {
                 let left_val = self.evaluate_expr_with_window_results(

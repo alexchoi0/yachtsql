@@ -229,7 +229,6 @@ fn test_rank_products_by_sales() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_dense_rank_by_category() {
     let mut executor = create_executor();
     setup_sales_data(&mut executor);
@@ -403,7 +402,6 @@ fn test_first_last_value() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_customer_purchase_frequency() {
     let mut executor = create_executor();
     setup_sales_data(&mut executor);
@@ -469,7 +467,6 @@ fn test_year_over_year_comparison() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cohort_analysis() {
     let mut executor = create_executor();
     executor
@@ -519,7 +516,6 @@ fn test_cohort_analysis() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_funnel_analysis() {
     let mut executor = create_executor();
     executor
@@ -1158,7 +1154,6 @@ fn test_anomaly_detection_zscore() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_data_quality_checks() {
     let mut executor = create_executor();
     setup_sales_data(&mut executor);
