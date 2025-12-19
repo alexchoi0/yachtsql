@@ -1,0 +1,454 @@
+use std::collections::HashMap;
+
+use ordered_float::OrderedFloat;
+use yachtsql_common::error::Result;
+use yachtsql_common::types::Value;
+use yachtsql_ir::{AggregateFunction, Expr, PlanSchema};
+use yachtsql_storage::Table;
+
+use super::{PlanExecutor, plan_schema_to_schema};
+use crate::ir_evaluator::IrEvaluator;
+use crate::plan::ExecutorPlan;
+
+impl<'a> PlanExecutor<'a> {
+    pub fn execute_aggregate(
+        &mut self,
+        input: &ExecutorPlan,
+        group_by: &[Expr],
+        aggregates: &[Expr],
+        schema: &PlanSchema,
+    ) -> Result<Table> {
+        let input_table = self.execute_plan(input)?;
+        let input_schema = input_table.schema().clone();
+        let evaluator = IrEvaluator::new(&input_schema);
+
+        let result_schema = plan_schema_to_schema(schema);
+        let mut result = Table::empty(result_schema);
+
+        if group_by.is_empty() {
+            let mut accumulators: Vec<Accumulator> = aggregates
+                .iter()
+                .map(|e| Accumulator::from_expr(e))
+                .collect();
+
+            for record in input_table.rows()? {
+                for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                        let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
+                        acc.accumulate_array_agg(&arg_val, sort_keys)?;
+                    } else {
+                        acc.accumulate(&arg_val)?;
+                    }
+                }
+            }
+
+            let row: Vec<Value> = accumulators.iter().map(|a| a.finalize()).collect();
+            result.push_row(row)?;
+        } else {
+            let mut groups: HashMap<Vec<String>, Vec<Accumulator>> = HashMap::new();
+            let mut group_keys: HashMap<Vec<String>, Vec<Value>> = HashMap::new();
+
+            for record in input_table.rows()? {
+                let group_key_values: Vec<Value> = group_by
+                    .iter()
+                    .map(|e| evaluator.evaluate(e, &record))
+                    .collect::<Result<_>>()?;
+                let group_key_strings: Vec<String> = group_key_values
+                    .iter()
+                    .map(|v| format!("{:?}", v))
+                    .collect();
+
+                let accumulators = groups.entry(group_key_strings.clone()).or_insert_with(|| {
+                    aggregates
+                        .iter()
+                        .map(|e| Accumulator::from_expr(e))
+                        .collect()
+                });
+                group_keys
+                    .entry(group_key_strings.clone())
+                    .or_insert(group_key_values);
+
+                for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                        let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
+                        acc.accumulate_array_agg(&arg_val, sort_keys)?;
+                    } else {
+                        acc.accumulate(&arg_val)?;
+                    }
+                }
+            }
+
+            for (key_strings, accumulators) in groups {
+                let mut row = group_keys.get(&key_strings).unwrap().clone();
+                row.extend(accumulators.iter().map(|a| a.finalize()));
+                result.push_row(row)?;
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+fn extract_agg_arg(
+    evaluator: &IrEvaluator,
+    agg_expr: &Expr,
+    record: &yachtsql_storage::Record,
+) -> Result<Value> {
+    match agg_expr {
+        Expr::Aggregate { args, .. } => {
+            if args.is_empty() {
+                Ok(Value::Null)
+            } else if matches!(&args[0], Expr::Wildcard { .. }) {
+                Ok(Value::Int64(1))
+            } else {
+                evaluator.evaluate(&args[0], record)
+            }
+        }
+        Expr::Alias { expr, .. } => extract_agg_arg(evaluator, expr, record),
+        _ => evaluator.evaluate(agg_expr, record),
+    }
+}
+
+fn extract_order_by_keys(
+    evaluator: &IrEvaluator,
+    agg_expr: &Expr,
+    record: &yachtsql_storage::Record,
+) -> Result<Vec<(Value, bool)>> {
+    match agg_expr {
+        Expr::Aggregate { order_by, .. } => {
+            let mut keys = Vec::new();
+            for sort_expr in order_by {
+                let val = evaluator.evaluate(&sort_expr.expr, record)?;
+                keys.push((val, sort_expr.asc));
+            }
+            Ok(keys)
+        }
+        Expr::Alias { expr, .. } => extract_order_by_keys(evaluator, expr, record),
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn has_order_by(agg_expr: &Expr) -> bool {
+    match agg_expr {
+        Expr::Aggregate { order_by, .. } => !order_by.is_empty(),
+        Expr::Alias { expr, .. } => has_order_by(expr),
+        _ => false,
+    }
+}
+
+fn get_agg_func(expr: &Expr) -> Option<&AggregateFunction> {
+    match expr {
+        Expr::Aggregate { func, .. } => Some(func),
+        Expr::Alias { expr, .. } => get_agg_func(expr),
+        _ => None,
+    }
+}
+
+fn is_distinct_aggregate(expr: &Expr) -> bool {
+    match expr {
+        Expr::Aggregate { distinct, .. } => *distinct,
+        Expr::Alias { expr, .. } => is_distinct_aggregate(expr),
+        _ => false,
+    }
+}
+
+fn has_ignore_nulls(expr: &Expr) -> bool {
+    match expr {
+        Expr::Aggregate { ignore_nulls, .. } => *ignore_nulls,
+        Expr::Alias { expr, .. } => has_ignore_nulls(expr),
+        _ => false,
+    }
+}
+
+fn extract_string_agg_separator(expr: &Expr) -> String {
+    match expr {
+        Expr::Aggregate { args, .. } => {
+            if args.len() >= 2 {
+                if let Expr::Literal(yachtsql_ir::Literal::String(s)) = &args[1] {
+                    return s.clone();
+                }
+            }
+            ",".to_string()
+        }
+        Expr::Alias { expr, .. } => extract_string_agg_separator(expr),
+        _ => ",".to_string(),
+    }
+}
+
+#[derive(Clone)]
+enum Accumulator {
+    Count(i64),
+    CountIf(i64),
+    Sum(Option<f64>),
+    Avg {
+        sum: f64,
+        count: i64,
+    },
+    Min(Option<Value>),
+    Max(Option<Value>),
+    ArrayAgg {
+        items: Vec<(Value, Vec<(Value, bool)>)>,
+        ignore_nulls: bool,
+    },
+    StringAgg {
+        values: Vec<String>,
+        separator: String,
+    },
+    First(Option<Value>),
+    Last(Option<Value>),
+    CountDistinct(Vec<Value>),
+    BitAnd(Option<i64>),
+    BitOr(Option<i64>),
+    BitXor(Option<i64>),
+    LogicalAnd(Option<bool>),
+    LogicalOr(Option<bool>),
+}
+
+impl Accumulator {
+    fn from_expr(expr: &Expr) -> Self {
+        let distinct = is_distinct_aggregate(expr);
+        match get_agg_func(expr) {
+            Some(func) => match func {
+                AggregateFunction::Count => {
+                    if distinct {
+                        Accumulator::CountDistinct(Vec::new())
+                    } else {
+                        Accumulator::Count(0)
+                    }
+                }
+                AggregateFunction::CountIf => Accumulator::CountIf(0),
+                AggregateFunction::Sum => Accumulator::Sum(None),
+                AggregateFunction::Avg => Accumulator::Avg { sum: 0.0, count: 0 },
+                AggregateFunction::Min => Accumulator::Min(None),
+                AggregateFunction::Max => Accumulator::Max(None),
+                AggregateFunction::ArrayAgg => Accumulator::ArrayAgg {
+                    items: Vec::new(),
+                    ignore_nulls: has_ignore_nulls(expr),
+                },
+                AggregateFunction::StringAgg => Accumulator::StringAgg {
+                    values: Vec::new(),
+                    separator: extract_string_agg_separator(expr),
+                },
+                AggregateFunction::AnyValue => Accumulator::First(None),
+                AggregateFunction::BitAnd => Accumulator::BitAnd(None),
+                AggregateFunction::BitOr => Accumulator::BitOr(None),
+                AggregateFunction::BitXor => Accumulator::BitXor(None),
+                AggregateFunction::LogicalAnd => Accumulator::LogicalAnd(None),
+                AggregateFunction::LogicalOr => Accumulator::LogicalOr(None),
+                AggregateFunction::Grouping
+                | AggregateFunction::ApproxCountDistinct
+                | AggregateFunction::ApproxQuantiles
+                | AggregateFunction::ApproxTopCount
+                | AggregateFunction::ApproxTopSum
+                | AggregateFunction::Corr
+                | AggregateFunction::CovarPop
+                | AggregateFunction::CovarSamp
+                | AggregateFunction::Stddev
+                | AggregateFunction::StddevPop
+                | AggregateFunction::StddevSamp
+                | AggregateFunction::Variance
+                | AggregateFunction::VarPop
+                | AggregateFunction::VarSamp => Accumulator::Count(0),
+            },
+            None => Accumulator::Count(0),
+        }
+    }
+
+    fn accumulate(&mut self, value: &Value) -> Result<()> {
+        match self {
+            Accumulator::Count(n) => {
+                if !value.is_null() {
+                    *n += 1;
+                }
+            }
+            Accumulator::CountIf(n) => {
+                if let Some(true) = value.as_bool() {
+                    *n += 1;
+                }
+            }
+            Accumulator::Sum(sum) => {
+                if let Some(v) = value.as_f64() {
+                    *sum = Some(sum.unwrap_or(0.0) + v);
+                } else if let Some(v) = value.as_i64() {
+                    *sum = Some(sum.unwrap_or(0.0) + v as f64);
+                } else if let Value::Numeric(v) = value {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(f) = v.to_f64() {
+                        *sum = Some(sum.unwrap_or(0.0) + f);
+                    }
+                }
+            }
+            Accumulator::Avg { sum, count } => {
+                if let Some(v) = value.as_f64() {
+                    *sum += v;
+                    *count += 1;
+                } else if let Some(v) = value.as_i64() {
+                    *sum += v as f64;
+                    *count += 1;
+                } else if let Value::Numeric(v) = value {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(f) = v.to_f64() {
+                        *sum += f;
+                        *count += 1;
+                    }
+                }
+            }
+            Accumulator::Min(min) => {
+                if !value.is_null() {
+                    *min = Some(match min.take() {
+                        Some(m) => {
+                            if value < &m {
+                                value.clone()
+                            } else {
+                                m
+                            }
+                        }
+                        None => value.clone(),
+                    });
+                }
+            }
+            Accumulator::Max(max) => {
+                if !value.is_null() {
+                    *max = Some(match max.take() {
+                        Some(m) => {
+                            if value > &m {
+                                value.clone()
+                            } else {
+                                m
+                            }
+                        }
+                        None => value.clone(),
+                    });
+                }
+            }
+            Accumulator::ArrayAgg { .. } => {}
+            Accumulator::StringAgg { values, .. } => {
+                if let Some(s) = value.as_str() {
+                    values.push(s.to_string());
+                }
+            }
+            Accumulator::First(first) => {
+                if first.is_none() && !value.is_null() {
+                    *first = Some(value.clone());
+                }
+            }
+            Accumulator::Last(last) => {
+                if !value.is_null() {
+                    *last = Some(value.clone());
+                }
+            }
+            Accumulator::CountDistinct(values) => {
+                if !value.is_null() && !values.contains(value) {
+                    values.push(value.clone());
+                }
+            }
+            Accumulator::BitAnd(acc) => {
+                if let Some(v) = value.as_i64() {
+                    *acc = Some(match *acc {
+                        Some(a) => a & v,
+                        None => v,
+                    });
+                }
+            }
+            Accumulator::BitOr(acc) => {
+                if let Some(v) = value.as_i64() {
+                    *acc = Some(match *acc {
+                        Some(a) => a | v,
+                        None => v,
+                    });
+                }
+            }
+            Accumulator::BitXor(acc) => {
+                if let Some(v) = value.as_i64() {
+                    *acc = Some(match *acc {
+                        Some(a) => a ^ v,
+                        None => v,
+                    });
+                }
+            }
+            Accumulator::LogicalAnd(acc) => {
+                if let Some(b) = value.as_bool() {
+                    *acc = Some(acc.unwrap_or(true) && b);
+                }
+            }
+            Accumulator::LogicalOr(acc) => {
+                if let Some(b) = value.as_bool() {
+                    *acc = Some(acc.unwrap_or(false) || b);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn accumulate_array_agg(&mut self, value: &Value, sort_keys: Vec<(Value, bool)>) -> Result<()> {
+        match self {
+            Accumulator::ArrayAgg {
+                items,
+                ignore_nulls,
+            } => {
+                if *ignore_nulls && value.is_null() {
+                    return Ok(());
+                }
+                items.push((value.clone(), sort_keys));
+            }
+            _ => {
+                self.accumulate(value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize(&self) -> Value {
+        match self {
+            Accumulator::Count(n) => Value::Int64(*n),
+            Accumulator::CountIf(n) => Value::Int64(*n),
+            Accumulator::Sum(sum) => sum
+                .map(|s| Value::Float64(OrderedFloat(s)))
+                .unwrap_or(Value::Null),
+            Accumulator::Avg { sum, count } => {
+                if *count > 0 {
+                    Value::Float64(OrderedFloat(*sum / *count as f64))
+                } else {
+                    Value::Null
+                }
+            }
+            Accumulator::Min(min) => min.clone().unwrap_or(Value::Null),
+            Accumulator::Max(max) => max.clone().unwrap_or(Value::Null),
+            Accumulator::ArrayAgg { items, .. } => {
+                let mut sorted_items = items.clone();
+                if !sorted_items.is_empty() && !sorted_items[0].1.is_empty() {
+                    sorted_items.sort_by(|a, b| {
+                        for ((val_a, asc_a), (val_b, _)) in a.1.iter().zip(b.1.iter()) {
+                            let cmp = val_a
+                                .partial_cmp(val_b)
+                                .unwrap_or(std::cmp::Ordering::Equal);
+                            let cmp = if *asc_a { cmp } else { cmp.reverse() };
+                            if cmp != std::cmp::Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        std::cmp::Ordering::Equal
+                    });
+                }
+                Value::Array(sorted_items.into_iter().map(|(v, _)| v).collect())
+            }
+            Accumulator::StringAgg { values, separator } => {
+                if values.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(values.join(separator))
+                }
+            }
+            Accumulator::First(first) => first.clone().unwrap_or(Value::Null),
+            Accumulator::Last(last) => last.clone().unwrap_or(Value::Null),
+            Accumulator::CountDistinct(values) => Value::Int64(values.len() as i64),
+            Accumulator::BitAnd(acc) => acc.map(Value::Int64).unwrap_or(Value::Null),
+            Accumulator::BitOr(acc) => acc.map(Value::Int64).unwrap_or(Value::Null),
+            Accumulator::BitXor(acc) => acc.map(Value::Int64).unwrap_or(Value::Null),
+            Accumulator::LogicalAnd(acc) => acc.map(Value::Bool).unwrap_or(Value::Null),
+            Accumulator::LogicalOr(acc) => acc.map(Value::Bool).unwrap_or(Value::Bool(false)),
+        }
+    }
+}

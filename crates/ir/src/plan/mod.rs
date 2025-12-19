@@ -1,7 +1,25 @@
+mod cte;
+mod ddl;
+mod dml;
+mod query;
+mod scripting;
+mod set_ops;
+mod unnest;
+mod window;
+
+pub use cte::*;
+pub use ddl::*;
+pub use dml::*;
+pub use query::*;
+pub use scripting::*;
 use serde::{Deserialize, Serialize};
+pub use set_ops::*;
+pub use unnest::*;
+pub use window::*;
 use yachtsql_common::types::DataType;
 
 use crate::expr::{Expr, SortExpr};
+use crate::schema::{Assignment, ColumnDef, EMPTY_SCHEMA, PlanSchema};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LogicalPlan {
@@ -61,6 +79,36 @@ pub enum LogicalPlan {
         schema: PlanSchema,
     },
 
+    SetOperation {
+        left: Box<LogicalPlan>,
+        right: Box<LogicalPlan>,
+        op: SetOperationType,
+        all: bool,
+        schema: PlanSchema,
+    },
+
+    Window {
+        input: Box<LogicalPlan>,
+        window_exprs: Vec<Expr>,
+        schema: PlanSchema,
+    },
+
+    WithCte {
+        ctes: Vec<CteDefinition>,
+        body: Box<LogicalPlan>,
+    },
+
+    Unnest {
+        input: Box<LogicalPlan>,
+        columns: Vec<UnnestColumn>,
+        schema: PlanSchema,
+    },
+
+    Qualify {
+        input: Box<LogicalPlan>,
+        predicate: Expr,
+    },
+
     Insert {
         table_name: String,
         columns: Vec<String>,
@@ -76,6 +124,13 @@ pub enum LogicalPlan {
     Delete {
         table_name: String,
         filter: Option<Expr>,
+    },
+
+    Merge {
+        target_table: String,
+        source: Box<LogicalPlan>,
+        on: Expr,
+        clauses: Vec<MergeClause>,
     },
 
     CreateTable {
@@ -98,134 +153,98 @@ pub enum LogicalPlan {
     Truncate {
         table_name: String,
     },
-}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Assignment {
-    pub column: String,
-    pub value: Expr,
-}
+    CreateView {
+        name: String,
+        query: Box<LogicalPlan>,
+        or_replace: bool,
+        if_not_exists: bool,
+    },
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ColumnDef {
-    pub name: String,
-    pub data_type: DataType,
-    pub nullable: bool,
-}
+    DropView {
+        name: String,
+        if_exists: bool,
+    },
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AlterTableOp {
-    AddColumn { column: ColumnDef },
-    DropColumn { name: String },
-    RenameColumn { old_name: String, new_name: String },
-    RenameTable { new_name: String },
-}
+    CreateSchema {
+        name: String,
+        if_not_exists: bool,
+    },
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct PlanSchema {
-    pub fields: Vec<PlanField>,
-}
+    DropSchema {
+        name: String,
+        if_exists: bool,
+        cascade: bool,
+    },
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlanField {
-    pub name: String,
-    pub data_type: DataType,
-    pub nullable: bool,
-    pub table: Option<String>,
-}
+    CreateFunction {
+        name: String,
+        args: Vec<FunctionArg>,
+        return_type: DataType,
+        body: FunctionBody,
+        or_replace: bool,
+    },
 
-impl PlanField {
-    pub fn new(name: impl Into<String>, data_type: DataType) -> Self {
-        Self {
-            name: name.into(),
-            data_type,
-            nullable: true,
-            table: None,
-        }
-    }
+    DropFunction {
+        name: String,
+        if_exists: bool,
+    },
 
-    pub fn required(name: impl Into<String>, data_type: DataType) -> Self {
-        Self {
-            name: name.into(),
-            data_type,
-            nullable: false,
-            table: None,
-        }
-    }
+    Call {
+        procedure_name: String,
+        args: Vec<Expr>,
+    },
 
-    pub fn with_table(mut self, table: impl Into<String>) -> Self {
-        self.table = Some(table.into());
-        self
-    }
-}
+    ExportData {
+        options: ExportOptions,
+        query: Box<LogicalPlan>,
+    },
 
-impl PlanSchema {
-    pub fn new() -> Self {
-        Self { fields: Vec::new() }
-    }
+    Declare {
+        name: String,
+        data_type: DataType,
+        default: Option<Expr>,
+    },
 
-    pub fn from_fields(fields: Vec<PlanField>) -> Self {
-        Self { fields }
-    }
+    SetVariable {
+        name: String,
+        value: Expr,
+    },
 
-    pub fn field_count(&self) -> usize {
-        self.fields.len()
-    }
+    If {
+        condition: Expr,
+        then_branch: Vec<LogicalPlan>,
+        else_branch: Option<Vec<LogicalPlan>>,
+    },
 
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
+    While {
+        condition: Expr,
+        body: Vec<LogicalPlan>,
+    },
 
-    pub fn field(&self, name: &str) -> Option<&PlanField> {
-        self.fields.iter().find(|f| f.name == name)
-    }
+    Loop {
+        body: Vec<LogicalPlan>,
+        label: Option<String>,
+    },
 
-    pub fn field_index(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|f| {
-            f.name.eq_ignore_ascii_case(name) || {
-                if let Some(dot_pos) = f.name.rfind('.') {
-                    f.name[dot_pos + 1..].eq_ignore_ascii_case(name)
-                } else {
-                    false
-                }
-            }
-        })
-    }
+    For {
+        variable: String,
+        query: Box<LogicalPlan>,
+        body: Vec<LogicalPlan>,
+    },
 
-    pub fn field_index_qualified(&self, name: &str, table: Option<&str>) -> Option<usize> {
-        match table {
-            Some(tbl) => {
-                let qualified_name = format!("{}.{}", tbl, name);
-                self.fields
-                    .iter()
-                    .position(|f| f.name.eq_ignore_ascii_case(&qualified_name))
-                    .or_else(|| {
-                        self.fields.iter().position(|f| {
-                            f.name.eq_ignore_ascii_case(name)
-                                && f.table
-                                    .as_ref()
-                                    .is_some_and(|t| t.eq_ignore_ascii_case(tbl))
-                        })
-                    })
-            }
-            None => self.field_index(name),
-        }
-    }
+    Return {
+        value: Option<Expr>,
+    },
 
-    pub fn merge(self, other: PlanSchema) -> Self {
-        let mut fields = self.fields;
-        fields.extend(other.fields);
-        Self { fields }
-    }
-}
+    Raise {
+        message: Option<Expr>,
+        level: RaiseLevel,
+    },
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum JoinType {
-    Inner,
-    Left,
-    Right,
-    Full,
-    Cross,
+    Break,
+
+    Continue,
 }
 
 impl LogicalPlan {
@@ -241,13 +260,37 @@ impl LogicalPlan {
             LogicalPlan::Distinct { input, .. } => input.schema(),
             LogicalPlan::Values { schema, .. } => schema,
             LogicalPlan::Empty { schema } => schema,
+            LogicalPlan::SetOperation { schema, .. } => schema,
+            LogicalPlan::Window { schema, .. } => schema,
+            LogicalPlan::WithCte { body, .. } => body.schema(),
+            LogicalPlan::Unnest { schema, .. } => schema,
+            LogicalPlan::Qualify { input, .. } => input.schema(),
             LogicalPlan::Insert { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Update { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Delete { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Merge { .. } => &EMPTY_SCHEMA,
             LogicalPlan::CreateTable { .. } => &EMPTY_SCHEMA,
             LogicalPlan::DropTable { .. } => &EMPTY_SCHEMA,
             LogicalPlan::AlterTable { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Truncate { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::CreateView { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::DropView { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::CreateSchema { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::DropSchema { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::CreateFunction { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::DropFunction { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Call { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::ExportData { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Declare { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::SetVariable { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::If { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::While { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Loop { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::For { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Return { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Raise { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Break => &EMPTY_SCHEMA,
+            LogicalPlan::Continue => &EMPTY_SCHEMA,
         }
     }
 
@@ -301,5 +344,3 @@ impl LogicalPlan {
         }
     }
 }
-
-static EMPTY_SCHEMA: PlanSchema = PlanSchema { fields: Vec::new() };
