@@ -5,8 +5,8 @@ use sqlparser::ast::{self, SetExpr, Statement, TableFactor};
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
-    AlterTableOp, Assignment, ColumnDef, CteDefinition, Expr, JoinType, LogicalPlan, PlanField,
-    PlanSchema, SetOperationType, SortExpr,
+    AlterTableOp, Assignment, BinaryOp, ColumnDef, CteDefinition, Expr, JoinType, Literal,
+    LogicalPlan, PlanField, PlanSchema, SetOperationType, SortExpr,
 };
 use yachtsql_storage::Schema;
 
@@ -145,7 +145,34 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             };
             let cte_query = self.plan_query(&cte.query)?;
 
-            let cte_schema = cte_query.schema().clone();
+            let cte_schema = if let Some(ref col_names) = columns {
+                let fields = cte_query
+                    .schema()
+                    .fields
+                    .iter()
+                    .zip(col_names.iter())
+                    .map(|(f, col_name)| PlanField {
+                        name: col_name.clone(),
+                        data_type: f.data_type.clone(),
+                        nullable: f.nullable,
+                        table: Some(name.clone()),
+                    })
+                    .collect();
+                PlanSchema::from_fields(fields)
+            } else {
+                let fields = cte_query
+                    .schema()
+                    .fields
+                    .iter()
+                    .map(|f| PlanField {
+                        name: f.name.clone(),
+                        data_type: f.data_type.clone(),
+                        nullable: f.nullable,
+                        table: Some(name.clone()),
+                    })
+                    .collect();
+                PlanSchema::from_fields(fields)
+            };
             self.cte_schemas
                 .borrow_mut()
                 .insert(name.clone(), cte_schema);
@@ -230,7 +257,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         if has_aggregates || has_group_by {
             plan = self.plan_aggregate(plan, select)?;
         } else {
-            plan = self.plan_projection(plan, &select.projection)?;
+            plan = self.plan_projection(plan, &select.projection, &select.named_window)?;
         }
 
         if let Some(ref qualify) = select.qualify {
@@ -358,7 +385,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 use yachtsql_ir::UnnestColumn;
 
                 if array_exprs.is_empty() {
-                    return Err(Error::invalid_query("UNNEST requires at least one array expression"));
+                    return Err(Error::invalid_query(
+                        "UNNEST requires at least one array expression",
+                    ));
                 }
 
                 let element_alias = alias
@@ -377,7 +406,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     expr: array_expr,
                     alias: Some(element_alias.clone()),
                     with_offset: *with_offset,
-                    offset_alias: if *with_offset { Some(offset_alias_str.clone()) } else { None },
+                    offset_alias: if *with_offset {
+                        Some(offset_alias_str.clone())
+                    } else {
+                        None
+                    },
                 };
 
                 let mut fields = vec![PlanField::new(element_alias, DataType::String)];
@@ -387,7 +420,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 let schema = PlanSchema::from_fields(fields);
 
                 Ok(LogicalPlan::Unnest {
-                    input: Box::new(LogicalPlan::Empty { schema: PlanSchema::new() }),
+                    input: Box::new(LogicalPlan::Empty {
+                        schema: PlanSchema::new(),
+                    }),
                     columns: vec![unnest_column],
                     schema,
                 })
@@ -469,6 +504,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         &self,
         input: LogicalPlan,
         items: &[ast::SelectItem],
+        named_windows: &[ast::NamedWindowDefinition],
     ) -> Result<LogicalPlan> {
         let mut expressions = Vec::new();
         let mut fields = Vec::new();
@@ -477,10 +513,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         for item in items {
             match item {
                 ast::SelectItem::UnnamedExpr(expr) => {
-                    let planned_expr = ExprPlanner::plan_expr_with_subquery(
+                    let planned_expr = ExprPlanner::plan_expr_with_named_windows(
                         expr,
                         input.schema(),
                         Some(&subquery_planner),
+                        named_windows,
                     )?;
                     let name = self.expr_name(expr);
                     let data_type = self.infer_expr_type(&planned_expr, input.schema());
@@ -488,10 +525,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     expressions.push(planned_expr);
                 }
                 ast::SelectItem::ExprWithAlias { expr, alias } => {
-                    let planned_expr = ExprPlanner::plan_expr_with_subquery(
+                    let planned_expr = ExprPlanner::plan_expr_with_named_windows(
                         expr,
                         input.schema(),
                         Some(&subquery_planner),
+                        named_windows,
                     )?;
                     let data_type = self.infer_expr_type(&planned_expr, input.schema());
                     fields.push(PlanField::new(alias.value.clone(), data_type));
@@ -499,21 +537,41 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 }
                 ast::SelectItem::Wildcard(opts) => {
                     let except_cols = Self::get_except_columns(opts);
+                    let replace_map =
+                        Self::get_replace_columns(opts, input.schema(), named_windows)?;
                     for (i, field) in input.schema().fields.iter().enumerate() {
                         if !except_cols.contains(&field.name.to_lowercase()) {
-                            expressions.push(Expr::Column {
-                                table: field.table.clone(),
-                                name: field.name.clone(),
-                                index: Some(i),
-                            });
-                            fields.push(field.clone());
+                            if let Some((replaced_expr, data_type)) =
+                                replace_map.get(&field.name.to_lowercase())
+                            {
+                                expressions.push(replaced_expr.clone());
+                                fields.push(PlanField::new(field.name.clone(), data_type.clone()));
+                            } else {
+                                expressions.push(Expr::Column {
+                                    table: field.table.clone(),
+                                    name: field.name.clone(),
+                                    index: Some(i),
+                                });
+                                fields.push(field.clone());
+                            }
                         }
                     }
                 }
-                ast::SelectItem::QualifiedWildcard(name, _) => {
-                    let table_name = name.to_string();
+                ast::SelectItem::QualifiedWildcard(kind, _) => {
+                    let table_name = match kind {
+                        ast::SelectItemQualifiedWildcardKind::ObjectName(obj_name) => {
+                            obj_name.to_string().to_uppercase()
+                        }
+                        ast::SelectItemQualifiedWildcardKind::Expr(_) => {
+                            return Err(Error::unsupported("Expression qualified wildcard"));
+                        }
+                    };
                     for (i, field) in input.schema().fields.iter().enumerate() {
-                        if field.table.as_ref().is_some_and(|t| t == &table_name) {
+                        if field
+                            .table
+                            .as_ref()
+                            .is_some_and(|t| t.to_uppercase() == table_name)
+                        {
                             expressions.push(Expr::Column {
                                 table: field.table.clone(),
                                 name: field.name.clone(),
@@ -529,11 +587,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         let mut window_funcs: Vec<Expr> = Vec::new();
         let mut window_expr_indices = Vec::new();
         for (i, expr) in expressions.iter().enumerate() {
-            if Self::expr_has_window(expr) {
-                if let Some(wf) = Self::extract_window_function(expr) {
-                    window_funcs.push(wf);
-                    window_expr_indices.push(i);
-                }
+            if Self::expr_has_window(expr)
+                && let Some(wf) = Self::extract_window_function(expr)
+            {
+                window_funcs.push(wf);
+                window_expr_indices.push(i);
             }
         }
 
@@ -547,8 +605,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
         let input_field_count = input.schema().fields.len();
         let mut window_schema_fields = input.schema().fields.clone();
-        for j in 0..window_funcs.len() {
-            let idx = window_expr_indices[j];
+        for (j, &idx) in window_expr_indices.iter().enumerate() {
             window_schema_fields.push(PlanField::new(
                 format!("__window_{}", j),
                 fields[idx].data_type.clone(),
@@ -622,10 +679,10 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 when_clauses,
                 else_result,
             } => {
-                if let Some(op) = operand {
-                    if let Some(wf) = Self::extract_window_function(op) {
-                        return Some(wf);
-                    }
+                if let Some(op) = operand
+                    && let Some(wf) = Self::extract_window_function(op)
+                {
+                    return Some(wf);
                 }
                 for clause in when_clauses {
                     if let Some(wf) = Self::extract_window_function(&clause.condition) {
@@ -675,7 +732,8 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 when_clauses,
                 else_result,
             } => Expr::Case {
-                operand: operand.map(|e| Box::new(Self::replace_window_with_column(*e, col_name, col_idx))),
+                operand: operand
+                    .map(|e| Box::new(Self::replace_window_with_column(*e, col_name, col_idx))),
                 when_clauses: when_clauses
                     .into_iter()
                     .map(|w| yachtsql_ir::WhenClause {
@@ -683,7 +741,8 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         result: Self::replace_window_with_column(w.result, col_name, col_idx),
                     })
                     .collect(),
-                else_result: else_result.map(|e| Box::new(Self::replace_window_with_column(*e, col_name, col_idx))),
+                else_result: else_result
+                    .map(|e| Box::new(Self::replace_window_with_column(*e, col_name, col_idx))),
             },
             Expr::Cast {
                 expr,
@@ -773,7 +832,17 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     )?;
                     let name = self.expr_name(expr);
                     let data_type = self.infer_expr_type(&planned, input.schema());
-                    agg_fields.push(PlanField::new(name, data_type));
+                    let table = match &planned {
+                        Expr::Column { table, .. } => table.clone(),
+                        Expr::Alias { expr, .. } => match expr.as_ref() {
+                            Expr::Column { table, .. } => table.clone(),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let mut field = PlanField::new(name, data_type);
+                    field.table = table;
+                    agg_fields.push(field);
                     group_by_exprs.push(planned);
                 }
             }
@@ -833,7 +902,26 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         }
                     } else {
                         let col_name = self.expr_name(expr);
-                        if let Some(idx) = agg_fields.iter().position(|f| f.name == col_name) {
+                        let col_table = self.expr_table(expr);
+                        if let Some(idx) = agg_fields.iter().position(|f| {
+                            f.name.eq_ignore_ascii_case(&col_name)
+                                && match (&f.table, &col_table) {
+                                    (Some(t1), Some(t2)) => t1.eq_ignore_ascii_case(t2),
+                                    (None, None) => true,
+                                    _ => false,
+                                }
+                        }) {
+                            let data_type = agg_fields[idx].data_type.clone();
+                            final_projection_exprs.push(Expr::Column {
+                                table: col_table.clone(),
+                                name: col_name.clone(),
+                                index: Some(idx),
+                            });
+                            final_projection_fields.push(PlanField::new(output_name, data_type));
+                        } else if let Some(idx) = agg_fields
+                            .iter()
+                            .position(|f| f.name.eq_ignore_ascii_case(&col_name))
+                        {
                             let data_type = agg_fields[idx].data_type.clone();
                             final_projection_exprs.push(Expr::Column {
                                 table: None,
@@ -1776,6 +1864,19 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         }
     }
 
+    fn expr_table(&self, expr: &ast::Expr) -> Option<String> {
+        match expr {
+            ast::Expr::CompoundIdentifier(parts) if parts.len() > 1 => Some(
+                parts[..parts.len() - 1]
+                    .iter()
+                    .map(|p| p.value.clone())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            ),
+            _ => None,
+        }
+    }
+
     fn infer_expr_type(&self, expr: &Expr, schema: &PlanSchema) -> DataType {
         Self::compute_expr_type(expr, schema)
     }
@@ -2270,5 +2371,92 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 cols
             })
             .unwrap_or_default()
+    }
+
+    fn get_replace_columns(
+        opts: &ast::WildcardAdditionalOptions,
+        schema: &PlanSchema,
+        named_windows: &[ast::NamedWindowDefinition],
+    ) -> Result<std::collections::HashMap<String, (Expr, DataType)>> {
+        let mut replace_map = std::collections::HashMap::new();
+        if let Some(replace) = &opts.opt_replace {
+            for item in &replace.items {
+                let col_name = item.column_name.value.to_lowercase();
+                let expr = ExprPlanner::plan_expr_with_named_windows(
+                    &item.expr,
+                    schema,
+                    None,
+                    named_windows,
+                )?;
+                let data_type = Self::infer_expr_type_static(&expr, schema);
+                replace_map.insert(col_name, (expr, data_type));
+            }
+        }
+        Ok(replace_map)
+    }
+
+    fn infer_expr_type_static(expr: &Expr, schema: &PlanSchema) -> DataType {
+        match expr {
+            Expr::Literal(lit) => match lit {
+                Literal::Int64(_) => DataType::Int64,
+                Literal::Float64(_) => DataType::Float64,
+                Literal::String(_) => DataType::String,
+                Literal::Bool(_) => DataType::Bool,
+                Literal::Null => DataType::String,
+                Literal::Bytes(_) => DataType::Bytes,
+                Literal::Date(_) => DataType::Date,
+                Literal::Time(_) => DataType::Time,
+                Literal::Timestamp(_) => DataType::Timestamp,
+                Literal::Datetime(_) => DataType::DateTime,
+                Literal::Numeric(_) => DataType::Numeric(None),
+                Literal::Interval { .. } => DataType::Interval,
+                Literal::Array(_) => DataType::Array(Box::new(DataType::String)),
+                Literal::Struct(_) => DataType::Struct(vec![]),
+                Literal::Json(_) => DataType::Json,
+            },
+            Expr::Column { index, .. } => index
+                .and_then(|i| schema.fields.get(i))
+                .map(|f| f.data_type.clone())
+                .unwrap_or(DataType::String),
+            Expr::BinaryOp { left, op, right } => {
+                let left_type = Self::infer_expr_type_static(left, schema);
+                let right_type = Self::infer_expr_type_static(right, schema);
+                match op {
+                    BinaryOp::Eq
+                    | BinaryOp::NotEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq
+                    | BinaryOp::And
+                    | BinaryOp::Or => DataType::Bool,
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Mod => {
+                        if matches!(left_type, DataType::Float64)
+                            || matches!(right_type, DataType::Float64)
+                        {
+                            DataType::Float64
+                        } else if matches!(left_type, DataType::Numeric(_))
+                            || matches!(right_type, DataType::Numeric(_))
+                        {
+                            DataType::Numeric(None)
+                        } else {
+                            DataType::Int64
+                        }
+                    }
+                    BinaryOp::Concat => DataType::String,
+                    BinaryOp::BitwiseAnd
+                    | BinaryOp::BitwiseOr
+                    | BinaryOp::BitwiseXor
+                    | BinaryOp::ShiftLeft
+                    | BinaryOp::ShiftRight => DataType::Int64,
+                }
+            }
+            Expr::Cast { data_type, .. } => data_type.clone(),
+            _ => DataType::String,
+        }
     }
 }

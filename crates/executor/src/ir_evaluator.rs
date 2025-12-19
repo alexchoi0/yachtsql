@@ -319,8 +319,9 @@ impl<'a> IrEvaluator<'a> {
             Literal::Datetime(micros) => {
                 let secs = *micros / 1_000_000;
                 let nanos = ((*micros % 1_000_000) * 1000) as u32;
-                let dt = NaiveDateTime::from_timestamp_opt(secs, nanos)
-                    .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))?;
+                let dt = chrono::DateTime::from_timestamp(secs, nanos)
+                    .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))?
+                    .naive_utc();
                 Ok(Value::DateTime(dt))
             }
         }
@@ -1901,10 +1902,20 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_trunc(&self, args: &[Value]) -> Result<Value> {
-        match args.first() {
-            Some(Value::Null) => Ok(Value::Null),
-            Some(Value::Int64(n)) => Ok(Value::Int64(*n)),
-            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.trunc()))),
+        if args.is_empty() {
+            return Err(Error::InvalidQuery(
+                "TRUNC requires at least 1 argument".into(),
+            ));
+        }
+        let precision = args.get(1).and_then(|v| v.as_i64()).unwrap_or(0);
+        match &args[0] {
+            Value::Null => Ok(Value::Null),
+            Value::Int64(n) => Ok(Value::Int64(*n)),
+            Value::Float64(f) => {
+                let mult = 10f64.powi(precision as i32);
+                Ok(Value::Float64(OrderedFloat((f.0 * mult).trunc() / mult)))
+            }
+            Value::Numeric(d) => Ok(Value::Numeric(d.trunc_with_scale(precision.max(0) as u32))),
             _ => Err(Error::InvalidQuery(
                 "TRUNC requires numeric argument".into(),
             )),
@@ -2696,13 +2707,12 @@ impl<'a> IrEvaluator<'a> {
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::String(s)) => {
-                use std::fmt::Write;
                 let digest = md5::compute(s.as_bytes());
-                let mut hex = String::with_capacity(32);
-                for byte in digest.iter() {
-                    write!(hex, "{:02x}", byte).unwrap();
-                }
-                Ok(Value::String(hex))
+                Ok(Value::Bytes(digest.to_vec()))
+            }
+            Some(Value::Bytes(b)) => {
+                let digest = md5::compute(b);
+                Ok(Value::Bytes(digest.to_vec()))
             }
             _ => Err(Error::InvalidQuery("MD5 requires string argument".into())),
         }
@@ -2850,8 +2860,18 @@ impl<'a> IrEvaluator<'a> {
             (Value::String(s), Value::String(pattern), Value::String(replacement)) => {
                 let re = regex::Regex::new(pattern)
                     .map_err(|e| Error::InvalidQuery(format!("Invalid regex: {}", e)))?;
+                let rust_replacement = replacement
+                    .replace("\\1", "$1")
+                    .replace("\\2", "$2")
+                    .replace("\\3", "$3")
+                    .replace("\\4", "$4")
+                    .replace("\\5", "$5")
+                    .replace("\\6", "$6")
+                    .replace("\\7", "$7")
+                    .replace("\\8", "$8")
+                    .replace("\\9", "$9");
                 Ok(Value::String(
-                    re.replace_all(s, replacement.as_str()).to_string(),
+                    re.replace_all(s, rust_replacement.as_str()).to_string(),
                 ))
             }
             _ => Err(Error::InvalidQuery(
@@ -3574,6 +3594,7 @@ impl<'a> IrEvaluator<'a> {
                 "REGEXP_EXTRACT requires 2 arguments".into(),
             ));
         }
+        let group_num = args.get(2).and_then(|v| v.as_i64()).unwrap_or(1) as usize;
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::String(s), Value::String(pattern)) => {
@@ -3582,7 +3603,7 @@ impl<'a> IrEvaluator<'a> {
                 match re.captures(s) {
                     Some(caps) => {
                         let matched = caps
-                            .get(1)
+                            .get(group_num)
                             .or_else(|| caps.get(0))
                             .map(|m| m.as_str().to_string());
                         Ok(matched.map(Value::String).unwrap_or(Value::Null))
@@ -6428,8 +6449,10 @@ impl<'a> IrEvaluator<'a> {
             (Value::Array(arr), Value::Int64(start), Value::Int64(end)) => {
                 let start_idx = if *start < 0 {
                     (arr.len() as i64 + start).max(0) as usize
+                } else if *start == 0 {
+                    0
                 } else {
-                    (*start as usize).min(arr.len())
+                    ((*start - 1) as usize).min(arr.len())
                 };
                 let end_idx = if *end < 0 {
                     (arr.len() as i64 + end).max(0) as usize

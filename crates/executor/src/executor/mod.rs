@@ -67,7 +67,9 @@ impl<'a> PlanExecutor<'a> {
 
     pub fn execute_plan(&mut self, plan: &ExecutorPlan) -> Result<Table> {
         match plan {
-            ExecutorPlan::TableScan { table_name, .. } => self.execute_scan(table_name),
+            ExecutorPlan::TableScan {
+                table_name, schema, ..
+            } => self.execute_scan(table_name, schema),
             ExecutorPlan::Filter { input, predicate } => self.execute_filter(input, predicate),
             ExecutorPlan::Project {
                 input,

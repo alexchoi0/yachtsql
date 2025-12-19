@@ -28,7 +28,7 @@ impl<'a> PlanExecutor<'a> {
         if group_by.is_empty() {
             let mut accumulators: Vec<Accumulator> = aggregates
                 .iter()
-                .map(|e| Accumulator::from_expr(e))
+                .map(Accumulator::from_expr)
                 .collect();
 
             for record in input_table.rows()? {
@@ -62,7 +62,7 @@ impl<'a> PlanExecutor<'a> {
                 let accumulators = groups.entry(group_key_strings.clone()).or_insert_with(|| {
                     aggregates
                         .iter()
-                        .map(|e| Accumulator::from_expr(e))
+                        .map(Accumulator::from_expr)
                         .collect()
                 });
                 group_keys
@@ -107,7 +107,43 @@ fn extract_agg_arg(
             }
         }
         Expr::Alias { expr, .. } => extract_agg_arg(evaluator, expr, record),
-        _ => evaluator.evaluate(agg_expr, record),
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => evaluator.evaluate(agg_expr, record),
     }
 }
 
@@ -126,7 +162,43 @@ fn extract_order_by_keys(
             Ok(keys)
         }
         Expr::Alias { expr, .. } => extract_order_by_keys(evaluator, expr, record),
-        _ => Ok(Vec::new()),
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => Ok(Vec::new()),
     }
 }
 
@@ -134,7 +206,43 @@ fn has_order_by(agg_expr: &Expr) -> bool {
     match agg_expr {
         Expr::Aggregate { order_by, .. } => !order_by.is_empty(),
         Expr::Alias { expr, .. } => has_order_by(expr),
-        _ => false,
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => false,
     }
 }
 
@@ -142,7 +250,43 @@ fn get_agg_func(expr: &Expr) -> Option<&AggregateFunction> {
     match expr {
         Expr::Aggregate { func, .. } => Some(func),
         Expr::Alias { expr, .. } => get_agg_func(expr),
-        _ => None,
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => None,
     }
 }
 
@@ -150,7 +294,43 @@ fn is_distinct_aggregate(expr: &Expr) -> bool {
     match expr {
         Expr::Aggregate { distinct, .. } => *distinct,
         Expr::Alias { expr, .. } => is_distinct_aggregate(expr),
-        _ => false,
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => false,
     }
 }
 
@@ -158,7 +338,43 @@ fn has_ignore_nulls(expr: &Expr) -> bool {
     match expr {
         Expr::Aggregate { ignore_nulls, .. } => *ignore_nulls,
         Expr::Alias { expr, .. } => has_ignore_nulls(expr),
-        _ => false,
+        Expr::Literal(_)
+        | Expr::Column { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::ScalarFunction { .. }
+        | Expr::Window { .. }
+        | Expr::AggregateWindow { .. }
+        | Expr::Case { .. }
+        | Expr::Cast { .. }
+        | Expr::IsNull { .. }
+        | Expr::IsDistinctFrom { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Exists { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Extract { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Position { .. }
+        | Expr::Overlay { .. }
+        | Expr::Array { .. }
+        | Expr::ArrayAccess { .. }
+        | Expr::Struct { .. }
+        | Expr::StructAccess { .. }
+        | Expr::TypedString { .. }
+        | Expr::Interval { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Subquery(_)
+        | Expr::ScalarSubquery(_)
+        | Expr::Parameter { .. }
+        | Expr::Variable { .. }
+        | Expr::Placeholder { .. }
+        | Expr::Lambda { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::JsonAccess { .. } => false,
     }
 }
 
@@ -204,6 +420,13 @@ enum Accumulator {
     BitXor(Option<i64>),
     LogicalAnd(Option<bool>),
     LogicalOr(Option<bool>),
+    Variance {
+        count: i64,
+        mean: f64,
+        m2: f64,
+        is_sample: bool,
+        is_stddev: bool,
+    },
 }
 
 impl Accumulator {
@@ -237,6 +460,36 @@ impl Accumulator {
                 AggregateFunction::BitXor => Accumulator::BitXor(None),
                 AggregateFunction::LogicalAnd => Accumulator::LogicalAnd(None),
                 AggregateFunction::LogicalOr => Accumulator::LogicalOr(None),
+                AggregateFunction::Stddev | AggregateFunction::StddevSamp => {
+                    Accumulator::Variance {
+                        count: 0,
+                        mean: 0.0,
+                        m2: 0.0,
+                        is_sample: true,
+                        is_stddev: true,
+                    }
+                }
+                AggregateFunction::StddevPop => Accumulator::Variance {
+                    count: 0,
+                    mean: 0.0,
+                    m2: 0.0,
+                    is_sample: false,
+                    is_stddev: true,
+                },
+                AggregateFunction::Variance | AggregateFunction::VarSamp => Accumulator::Variance {
+                    count: 0,
+                    mean: 0.0,
+                    m2: 0.0,
+                    is_sample: true,
+                    is_stddev: false,
+                },
+                AggregateFunction::VarPop => Accumulator::Variance {
+                    count: 0,
+                    mean: 0.0,
+                    m2: 0.0,
+                    is_sample: false,
+                    is_stddev: false,
+                },
                 AggregateFunction::Grouping
                 | AggregateFunction::ApproxCountDistinct
                 | AggregateFunction::ApproxQuantiles
@@ -244,13 +497,7 @@ impl Accumulator {
                 | AggregateFunction::ApproxTopSum
                 | AggregateFunction::Corr
                 | AggregateFunction::CovarPop
-                | AggregateFunction::CovarSamp
-                | AggregateFunction::Stddev
-                | AggregateFunction::StddevPop
-                | AggregateFunction::StddevSamp
-                | AggregateFunction::Variance
-                | AggregateFunction::VarPop
-                | AggregateFunction::VarSamp => Accumulator::Count(0),
+                | AggregateFunction::CovarSamp => Accumulator::Count(0),
             },
             None => Accumulator::Count(0),
         }
@@ -378,6 +625,27 @@ impl Accumulator {
                     *acc = Some(acc.unwrap_or(false) || b);
                 }
             }
+            Accumulator::Variance {
+                count, mean, m2, ..
+            } => {
+                let v = if let Some(f) = value.as_f64() {
+                    Some(f)
+                } else if let Some(i) = value.as_i64() {
+                    Some(i as f64)
+                } else if let Value::Numeric(d) = value {
+                    use rust_decimal::prelude::ToPrimitive;
+                    d.to_f64()
+                } else {
+                    None
+                };
+                if let Some(x) = v {
+                    *count += 1;
+                    let delta = x - *mean;
+                    *mean += delta / *count as f64;
+                    let delta2 = x - *mean;
+                    *m2 += delta * delta2;
+                }
+            }
         }
         Ok(())
     }
@@ -449,6 +717,28 @@ impl Accumulator {
             Accumulator::BitXor(acc) => acc.map(Value::Int64).unwrap_or(Value::Null),
             Accumulator::LogicalAnd(acc) => acc.map(Value::Bool).unwrap_or(Value::Null),
             Accumulator::LogicalOr(acc) => acc.map(Value::Bool).unwrap_or(Value::Bool(false)),
+            Accumulator::Variance {
+                count,
+                m2,
+                is_sample,
+                is_stddev,
+                ..
+            } => {
+                if *count < 2 && *is_sample {
+                    Value::Null
+                } else if *count == 0 {
+                    Value::Null
+                } else {
+                    let divisor = if *is_sample { *count - 1 } else { *count };
+                    let variance = *m2 / divisor as f64;
+                    let result = if *is_stddev {
+                        variance.sqrt()
+                    } else {
+                        variance
+                    };
+                    Value::Float64(OrderedFloat(result))
+                }
+            }
         }
     }
 }
