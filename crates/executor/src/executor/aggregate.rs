@@ -33,11 +33,22 @@ impl<'a> PlanExecutor<'a> {
 
             for record in input_table.rows()? {
                 for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
-                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
-                    if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                    if matches!(
+                        acc,
+                        Accumulator::SumIf(_)
+                            | Accumulator::AvgIf { .. }
+                            | Accumulator::MinIf(_)
+                            | Accumulator::MaxIf(_)
+                    ) {
+                        let (value, condition) =
+                            extract_conditional_agg_args(&evaluator, agg_expr, &record)?;
+                        acc.accumulate_conditional(&value, condition)?;
+                    } else if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
                         let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
                         acc.accumulate_array_agg(&arg_val, sort_keys)?;
                     } else {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
                         acc.accumulate(&arg_val)?;
                     }
                 }
@@ -70,11 +81,22 @@ impl<'a> PlanExecutor<'a> {
                     .or_insert(group_key_values);
 
                 for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
-                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
-                    if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                    if matches!(
+                        acc,
+                        Accumulator::SumIf(_)
+                            | Accumulator::AvgIf { .. }
+                            | Accumulator::MinIf(_)
+                            | Accumulator::MaxIf(_)
+                    ) {
+                        let (value, condition) =
+                            extract_conditional_agg_args(&evaluator, agg_expr, &record)?;
+                        acc.accumulate_conditional(&value, condition)?;
+                    } else if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
                         let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
                         acc.accumulate_array_agg(&arg_val, sort_keys)?;
                     } else {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
                         acc.accumulate(&arg_val)?;
                     }
                 }
@@ -144,6 +166,30 @@ fn extract_agg_arg(
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
         | Expr::JsonAccess { .. } => evaluator.evaluate(agg_expr, record),
+    }
+}
+
+fn extract_conditional_agg_args(
+    evaluator: &IrEvaluator,
+    agg_expr: &Expr,
+    record: &yachtsql_storage::Record,
+) -> Result<(Value, bool)> {
+    match agg_expr {
+        Expr::Aggregate { args, .. } => {
+            if args.len() >= 2 {
+                let value = evaluator.evaluate(&args[0], record)?;
+                let condition_val = evaluator.evaluate(&args[1], record)?;
+                let condition = condition_val.as_bool().unwrap_or(false);
+                Ok((value, condition))
+            } else if args.len() == 1 {
+                let value = evaluator.evaluate(&args[0], record)?;
+                Ok((value, true))
+            } else {
+                Ok((Value::Null, false))
+            }
+        }
+        Expr::Alias { expr, .. } => extract_conditional_agg_args(evaluator, expr, record),
+        _ => Ok((Value::Null, false)),
     }
 }
 
@@ -427,6 +473,13 @@ enum Accumulator {
         is_sample: bool,
         is_stddev: bool,
     },
+    SumIf(Option<f64>),
+    AvgIf {
+        sum: f64,
+        count: i64,
+    },
+    MinIf(Option<Value>),
+    MaxIf(Option<Value>),
 }
 
 impl Accumulator {
@@ -442,6 +495,10 @@ impl Accumulator {
                     }
                 }
                 AggregateFunction::CountIf => Accumulator::CountIf(0),
+                AggregateFunction::SumIf => Accumulator::SumIf(None),
+                AggregateFunction::AvgIf => Accumulator::AvgIf { sum: 0.0, count: 0 },
+                AggregateFunction::MinIf => Accumulator::MinIf(None),
+                AggregateFunction::MaxIf => Accumulator::MaxIf(None),
                 AggregateFunction::Sum => Accumulator::Sum(None),
                 AggregateFunction::Avg => Accumulator::Avg { sum: 0.0, count: 0 },
                 AggregateFunction::Min => Accumulator::Min(None),
@@ -491,13 +548,15 @@ impl Accumulator {
                     is_stddev: false,
                 },
                 AggregateFunction::Grouping
-                | AggregateFunction::ApproxCountDistinct
                 | AggregateFunction::ApproxQuantiles
                 | AggregateFunction::ApproxTopCount
                 | AggregateFunction::ApproxTopSum
                 | AggregateFunction::Corr
                 | AggregateFunction::CovarPop
                 | AggregateFunction::CovarSamp => Accumulator::Count(0),
+                AggregateFunction::ApproxCountDistinct => {
+                    Accumulator::CountDistinct(Vec::new())
+                }
             },
             None => Accumulator::Count(0),
         }
@@ -646,6 +705,10 @@ impl Accumulator {
                     *m2 += delta * delta2;
                 }
             }
+            Accumulator::SumIf(_)
+            | Accumulator::AvgIf { .. }
+            | Accumulator::MinIf(_)
+            | Accumulator::MaxIf(_) => {}
         }
         Ok(())
     }
@@ -664,6 +727,71 @@ impl Accumulator {
             _ => {
                 self.accumulate(value)?;
             }
+        }
+        Ok(())
+    }
+
+    fn accumulate_conditional(&mut self, value: &Value, condition: bool) -> Result<()> {
+        if !condition {
+            return Ok(());
+        }
+        match self {
+            Accumulator::SumIf(sum) => {
+                if let Some(v) = value.as_f64() {
+                    *sum = Some(sum.unwrap_or(0.0) + v);
+                } else if let Some(v) = value.as_i64() {
+                    *sum = Some(sum.unwrap_or(0.0) + v as f64);
+                } else if let Value::Numeric(v) = value {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(f) = v.to_f64() {
+                        *sum = Some(sum.unwrap_or(0.0) + f);
+                    }
+                }
+            }
+            Accumulator::AvgIf { sum, count } => {
+                if let Some(v) = value.as_f64() {
+                    *sum += v;
+                    *count += 1;
+                } else if let Some(v) = value.as_i64() {
+                    *sum += v as f64;
+                    *count += 1;
+                } else if let Value::Numeric(v) = value {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(f) = v.to_f64() {
+                        *sum += f;
+                        *count += 1;
+                    }
+                }
+            }
+            Accumulator::MinIf(min) => {
+                if !value.is_null() {
+                    *min = Some(match min.take() {
+                        Some(m) => {
+                            if value < &m {
+                                value.clone()
+                            } else {
+                                m
+                            }
+                        }
+                        None => value.clone(),
+                    });
+                }
+            }
+            Accumulator::MaxIf(max) => {
+                if !value.is_null() {
+                    *max = Some(match max.take() {
+                        Some(m) => {
+                            if value > &m {
+                                value.clone()
+                            } else {
+                                m
+                            }
+                        }
+                        None => value.clone(),
+                    });
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -739,6 +867,18 @@ impl Accumulator {
                     Value::Float64(OrderedFloat(result))
                 }
             }
+            Accumulator::SumIf(sum) => sum
+                .map(|s| Value::Float64(OrderedFloat(s)))
+                .unwrap_or(Value::Null),
+            Accumulator::AvgIf { sum, count } => {
+                if *count > 0 {
+                    Value::Float64(OrderedFloat(*sum / *count as f64))
+                } else {
+                    Value::Null
+                }
+            }
+            Accumulator::MinIf(min) => min.clone().unwrap_or(Value::Null),
+            Accumulator::MaxIf(max) => max.clone().unwrap_or(Value::Null),
         }
     }
 }

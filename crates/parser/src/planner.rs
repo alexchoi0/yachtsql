@@ -1257,6 +1257,15 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 | "STRING_AGG"
                 | "ANY_VALUE"
                 | "COUNTIF"
+                | "COUNT_IF"
+                | "SUMIF"
+                | "SUM_IF"
+                | "AVGIF"
+                | "AVG_IF"
+                | "MINIF"
+                | "MIN_IF"
+                | "MAXIF"
+                | "MAX_IF"
                 | "BIT_AND"
                 | "BIT_OR"
                 | "BIT_XOR"
@@ -1806,6 +1815,14 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         | "ANY_VALUE"
                         | "COUNTIF"
                         | "COUNT_IF"
+                        | "SUMIF"
+                        | "SUM_IF"
+                        | "AVGIF"
+                        | "AVG_IF"
+                        | "MINIF"
+                        | "MIN_IF"
+                        | "MAXIF"
+                        | "MAX_IF"
                         | "GROUPING"
                         | "LOGICAL_AND"
                         | "BOOL_AND"
@@ -1929,9 +1946,13 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     | AggregateFunction::CountIf
                     | AggregateFunction::Grouping => DataType::Int64,
                     AggregateFunction::Avg
+                    | AggregateFunction::AvgIf
                     | AggregateFunction::Sum
+                    | AggregateFunction::SumIf
                     | AggregateFunction::Min
+                    | AggregateFunction::MinIf
                     | AggregateFunction::Max
+                    | AggregateFunction::MaxIf
                     | AggregateFunction::Stddev
                     | AggregateFunction::StddevPop
                     | AggregateFunction::StddevSamp
@@ -1992,9 +2013,13 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 match func {
                     AggregateFunction::Count | AggregateFunction::CountIf => DataType::Int64,
                     AggregateFunction::Avg
+                    | AggregateFunction::AvgIf
                     | AggregateFunction::Sum
+                    | AggregateFunction::SumIf
                     | AggregateFunction::Min
-                    | AggregateFunction::Max => DataType::Float64,
+                    | AggregateFunction::MinIf
+                    | AggregateFunction::Max
+                    | AggregateFunction::MaxIf => DataType::Float64,
                     _ => DataType::Unknown,
                 }
             }
