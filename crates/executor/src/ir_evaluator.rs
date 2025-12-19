@@ -5920,30 +5920,84 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_json_set(&self, args: &[Value]) -> Result<Value> {
-        if args.is_empty() {
+        if args.len() < 3 {
             return Ok(Value::Null);
         }
-        match &args[0] {
-            Value::Null => Ok(Value::Null),
-            Value::Json(j) => Ok(Value::Json(j.clone())),
+        let json_val = match &args[0] {
+            Value::Null => return Ok(Value::Null),
+            Value::Json(j) => j.clone(),
             Value::String(s) => {
-                let parsed: serde_json::Value =
-                    serde_json::from_str(s).unwrap_or(serde_json::Value::Null);
-                Ok(Value::Json(parsed))
+                serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
             }
-            _ => Ok(Value::Null),
+            _ => return Ok(Value::Null),
+        };
+        let path = match &args[1] {
+            Value::String(p) => p.clone(),
+            _ => return Ok(Value::Json(json_val)),
+        };
+        let new_value = self.value_to_json(&args[2]);
+
+        let key = if path.starts_with("$.") {
+            path[2..].to_string()
+        } else if path.starts_with("$[") || path.starts_with('$') {
+            path[1..].to_string()
+        } else {
+            path.clone()
+        };
+
+        let mut result = json_val;
+        if let serde_json::Value::Object(ref mut obj) = result {
+            obj.insert(key, new_value);
+        }
+        Ok(Value::Json(result))
+    }
+
+    fn value_to_json(&self, val: &Value) -> serde_json::Value {
+        match val {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::Value::Bool(*b),
+            Value::Int64(n) => serde_json::json!(*n),
+            Value::Float64(f) => serde_json::json!(f.0),
+            Value::String(s) => serde_json::Value::String(s.clone()),
+            Value::Json(j) => j.clone(),
+            Value::Numeric(n) => serde_json::json!(n.to_string()),
+            Value::Array(arr) => {
+                serde_json::Value::Array(arr.iter().map(|v| self.value_to_json(v)).collect())
+            }
+            _ => serde_json::Value::Null,
         }
     }
 
     fn fn_json_remove(&self, args: &[Value]) -> Result<Value> {
-        if args.is_empty() {
+        if args.len() < 2 {
             return Ok(Value::Null);
         }
-        match &args[0] {
-            Value::Null => Ok(Value::Null),
-            Value::Json(j) => Ok(Value::Json(j.clone())),
-            _ => Ok(Value::Null),
+        let json_val = match &args[0] {
+            Value::Null => return Ok(Value::Null),
+            Value::Json(j) => j.clone(),
+            Value::String(s) => {
+                serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
+            }
+            _ => return Ok(Value::Null),
+        };
+        let path = match &args[1] {
+            Value::String(p) => p.clone(),
+            _ => return Ok(Value::Json(json_val)),
+        };
+
+        let key = if path.starts_with("$.") {
+            path[2..].to_string()
+        } else if path.starts_with("$[") || path.starts_with('$') {
+            path[1..].to_string()
+        } else {
+            path.clone()
+        };
+
+        let mut result = json_val;
+        if let serde_json::Value::Object(ref mut obj) = result {
+            obj.remove(&key);
         }
+        Ok(Value::Json(result))
     }
 
     fn fn_json_strip_nulls(&self, args: &[Value]) -> Result<Value> {
