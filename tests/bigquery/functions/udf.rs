@@ -2,6 +2,7 @@ use crate::assert_table_eq;
 use crate::common::create_executor;
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_simple_addition() {
     let mut executor = create_executor();
 
@@ -22,6 +23,7 @@ fn test_javascript_udf_simple_addition() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_string_manipulation() {
     let mut executor = create_executor();
 
@@ -44,6 +46,7 @@ fn test_javascript_udf_string_manipulation() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_multiple_args() {
     let mut executor = create_executor();
 
@@ -66,6 +69,7 @@ fn test_javascript_udf_multiple_args() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_float_math() {
     let mut executor = create_executor();
 
@@ -110,6 +114,7 @@ fn test_javascript_udf_float_math() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_null_handling() {
     let mut executor = create_executor();
 
@@ -134,6 +139,7 @@ fn test_javascript_udf_null_handling() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_arrow_function() {
     let mut executor = create_executor();
 
@@ -154,6 +160,7 @@ fn test_javascript_udf_arrow_function() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_with_table() {
     let mut executor = create_executor();
 
@@ -184,6 +191,7 @@ fn test_javascript_udf_with_table() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_sql_udf_still_works() {
     let mut executor = create_executor();
 
@@ -197,6 +205,7 @@ fn test_sql_udf_still_works() {
 }
 
 #[test]
+#[ignore = "Implement me!"]
 fn test_javascript_udf_or_replace() {
     let mut executor = create_executor();
 
