@@ -227,6 +227,11 @@ pub enum LogicalPlan {
         label: Option<String>,
     },
 
+    Repeat {
+        body: Vec<LogicalPlan>,
+        until_condition: Expr,
+    },
+
     For {
         variable: String,
         query: Box<LogicalPlan>,
@@ -286,6 +291,7 @@ impl LogicalPlan {
             LogicalPlan::If { .. } => &EMPTY_SCHEMA,
             LogicalPlan::While { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Loop { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Repeat { .. } => &EMPTY_SCHEMA,
             LogicalPlan::For { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Return { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Raise { .. } => &EMPTY_SCHEMA,

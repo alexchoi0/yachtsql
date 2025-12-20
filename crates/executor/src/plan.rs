@@ -235,6 +235,11 @@ pub enum ExecutorPlan {
         label: Option<String>,
     },
 
+    Repeat {
+        body: Vec<ExecutorPlan>,
+        until_condition: Expr,
+    },
+
     For {
         variable: String,
         query: Box<ExecutorPlan>,
@@ -592,6 +597,14 @@ impl ExecutorPlan {
             PhysicalPlan::Loop { body, label } => ExecutorPlan::Loop {
                 body: body.iter().map(Self::from_physical).collect(),
                 label: label.clone(),
+            },
+
+            PhysicalPlan::Repeat {
+                body,
+                until_condition,
+            } => ExecutorPlan::Repeat {
+                body: body.iter().map(Self::from_physical).collect(),
+                until_condition: until_condition.clone(),
             },
 
             PhysicalPlan::For {

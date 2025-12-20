@@ -76,6 +76,15 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     if_exists: *if_exists,
                 })
             }
+            Statement::StartTransaction { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
+            Statement::Commit { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
+            Statement::Rollback { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
