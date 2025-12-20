@@ -44,7 +44,7 @@ impl<'a> PlanExecutor<'a> {
         Ok(result)
     }
 
-    fn eval_expr_with_subquery(
+    pub fn eval_expr_with_subquery(
         &mut self,
         expr: &Expr,
         outer_schema: &Schema,
@@ -384,7 +384,7 @@ impl<'a> PlanExecutor<'a> {
         }
     }
 
-    fn expr_contains_subquery(expr: &Expr) -> bool {
+    pub fn expr_contains_subquery(expr: &Expr) -> bool {
         match expr {
             Expr::Exists { .. } | Expr::InSubquery { .. } | Expr::Subquery(_) => true,
             Expr::BinaryOp { left, right, .. } => {

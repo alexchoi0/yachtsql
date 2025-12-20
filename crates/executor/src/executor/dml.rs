@@ -198,14 +198,23 @@ impl<'a> PlanExecutor<'a> {
         let schema = table.schema().clone();
         let evaluator = IrEvaluator::new(&schema);
 
+        let has_subquery = filter.map(Self::expr_contains_subquery).unwrap_or(false);
         let mut new_table = Table::empty(schema.clone());
 
         for record in table.rows()? {
             let should_update = match filter {
-                Some(expr) => evaluator
-                    .evaluate(expr, &record)?
-                    .as_bool()
-                    .unwrap_or(false),
+                Some(expr) => {
+                    if has_subquery {
+                        self.eval_expr_with_subquery(expr, &schema, &record)?
+                            .as_bool()
+                            .unwrap_or(false)
+                    } else {
+                        evaluator
+                            .evaluate(expr, &record)?
+                            .as_bool()
+                            .unwrap_or(false)
+                    }
+                }
                 None => true,
             };
 
@@ -242,7 +251,6 @@ impl<'a> PlanExecutor<'a> {
 
         let schema = table.schema().clone();
         let evaluator = IrEvaluator::new(&schema);
-
         let mut new_table = Table::empty(schema.clone());
 
         for record in table.rows()? {
