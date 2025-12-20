@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
     AlterTableOp, Assignment, ColumnDef, CteDefinition, ExportOptions, Expr, FunctionArg,
-    FunctionBody, JoinType, MergeClause, PlanSchema, RaiseLevel, SortExpr, UnnestColumn,
+    FunctionBody, JoinType, LoadOptions, MergeClause, PlanSchema, ProcedureArg, RaiseLevel,
+    SortExpr, UnnestColumn,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +44,7 @@ pub enum PhysicalPlan {
         group_by: Vec<Expr>,
         aggregates: Vec<Expr>,
         schema: PlanSchema,
+        grouping_sets: Option<Vec<Vec<usize>>>,
     },
 
     Sort {
@@ -166,6 +168,7 @@ pub enum PhysicalPlan {
         name: String,
         query: Box<PhysicalPlan>,
         query_sql: String,
+        column_aliases: Vec<String>,
         or_replace: bool,
         if_not_exists: bool,
     },
@@ -197,9 +200,23 @@ pub enum PhysicalPlan {
         return_type: DataType,
         body: FunctionBody,
         or_replace: bool,
+        if_not_exists: bool,
+        is_temp: bool,
     },
 
     DropFunction {
+        name: String,
+        if_exists: bool,
+    },
+
+    CreateProcedure {
+        name: String,
+        args: Vec<ProcedureArg>,
+        body: Vec<PhysicalPlan>,
+        or_replace: bool,
+    },
+
+    DropProcedure {
         name: String,
         if_exists: bool,
     },
@@ -212,6 +229,13 @@ pub enum PhysicalPlan {
     ExportData {
         options: ExportOptions,
         query: Box<PhysicalPlan>,
+    },
+
+    LoadData {
+        table_name: String,
+        options: LoadOptions,
+        temp_table: bool,
+        temp_schema: Option<Vec<ColumnDef>>,
     },
 
     Declare {
@@ -241,6 +265,11 @@ pub enum PhysicalPlan {
         label: Option<String>,
     },
 
+    Repeat {
+        body: Vec<PhysicalPlan>,
+        until_condition: Expr,
+    },
+
     For {
         variable: String,
         query: Box<PhysicalPlan>,
@@ -259,6 +288,17 @@ pub enum PhysicalPlan {
     Break,
 
     Continue,
+
+    CreateSnapshot {
+        snapshot_name: String,
+        source_name: String,
+        if_not_exists: bool,
+    },
+
+    DropSnapshot {
+        snapshot_name: String,
+        if_exists: bool,
+    },
 }
 
 impl PhysicalPlan {
@@ -299,18 +339,24 @@ impl PhysicalPlan {
             PhysicalPlan::AlterSchema { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::CreateFunction { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::DropFunction { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::CreateProcedure { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::DropProcedure { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Call { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::ExportData { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::LoadData { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Declare { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::SetVariable { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::If { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::While { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Loop { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::Repeat { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::For { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Return { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Raise { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Break => &EMPTY_SCHEMA,
             PhysicalPlan::Continue => &EMPTY_SCHEMA,
+            PhysicalPlan::CreateSnapshot { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::DropSnapshot { .. } => &EMPTY_SCHEMA,
         }
     }
 }
