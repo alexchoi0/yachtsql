@@ -25,7 +25,9 @@ impl<'a> PlanExecutor<'a> {
             self.execute_project_with_subqueries(&input_table, expressions, schema)
         } else {
             let vars = self.get_all_variables();
-            let evaluator = IrEvaluator::new(&input_schema).with_variables(&vars);
+            let evaluator = IrEvaluator::new(&input_schema)
+                .with_variables(&vars)
+                .with_user_functions(&self.user_function_defs);
             let result_schema = plan_schema_to_schema(schema);
             let mut result = Table::empty(result_schema);
 
@@ -86,7 +88,8 @@ impl<'a> PlanExecutor<'a> {
                     .iter()
                     .map(|a| self.eval_expr_with_subqueries(a, schema, record))
                     .collect::<Result<_>>()?;
-                let evaluator = IrEvaluator::new(schema);
+                let evaluator =
+                    IrEvaluator::new(schema).with_user_functions(&self.user_function_defs);
                 evaluator.eval_scalar_function_with_values(name, &arg_vals)
             }
             Expr::Cast {
@@ -98,7 +101,8 @@ impl<'a> PlanExecutor<'a> {
                 IrEvaluator::cast_value(val, data_type, *safe)
             }
             _ => {
-                let evaluator = IrEvaluator::new(schema);
+                let evaluator =
+                    IrEvaluator::new(schema).with_user_functions(&self.user_function_defs);
                 evaluator.evaluate(expr, record)
             }
         }

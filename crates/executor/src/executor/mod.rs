@@ -40,6 +40,7 @@ use yachtsql_optimizer::PhysicalPlan;
 use yachtsql_storage::{Field, FieldMode, Schema, Table};
 
 use crate::catalog::Catalog;
+use crate::ir_evaluator::UserFunctionDef;
 use crate::plan::ExecutorPlan;
 use crate::session::Session;
 
@@ -48,15 +49,31 @@ pub struct PlanExecutor<'a> {
     session: &'a mut Session,
     variables: HashMap<String, Value>,
     cte_results: HashMap<String, Table>,
+    user_function_defs: HashMap<String, UserFunctionDef>,
 }
 
 impl<'a> PlanExecutor<'a> {
     pub fn new(catalog: &'a mut Catalog, session: &'a mut Session) -> Self {
+        let user_function_defs = catalog
+            .get_functions()
+            .iter()
+            .map(|(name, func)| {
+                (
+                    name.clone(),
+                    UserFunctionDef {
+                        parameters: func.parameters.clone(),
+                        body: func.body.clone(),
+                    },
+                )
+            })
+            .collect();
+
         Self {
             catalog,
             session,
             variables: HashMap::new(),
             cte_results: HashMap::new(),
+            user_function_defs,
         }
     }
 
@@ -69,6 +86,23 @@ impl<'a> PlanExecutor<'a> {
             vars.insert(name.clone(), value.clone());
         }
         vars
+    }
+
+    fn refresh_user_functions(&mut self) {
+        self.user_function_defs = self
+            .catalog
+            .get_functions()
+            .iter()
+            .map(|(name, func)| {
+                (
+                    name.clone(),
+                    UserFunctionDef {
+                        parameters: func.parameters.clone(),
+                        body: func.body.clone(),
+                    },
+                )
+            })
+            .collect();
     }
 
     pub fn execute(&mut self, plan: &PhysicalPlan) -> Result<Table> {
@@ -104,7 +138,10 @@ impl<'a> PlanExecutor<'a> {
                 group_by,
                 aggregates,
                 schema,
-            } => self.execute_aggregate(input, group_by, aggregates, schema),
+                grouping_sets,
+            } => {
+                self.execute_aggregate(input, group_by, aggregates, schema, grouping_sets.as_ref())
+            }
             ExecutorPlan::Sort { input, sort_exprs } => self.execute_sort(input, sort_exprs),
             ExecutorPlan::Limit {
                 input,
@@ -191,10 +228,18 @@ impl<'a> PlanExecutor<'a> {
             ExecutorPlan::Truncate { table_name } => self.execute_truncate(table_name),
             ExecutorPlan::CreateView {
                 name,
-                query,
+                query: _,
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
-            } => self.execute_create_view(name, query, *or_replace, *if_not_exists),
+            } => self.execute_create_view(
+                name,
+                query_sql,
+                column_aliases,
+                *or_replace,
+                *if_not_exists,
+            ),
             ExecutorPlan::DropView { name, if_exists } => self.execute_drop_view(name, *if_exists),
             ExecutorPlan::CreateSchema {
                 name,
@@ -211,15 +256,40 @@ impl<'a> PlanExecutor<'a> {
                 return_type,
                 body,
                 or_replace,
-            } => self.execute_create_function(name, args, return_type, body, *or_replace),
+                if_not_exists,
+                is_temp,
+            } => self.execute_create_function(
+                name,
+                args,
+                return_type,
+                body,
+                *or_replace,
+                *if_not_exists,
+                *is_temp,
+            ),
             ExecutorPlan::DropFunction { name, if_exists } => {
                 self.execute_drop_function(name, *if_exists)
+            }
+            ExecutorPlan::CreateProcedure {
+                name,
+                args,
+                body,
+                or_replace,
+            } => self.execute_create_procedure(name, args, body, *or_replace),
+            ExecutorPlan::DropProcedure { name, if_exists } => {
+                self.execute_drop_procedure(name, *if_exists)
             }
             ExecutorPlan::Call {
                 procedure_name,
                 args,
             } => self.execute_call(procedure_name, args),
             ExecutorPlan::ExportData { options, query } => self.execute_export(options, query),
+            ExecutorPlan::LoadData {
+                table_name,
+                options,
+                temp_table,
+                temp_schema,
+            } => self.execute_load(table_name, options, *temp_table, temp_schema.as_ref()),
             ExecutorPlan::Declare {
                 name,
                 data_type,
@@ -233,6 +303,10 @@ impl<'a> PlanExecutor<'a> {
             } => self.execute_if(condition, then_branch, else_branch.as_deref()),
             ExecutorPlan::While { condition, body } => self.execute_while(condition, body),
             ExecutorPlan::Loop { body, label } => self.execute_loop(body, label.as_deref()),
+            ExecutorPlan::Repeat {
+                body,
+                until_condition,
+            } => self.execute_repeat(body, until_condition),
             ExecutorPlan::For {
                 variable,
                 query,
@@ -244,6 +318,15 @@ impl<'a> PlanExecutor<'a> {
             ExecutorPlan::Raise { message, level } => self.execute_raise(message.as_ref(), *level),
             ExecutorPlan::Break => Err(Error::InvalidQuery("BREAK outside of loop".into())),
             ExecutorPlan::Continue => Err(Error::InvalidQuery("CONTINUE outside of loop".into())),
+            ExecutorPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => self.execute_create_snapshot(snapshot_name, source_name, *if_not_exists),
+            ExecutorPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => self.execute_drop_snapshot(snapshot_name, *if_exists),
         }
     }
 }
