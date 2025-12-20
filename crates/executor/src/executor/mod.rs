@@ -239,6 +239,7 @@ impl<'a> PlanExecutor<'a> {
                 if_exists,
                 cascade,
             } => self.execute_drop_schema(name, *if_exists, *cascade),
+            ExecutorPlan::AlterSchema { name, options } => self.execute_alter_schema(name, options),
             ExecutorPlan::CreateFunction {
                 name,
                 args,

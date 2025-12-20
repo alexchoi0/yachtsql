@@ -180,6 +180,11 @@ pub enum LogicalPlan {
         cascade: bool,
     },
 
+    AlterSchema {
+        name: String,
+        options: Vec<(String, String)>,
+    },
+
     CreateFunction {
         name: String,
         args: Vec<FunctionArg>,
@@ -317,6 +322,7 @@ impl LogicalPlan {
             LogicalPlan::DropView { .. } => &EMPTY_SCHEMA,
             LogicalPlan::CreateSchema { .. } => &EMPTY_SCHEMA,
             LogicalPlan::DropSchema { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::AlterSchema { .. } => &EMPTY_SCHEMA,
             LogicalPlan::CreateFunction { .. } => &EMPTY_SCHEMA,
             LogicalPlan::DropFunction { .. } => &EMPTY_SCHEMA,
             LogicalPlan::CreateProcedure { .. } => &EMPTY_SCHEMA,

@@ -183,6 +183,7 @@ impl<'a> PlanExecutor<'a> {
                 }
                 Ok(Table::empty(Schema::new()))
             }
+            AlterTableOp::AddConstraint { .. } => Ok(Table::empty(Schema::new())),
         }
     }
 
@@ -230,6 +231,17 @@ impl<'a> PlanExecutor<'a> {
         cascade: bool,
     ) -> Result<Table> {
         self.catalog.drop_schema(name, if_exists, cascade)?;
+        Ok(Table::empty(Schema::new()))
+    }
+
+    pub fn execute_alter_schema(
+        &mut self,
+        name: &str,
+        options: &[(String, String)],
+    ) -> Result<Table> {
+        let option_map: std::collections::HashMap<String, String> =
+            options.iter().cloned().collect();
+        self.catalog.alter_schema_options(name, option_map)?;
         Ok(Table::empty(Schema::new()))
     }
 
@@ -1363,6 +1375,10 @@ fn executor_plan_to_logical_plan(plan: &ExecutorPlan) -> yachtsql_ir::LogicalPla
             name: name.clone(),
             if_exists: *if_exists,
             cascade: *cascade,
+        },
+        ExecutorPlan::AlterSchema { name, options } => LogicalPlan::AlterSchema {
+            name: name.clone(),
+            options: options.clone(),
         },
         ExecutorPlan::CreateFunction {
             name,

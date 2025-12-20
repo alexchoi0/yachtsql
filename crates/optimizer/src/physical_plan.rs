@@ -189,6 +189,11 @@ pub enum PhysicalPlan {
         cascade: bool,
     },
 
+    AlterSchema {
+        name: String,
+        options: Vec<(String, String)>,
+    },
+
     CreateFunction {
         name: String,
         args: Vec<FunctionArg>,
@@ -331,6 +336,7 @@ impl PhysicalPlan {
             PhysicalPlan::DropView { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::CreateSchema { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::DropSchema { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::AlterSchema { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::CreateFunction { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::DropFunction { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::CreateProcedure { .. } => &EMPTY_SCHEMA,

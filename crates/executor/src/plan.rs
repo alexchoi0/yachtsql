@@ -189,6 +189,11 @@ pub enum ExecutorPlan {
         cascade: bool,
     },
 
+    AlterSchema {
+        name: String,
+        options: Vec<(String, String)>,
+    },
+
     CreateFunction {
         name: String,
         args: Vec<FunctionArg>,
@@ -570,6 +575,11 @@ impl ExecutorPlan {
                 name: name.clone(),
                 if_exists: *if_exists,
                 cascade: *cascade,
+            },
+
+            PhysicalPlan::AlterSchema { name, options } => ExecutorPlan::AlterSchema {
+                name: name.clone(),
+                options: options.clone(),
             },
 
             PhysicalPlan::CreateFunction {

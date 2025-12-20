@@ -325,6 +325,11 @@ impl PhysicalPlanner {
                 cascade: *cascade,
             }),
 
+            LogicalPlan::AlterSchema { name, options } => Ok(PhysicalPlan::AlterSchema {
+                name: name.clone(),
+                options: options.clone(),
+            }),
+
             LogicalPlan::CreateFunction {
                 name,
                 args,
@@ -779,6 +784,9 @@ impl PhysicalPlan {
                 if_exists,
                 cascade,
             },
+            PhysicalPlan::AlterSchema { name, options } => {
+                LogicalPlan::AlterSchema { name, options }
+            }
             PhysicalPlan::CreateFunction {
                 name,
                 args,

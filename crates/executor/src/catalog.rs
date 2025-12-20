@@ -221,6 +221,15 @@ impl Catalog {
 
     pub fn insert_table(&mut self, name: &str, table: Table) -> Result<()> {
         let key = name.to_uppercase();
+        if let Some(dot_pos) = key.find('.') {
+            let schema_name = &key[..dot_pos];
+            if !self.schemas.contains(schema_name) {
+                return Err(Error::invalid_query(format!(
+                    "Schema not found: {}",
+                    schema_name
+                )));
+            }
+        }
         if self.tables.contains_key(&key) {
             return Err(Error::invalid_query(format!(
                 "Table already exists: {}",
