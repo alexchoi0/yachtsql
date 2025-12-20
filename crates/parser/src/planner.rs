@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use sqlparser::ast::{self, SetExpr, Statement, TableFactor};
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::DataType;
+use yachtsql_common::types::{DataType, StructField};
 use yachtsql_ir::{
     AlterColumnAction, AlterTableOp, Assignment, BinaryOp, ColumnDef, CteDefinition, ExportFormat,
     ExportOptions, Expr, FunctionArg, FunctionBody, JoinType, Literal, LogicalPlan, MergeClause,
@@ -533,6 +533,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
                 let empty_schema = PlanSchema::new();
                 let array_expr = ExprPlanner::plan_expr(&array_exprs[0], &empty_schema)?;
+                let array_type = self.infer_expr_type(&array_expr, &empty_schema);
+                let element_type = match array_type {
+                    DataType::Array(inner) => *inner,
+                    _ => DataType::Unknown,
+                };
 
                 let unnest_column = UnnestColumn {
                     expr: array_expr,
@@ -545,7 +550,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     },
                 };
 
-                let mut fields = vec![PlanField::new(element_alias, DataType::String)];
+                let mut fields = vec![PlanField::new(element_alias, element_type)];
                 if *with_offset {
                     fields.push(PlanField::new(offset_alias_str, DataType::Int64));
                 }
@@ -2078,6 +2083,33 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     Some(e) => e,
                     None => ExprPlanner::plan_expr(&order_expr.expr, input.schema())?,
                 }
+            } else if let ast::Expr::CompoundIdentifier(parts) = &order_expr.expr {
+                let last_name = parts
+                    .last()
+                    .map(|p| p.value.to_uppercase())
+                    .unwrap_or_default();
+                let mut found_alias = None;
+                for (i, proj_expr) in projection_exprs.iter().enumerate() {
+                    if let Expr::Alias {
+                        name: alias_name,
+                        expr: inner,
+                    } = proj_expr
+                        && alias_name.to_uppercase() == last_name
+                    {
+                        found_alias = Some(inner.as_ref().clone());
+                        break;
+                    }
+                    if i < projection_schema.fields.len()
+                        && projection_schema.fields[i].name.to_uppercase() == last_name
+                    {
+                        found_alias = Some(proj_expr.clone());
+                        break;
+                    }
+                }
+                match found_alias {
+                    Some(e) => e,
+                    None => ExprPlanner::plan_expr(&order_expr.expr, input.schema())?,
+                }
             } else {
                 ExprPlanner::plan_expr(&order_expr.expr, input.schema())?
             };
@@ -2817,13 +2849,45 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 DataType::Array(Box::new(element_type))
             }
             ast::DataType::Interval { .. } => DataType::Interval,
-            ast::DataType::Custom(name, _) => {
+            ast::DataType::Custom(name, modifiers) => {
                 let type_name = name.to_string().to_uppercase();
                 match type_name.as_str() {
                     "GEOGRAPHY" => DataType::Geography,
+                    "RANGE" => {
+                        if let Some(inner_type_str) = modifiers.first() {
+                            let inner_type =
+                                Self::parse_range_inner_type(&inner_type_str.to_string());
+                            DataType::Range(Box::new(inner_type))
+                        } else {
+                            DataType::Range(Box::new(DataType::Unknown))
+                        }
+                    }
                     _ => DataType::Unknown,
                 }
             }
+            ast::DataType::Struct(fields, _) => {
+                let struct_fields: Vec<StructField> = fields
+                    .iter()
+                    .map(|f| StructField {
+                        name: f
+                            .field_name
+                            .as_ref()
+                            .map(|n| n.value.clone())
+                            .unwrap_or_default(),
+                        data_type: Self::convert_sql_type(&f.field_type),
+                    })
+                    .collect();
+                DataType::Struct(struct_fields)
+            }
+            _ => DataType::Unknown,
+        }
+    }
+
+    fn parse_range_inner_type(type_str: &str) -> DataType {
+        match type_str.to_uppercase().as_str() {
+            "DATE" => DataType::Date,
+            "DATETIME" => DataType::DateTime,
+            "TIMESTAMP" => DataType::Timestamp,
             _ => DataType::Unknown,
         }
     }
@@ -3389,8 +3453,17 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             }
             Expr::Extract { .. } => DataType::Int64,
             Expr::TypedString { data_type, .. } => data_type.clone(),
-            Expr::Array { element_type, .. } => {
-                DataType::Array(Box::new(element_type.clone().unwrap_or(DataType::Unknown)))
+            Expr::Array {
+                elements,
+                element_type,
+            } => {
+                let elem_type = element_type.clone().unwrap_or_else(|| {
+                    elements
+                        .first()
+                        .map(|e| Self::compute_expr_type(e, schema))
+                        .unwrap_or(DataType::Unknown)
+                });
+                DataType::Array(Box::new(elem_type))
             }
             Expr::ArrayAccess { array, .. } => {
                 let array_type = Self::compute_expr_type(array, schema);
@@ -3399,7 +3472,17 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     _ => DataType::Unknown,
                 }
             }
-            Expr::Struct { .. } => DataType::Struct(vec![]),
+            Expr::Struct { fields } => {
+                let struct_fields = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, expr))| StructField {
+                        name: name.clone().unwrap_or_else(|| format!("_field{}", i)),
+                        data_type: Self::compute_expr_type(expr, schema),
+                    })
+                    .collect();
+                DataType::Struct(struct_fields)
+            }
             Expr::StructAccess { expr, field } => {
                 Self::resolve_struct_field_type(expr, field, schema)
             }

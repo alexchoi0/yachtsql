@@ -1,10 +1,11 @@
 use rust_decimal::Decimal;
 use sqlparser::ast;
 use yachtsql_common::error::{Error, Result};
+use yachtsql_common::types::DataType;
 use yachtsql_ir::{
-    AggregateFunction, BinaryOp, DateTimeField, Expr, Literal, LogicalPlan, PlanSchema,
-    ScalarFunction, SortExpr, TrimWhere, UnaryOp, WhenClause, WindowFrame, WindowFrameBound,
-    WindowFrameUnit, WindowFunction,
+    AggregateFunction, BinaryOp, DateTimeField, Expr, JsonPathElement, Literal, LogicalPlan,
+    PlanSchema, ScalarFunction, SortExpr, TrimWhere, UnaryOp, WhenClause, WindowFrame,
+    WindowFrameBound, WindowFrameUnit, WindowFunction,
 };
 
 pub type SubqueryPlannerFn<'a> = &'a dyn Fn(&ast::Query) -> Result<LogicalPlan>;
@@ -48,24 +49,7 @@ impl ExprPlanner {
             }
 
             ast::Expr::CompoundIdentifier(parts) => {
-                let (table, name) = if parts.len() > 1 {
-                    (
-                        Some(
-                            parts[..parts.len() - 1]
-                                .iter()
-                                .map(|p| p.value.clone())
-                                .collect::<Vec<_>>()
-                                .join("."),
-                        ),
-                        parts.last().map(|p| p.value.clone()).unwrap_or_default(),
-                    )
-                } else {
-                    (
-                        None,
-                        parts.first().map(|p| p.value.clone()).unwrap_or_default(),
-                    )
-                };
-                Self::resolve_column(&name, table.as_deref(), schema)
+                Self::resolve_compound_identifier(parts, schema)
             }
 
             ast::Expr::Value(val) => Ok(Expr::Literal(Self::plan_literal(&val.value)?)),
@@ -582,6 +566,65 @@ impl ExprPlanner {
             name: name.to_string(),
             index,
         })
+    }
+
+    fn resolve_compound_identifier(parts: &[ast::Ident], schema: &PlanSchema) -> Result<Expr> {
+        if parts.is_empty() {
+            return Err(Error::InvalidQuery("Empty compound identifier".into()));
+        }
+
+        if parts.len() == 1 {
+            let name = &parts[0].value;
+            return Self::resolve_column(name, None, schema);
+        }
+
+        let first_part = &parts[0].value;
+        if let Some((idx, field)) = schema.field_by_name(first_part) {
+            match &field.data_type {
+                DataType::Struct(_) => {
+                    let mut expr = Expr::Column {
+                        table: None,
+                        name: first_part.clone(),
+                        index: Some(idx),
+                    };
+                    for part in &parts[1..] {
+                        expr = Expr::StructAccess {
+                            expr: Box::new(expr),
+                            field: part.value.clone(),
+                        };
+                    }
+                    return Ok(expr);
+                }
+                DataType::Json => {
+                    let base = Expr::Column {
+                        table: None,
+                        name: first_part.clone(),
+                        index: Some(idx),
+                    };
+                    let path: Vec<JsonPathElement> = parts[1..]
+                        .iter()
+                        .map(|p| JsonPathElement::Key(p.value.clone()))
+                        .collect();
+                    return Ok(Expr::JsonAccess {
+                        expr: Box::new(base),
+                        path,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let (table, name) = (
+            Some(
+                parts[..parts.len() - 1]
+                    .iter()
+                    .map(|p| p.value.clone())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            ),
+            parts.last().map(|p| p.value.clone()).unwrap_or_default(),
+        );
+        Self::resolve_column(&name, table.as_deref(), schema)
     }
 
     fn plan_all_any_op(

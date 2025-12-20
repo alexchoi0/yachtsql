@@ -94,6 +94,13 @@ impl PlanSchema {
         }
     }
 
+    pub fn field_by_name(&self, name: &str) -> Option<(usize, &PlanField)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.name.eq_ignore_ascii_case(name))
+    }
+
     pub fn merge(self, other: PlanSchema) -> Self {
         let mut fields = self.fields;
         fields.extend(other.fields);

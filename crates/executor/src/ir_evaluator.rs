@@ -1203,6 +1203,17 @@ impl<'a> IrEvaluator<'a> {
                         };
                         Ok(elements.get(actual_idx).cloned().unwrap_or(Value::Null))
                     }
+                    (Value::Json(json), Value::Int64(idx)) => {
+                        let result = json
+                            .get(*idx as usize)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        Ok(Value::Json(result))
+                    }
+                    (Value::Json(json), Value::String(key)) => {
+                        let result = json.get(key).cloned().unwrap_or(serde_json::Value::Null);
+                        Ok(Value::Json(result))
+                    }
                     _ => Err(Error::InvalidQuery(
                         "Array access requires array and integer index".into(),
                     )),
