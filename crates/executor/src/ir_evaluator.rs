@@ -4558,11 +4558,97 @@ impl<'a> IrEvaluator<'a> {
             "ARRAY_SLICE" => self.fn_array_slice(args),
             "ARRAYENUMERATE" => self.fn_array_enumerate(args),
             "HLL_COUNT_EXTRACT" => self.fn_hll_count_extract(args),
+            "MAP" => self.fn_map(args),
+            "MAPKEYS" => self.fn_map_keys(args),
+            "MAPVALUES" => self.fn_map_values(args),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Scalar function Custom(\"{}\") not yet implemented in IR evaluator",
                 name
             ))),
         }
+    }
+
+    fn fn_map(&self, args: &[Value]) -> Result<Value> {
+        if args.len() % 2 != 0 {
+            return Err(Error::InvalidQuery(
+                "MAP requires an even number of arguments (alternating key, value pairs)".into(),
+            ));
+        }
+        if args.is_empty() {
+            return Ok(Value::Array(vec![]));
+        }
+        let map_entries: Vec<Value> = args
+            .chunks(2)
+            .map(|pair| {
+                Value::Struct(vec![
+                    ("key".to_string(), pair[0].clone()),
+                    ("value".to_string(), pair[1].clone()),
+                ])
+            })
+            .collect();
+        Ok(Value::Array(map_entries))
+    }
+
+    fn fn_map_keys(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "MAPKEYS requires exactly 1 argument".into(),
+            ));
+        }
+        let map_array = match &args[0] {
+            Value::Array(arr) => arr,
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "MAPKEYS argument must be a MAP (array of key-value structs)".into(),
+                ))
+            }
+        };
+        let keys: Vec<Value> = map_array
+            .iter()
+            .filter_map(|entry| {
+                if let Value::Struct(fields) = entry {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == "key")
+                        .map(|(_, v)| v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(Value::Array(keys))
+    }
+
+    fn fn_map_values(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "MAPVALUES requires exactly 1 argument".into(),
+            ));
+        }
+        let map_array = match &args[0] {
+            Value::Array(arr) => arr,
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "MAPVALUES argument must be a MAP (array of key-value structs)".into(),
+                ))
+            }
+        };
+        let values: Vec<Value> = map_array
+            .iter()
+            .filter_map(|entry| {
+                if let Value::Struct(fields) = entry {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == "value")
+                        .map(|(_, v)| v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(Value::Array(values))
     }
 
     fn fn_st_geogfromtext(&self, args: &[Value]) -> Result<Value> {
