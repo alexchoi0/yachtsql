@@ -42,8 +42,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 object_type,
                 names,
                 if_exists,
+                cascade,
                 ..
-            } => self.plan_drop(object_type, names, *if_exists),
+            } => self.plan_drop(object_type, names, *if_exists, *cascade),
             Statement::Truncate { table_names, .. } => self.plan_truncate(table_names),
             Statement::AlterTable {
                 name, operations, ..
@@ -60,6 +61,21 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 if_not_exists,
                 ..
             } => self.plan_create_view(name, query, *or_replace, *if_not_exists),
+            Statement::DropFunction {
+                func_desc,
+                if_exists,
+                ..
+            } => {
+                let name = func_desc
+                    .first()
+                    .map(|desc| desc.name.to_string())
+                    .ok_or_else(|| Error::parse_error("DROP FUNCTION requires a function name"))?;
+
+                Ok(LogicalPlan::DropFunction {
+                    name,
+                    if_exists: *if_exists,
+                })
+            }
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
@@ -2075,6 +2091,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         object_type: &ast::ObjectType,
         names: &[ast::ObjectName],
         if_exists: bool,
+        cascade: bool,
     ) -> Result<LogicalPlan> {
         match object_type {
             ast::ObjectType::Table => {
@@ -2097,8 +2114,16 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 Ok(LogicalPlan::DropSchema {
                     name,
                     if_exists,
-                    cascade: false,
+                    cascade,
                 })
+            }
+            ast::ObjectType::View => {
+                let name = names
+                    .first()
+                    .map(|n| n.to_string())
+                    .ok_or_else(|| Error::parse_error("DROP VIEW requires a view name"))?;
+
+                Ok(LogicalPlan::DropView { name, if_exists })
             }
             _ => Err(Error::unsupported(format!(
                 "Unsupported DROP object type: {:?}",
