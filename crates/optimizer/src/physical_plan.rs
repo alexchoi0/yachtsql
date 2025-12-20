@@ -255,6 +255,17 @@ pub enum PhysicalPlan {
     Break,
 
     Continue,
+
+    CreateSnapshot {
+        snapshot_name: String,
+        source_name: String,
+        if_not_exists: bool,
+    },
+
+    DropSnapshot {
+        snapshot_name: String,
+        if_exists: bool,
+    },
 }
 
 impl PhysicalPlan {
@@ -306,6 +317,8 @@ impl PhysicalPlan {
             PhysicalPlan::Raise { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::Break => &EMPTY_SCHEMA,
             PhysicalPlan::Continue => &EMPTY_SCHEMA,
+            PhysicalPlan::CreateSnapshot { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::DropSnapshot { .. } => &EMPTY_SCHEMA,
         }
     }
 }

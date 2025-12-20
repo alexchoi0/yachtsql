@@ -241,6 +241,15 @@ impl<'a> PlanExecutor<'a> {
             ExecutorPlan::Raise { message, level } => self.execute_raise(message.as_ref(), *level),
             ExecutorPlan::Break => Err(Error::InvalidQuery("BREAK outside of loop".into())),
             ExecutorPlan::Continue => Err(Error::InvalidQuery("CONTINUE outside of loop".into())),
+            ExecutorPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => self.execute_create_snapshot(snapshot_name, source_name, *if_not_exists),
+            ExecutorPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => self.execute_drop_snapshot(snapshot_name, *if_exists),
         }
     }
 }

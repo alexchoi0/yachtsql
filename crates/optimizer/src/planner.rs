@@ -449,6 +449,24 @@ impl PhysicalPlanner {
             LogicalPlan::Break => Ok(PhysicalPlan::Break),
 
             LogicalPlan::Continue => Ok(PhysicalPlan::Continue),
+
+            LogicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => Ok(PhysicalPlan::CreateSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                source_name: source_name.clone(),
+                if_not_exists: *if_not_exists,
+            }),
+
+            LogicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => Ok(PhysicalPlan::DropSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                if_exists: *if_exists,
+            }),
         }
     }
 }
@@ -771,6 +789,22 @@ impl PhysicalPlan {
             PhysicalPlan::Raise { message, level } => LogicalPlan::Raise { message, level },
             PhysicalPlan::Break => LogicalPlan::Break,
             PhysicalPlan::Continue => LogicalPlan::Continue,
+            PhysicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => LogicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            },
+            PhysicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => LogicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            },
         }
     }
 }

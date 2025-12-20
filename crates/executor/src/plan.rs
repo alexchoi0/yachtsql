@@ -255,6 +255,17 @@ pub enum ExecutorPlan {
     Break,
 
     Continue,
+
+    CreateSnapshot {
+        snapshot_name: String,
+        source_name: String,
+        if_not_exists: bool,
+    },
+
+    DropSnapshot {
+        snapshot_name: String,
+        if_exists: bool,
+    },
 }
 
 impl ExecutorPlan {
@@ -622,6 +633,24 @@ impl ExecutorPlan {
             PhysicalPlan::Break => ExecutorPlan::Break,
 
             PhysicalPlan::Continue => ExecutorPlan::Continue,
+
+            PhysicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => ExecutorPlan::CreateSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                source_name: source_name.clone(),
+                if_not_exists: *if_not_exists,
+            },
+
+            PhysicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => ExecutorPlan::DropSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                if_exists: *if_exists,
+            },
         }
     }
 }
