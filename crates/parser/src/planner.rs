@@ -6,8 +6,8 @@ use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
     AlterColumnAction, AlterTableOp, Assignment, BinaryOp, ColumnDef, CteDefinition, ExportFormat,
-    ExportOptions, Expr, JoinType, Literal, LogicalPlan, PlanField, PlanSchema, SetOperationType,
-    SortExpr,
+    ExportOptions, Expr, JoinType, Literal, LogicalPlan, MergeClause, PlanField, PlanSchema,
+    ProcedureArg, ProcedureArgMode, SetOperationType, SortExpr,
 };
 use yachtsql_storage::Schema;
 
@@ -57,11 +57,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             } => self.plan_create_schema(schema_name, *if_not_exists),
             Statement::CreateView {
                 name,
+                columns,
                 query,
                 or_replace,
                 if_not_exists,
                 ..
-            } => self.plan_create_view(name, query, *or_replace, *if_not_exists),
+            } => self.plan_create_view(name, columns, query, *or_replace, *if_not_exists),
             Statement::DropFunction {
                 func_desc,
                 if_exists,
@@ -78,6 +79,47 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 })
             }
             Statement::ExportData(export_data) => self.plan_export_data(export_data),
+            Statement::Merge {
+                table,
+                source,
+                on,
+                clauses,
+                ..
+            } => self.plan_merge(table, source, on, clauses),
+            Statement::StartTransaction { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
+            Statement::Commit { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
+            Statement::Rollback { .. } => Ok(LogicalPlan::Empty {
+                schema: PlanSchema::new(),
+            }),
+            Statement::CreateProcedure {
+                or_alter,
+                name,
+                params,
+                body,
+                ..
+            } => self.plan_create_procedure(name, params, body, *or_alter),
+            Statement::DropProcedure {
+                if_exists,
+                proc_desc,
+                ..
+            } => {
+                let name = proc_desc
+                    .first()
+                    .map(|desc| desc.name.to_string())
+                    .ok_or_else(|| {
+                        Error::parse_error("DROP PROCEDURE requires a procedure name")
+                    })?;
+
+                Ok(LogicalPlan::DropProcedure {
+                    name,
+                    if_exists: *if_exists,
+                })
+            }
+            Statement::Call(func) => self.plan_call(func),
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
@@ -357,22 +399,87 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     });
                 }
 
-                let storage_schema = self
-                    .catalog
-                    .get_table_schema(&table_name)
-                    .ok_or_else(|| Error::table_not_found(&table_name))?;
+                if let Some(storage_schema) = self.catalog.get_table_schema(&table_name) {
+                    let alias_name = alias.as_ref().map(|a| a.name.value.as_str());
+                    let schema = self.storage_schema_to_plan_schema(
+                        &storage_schema,
+                        alias_name.or(Some(&table_name)),
+                    );
 
-                let alias_name = alias.as_ref().map(|a| a.name.value.as_str());
-                let schema = self.storage_schema_to_plan_schema(
-                    &storage_schema,
-                    alias_name.or(Some(&table_name)),
-                );
+                    return Ok(LogicalPlan::Scan {
+                        table_name,
+                        schema,
+                        projection: None,
+                    });
+                }
 
-                Ok(LogicalPlan::Scan {
-                    table_name,
-                    schema,
-                    projection: None,
-                })
+                if let Some(view_def) = self.catalog.get_view(&table_name) {
+                    let view_plan = crate::parse_and_plan(&view_def.query, self.catalog)?;
+                    let alias_name = alias.as_ref().map(|a| a.name.value.as_str());
+
+                    let plan = if !view_def.column_aliases.is_empty() {
+                        let view_schema = view_plan.schema();
+                        if view_def.column_aliases.len() != view_schema.fields.len() {
+                            return Err(Error::invalid_query(format!(
+                                "View column count mismatch: expected {}, got {}",
+                                view_schema.fields.len(),
+                                view_def.column_aliases.len()
+                            )));
+                        }
+                        let new_fields: Vec<PlanField> = view_schema
+                            .fields
+                            .iter()
+                            .zip(view_def.column_aliases.iter())
+                            .map(|(f, alias)| PlanField {
+                                name: alias.clone(),
+                                data_type: f.data_type.clone(),
+                                nullable: f.nullable,
+                                table: alias_name.map(String::from),
+                            })
+                            .collect();
+                        let new_schema = PlanSchema { fields: new_fields };
+                        let expressions: Vec<Expr> = view_plan
+                            .schema()
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, f)| Expr::Column {
+                                table: f.table.clone(),
+                                name: f.name.clone(),
+                                index: Some(i),
+                            })
+                            .collect();
+                        LogicalPlan::Project {
+                            input: Box::new(view_plan),
+                            expressions,
+                            schema: new_schema,
+                        }
+                    } else if let Some(alias) = alias_name {
+                        let renamed_schema = self.rename_schema(view_plan.schema(), alias);
+                        let expressions: Vec<Expr> = view_plan
+                            .schema()
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, f)| Expr::Column {
+                                table: f.table.clone(),
+                                name: f.name.clone(),
+                                index: Some(i),
+                            })
+                            .collect();
+                        LogicalPlan::Project {
+                            input: Box::new(view_plan),
+                            expressions,
+                            schema: renamed_schema,
+                        }
+                    } else {
+                        view_plan
+                    };
+
+                    return Ok(plan);
+                }
+
+                Err(Error::table_not_found(&table_name))
             }
             TableFactor::Derived {
                 subquery, alias, ..
@@ -2052,6 +2159,185 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         Ok(LogicalPlan::Delete { table_name, filter })
     }
 
+    fn plan_merge(
+        &self,
+        table: &TableFactor,
+        source: &TableFactor,
+        on: &ast::Expr,
+        clauses: &[ast::MergeClause],
+    ) -> Result<LogicalPlan> {
+        let target_name = match table {
+            TableFactor::Table { name, .. } => name.to_string(),
+            _ => return Err(Error::parse_error("MERGE target must be a table")),
+        };
+
+        let target_alias = match table {
+            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+            _ => None,
+        };
+
+        let target_storage_schema = self
+            .catalog
+            .get_table_schema(&target_name)
+            .ok_or_else(|| Error::table_not_found(&target_name))?;
+        let target_schema = self.storage_schema_to_plan_schema(
+            &target_storage_schema,
+            target_alias.as_deref().or(Some(&target_name)),
+        );
+
+        let source_plan = self.plan_table_factor(source)?;
+        let source_schema = source_plan.schema().clone();
+
+        let source_alias = match source {
+            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+            TableFactor::Derived { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+            _ => None,
+        };
+
+        let source_schema_with_alias = if let Some(ref alias) = source_alias {
+            PlanSchema::from_fields(
+                source_schema
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let mut field = f.clone();
+                        field.table = Some(alias.clone());
+                        let base_name = f.name.split('.').next_back().unwrap_or(&f.name);
+                        field.name = format!("{}.{}", alias, base_name);
+                        field
+                    })
+                    .collect(),
+            )
+        } else {
+            source_schema.clone()
+        };
+
+        let combined_schema = target_schema
+            .clone()
+            .merge(source_schema_with_alias.clone());
+
+        let on_expr = ExprPlanner::plan_expr(on, &combined_schema)?;
+
+        let mut merge_clauses = Vec::new();
+        for clause in clauses {
+            let planned_clause = self.plan_merge_clause(
+                clause,
+                &combined_schema,
+                &target_schema,
+                &source_schema_with_alias,
+            )?;
+            merge_clauses.push(planned_clause);
+        }
+
+        Ok(LogicalPlan::Merge {
+            target_table: target_name,
+            source: Box::new(source_plan),
+            on: on_expr,
+            clauses: merge_clauses,
+        })
+    }
+
+    fn plan_merge_clause(
+        &self,
+        clause: &ast::MergeClause,
+        combined_schema: &PlanSchema,
+        target_schema: &PlanSchema,
+        _source_schema: &PlanSchema,
+    ) -> Result<MergeClause> {
+        let condition = clause
+            .predicate
+            .as_ref()
+            .map(|p| ExprPlanner::plan_expr(p, combined_schema))
+            .transpose()?;
+
+        match &clause.clause_kind {
+            ast::MergeClauseKind::Matched => match &clause.action {
+                ast::MergeAction::Update { assignments } => {
+                    let mut plan_assignments = Vec::new();
+                    for assign in assignments {
+                        let column = match &assign.target {
+                            ast::AssignmentTarget::ColumnName(names) => names.to_string(),
+                            ast::AssignmentTarget::Tuple(parts) => parts
+                                .iter()
+                                .map(|p| p.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        };
+                        let value = ExprPlanner::plan_expr(&assign.value, combined_schema)?;
+                        plan_assignments.push(Assignment { column, value });
+                    }
+                    Ok(MergeClause::MatchedUpdate {
+                        condition,
+                        assignments: plan_assignments,
+                    })
+                }
+                ast::MergeAction::Delete => Ok(MergeClause::MatchedDelete { condition }),
+                ast::MergeAction::Insert(_) => Err(Error::parse_error(
+                    "INSERT action not valid for WHEN MATCHED",
+                )),
+            },
+            ast::MergeClauseKind::NotMatched | ast::MergeClauseKind::NotMatchedByTarget => {
+                match &clause.action {
+                    ast::MergeAction::Insert(insert_expr) => {
+                        let columns: Vec<String> = insert_expr
+                            .columns
+                            .iter()
+                            .map(|c| c.value.clone())
+                            .collect();
+
+                        let values = match &insert_expr.kind {
+                            ast::MergeInsertKind::Row => Vec::new(),
+                            ast::MergeInsertKind::Values(vals) => {
+                                if let Some(first_row) = vals.rows.first() {
+                                    first_row
+                                        .iter()
+                                        .map(|e| ExprPlanner::plan_expr(e, combined_schema))
+                                        .collect::<Result<Vec<_>>>()?
+                                } else {
+                                    Vec::new()
+                                }
+                            }
+                        };
+
+                        Ok(MergeClause::NotMatched {
+                            condition,
+                            columns,
+                            values,
+                        })
+                    }
+                    ast::MergeAction::Update { .. } | ast::MergeAction::Delete => Err(
+                        Error::parse_error("UPDATE/DELETE actions not valid for WHEN NOT MATCHED"),
+                    ),
+                }
+            }
+            ast::MergeClauseKind::NotMatchedBySource => match &clause.action {
+                ast::MergeAction::Update { assignments } => {
+                    let mut plan_assignments = Vec::new();
+                    for assign in assignments {
+                        let column = match &assign.target {
+                            ast::AssignmentTarget::ColumnName(names) => names.to_string(),
+                            ast::AssignmentTarget::Tuple(parts) => parts
+                                .iter()
+                                .map(|p| p.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        };
+                        let value = ExprPlanner::plan_expr(&assign.value, target_schema)?;
+                        plan_assignments.push(Assignment { column, value });
+                    }
+                    Ok(MergeClause::NotMatchedBySource {
+                        condition,
+                        assignments: plan_assignments,
+                    })
+                }
+                ast::MergeAction::Delete => Ok(MergeClause::NotMatchedBySourceDelete { condition }),
+                ast::MergeAction::Insert(_) => Err(Error::parse_error(
+                    "INSERT action not valid for WHEN NOT MATCHED BY SOURCE",
+                )),
+            },
+        }
+    }
+
     fn plan_create_table(&self, create: &ast::CreateTable) -> Result<LogicalPlan> {
         let table_name = create.name.to_string();
         let empty_schema = PlanSchema::new();
@@ -2262,16 +2548,21 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
     fn plan_create_view(
         &self,
         name: &ast::ObjectName,
+        columns: &[ast::ViewColumnDef],
         query: &ast::Query,
         or_replace: bool,
         if_not_exists: bool,
     ) -> Result<LogicalPlan> {
         let view_name = name.to_string();
         let query_plan = self.plan_query(query)?;
+        let query_sql = query.to_string();
+        let column_aliases: Vec<String> = columns.iter().map(|c| c.name.value.clone()).collect();
 
         Ok(LogicalPlan::CreateView {
             name: view_name,
             query: Box::new(query_plan),
+            query_sql,
+            column_aliases,
             or_replace,
             if_not_exists,
         })
@@ -3152,5 +3443,79 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             ast::Expr::Identifier(ident) => ident.value.clone(),
             _ => format!("{}", expr),
         }
+    }
+
+    fn plan_create_procedure(
+        &self,
+        name: &ast::ObjectName,
+        params: &Option<Vec<ast::ProcedureParam>>,
+        body: &ast::ConditionalStatements,
+        or_replace: bool,
+    ) -> Result<LogicalPlan> {
+        let proc_name = name.to_string();
+        let args = match params {
+            Some(params) => params
+                .iter()
+                .map(|p| {
+                    let mode = match p.mode {
+                        Some(ast::ArgMode::In) => ProcedureArgMode::In,
+                        Some(ast::ArgMode::Out) => ProcedureArgMode::Out,
+                        Some(ast::ArgMode::InOut) => ProcedureArgMode::InOut,
+                        None => ProcedureArgMode::In,
+                    };
+                    ProcedureArg {
+                        name: p.name.value.clone(),
+                        data_type: Self::convert_sql_type(&p.data_type),
+                        mode,
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let body_plans = self.plan_conditional_statements(body)?;
+
+        Ok(LogicalPlan::CreateProcedure {
+            name: proc_name,
+            args,
+            body: body_plans,
+            or_replace,
+        })
+    }
+
+    fn plan_conditional_statements(
+        &self,
+        stmts: &ast::ConditionalStatements,
+    ) -> Result<Vec<LogicalPlan>> {
+        stmts
+            .statements()
+            .iter()
+            .map(|s| self.plan_statement(s))
+            .collect()
+    }
+
+    fn plan_call(&self, func: &ast::Function) -> Result<LogicalPlan> {
+        let procedure_name = func.name.to_string();
+        let args = match &func.args {
+            ast::FunctionArguments::List(args) => args
+                .args
+                .iter()
+                .filter_map(|arg| match arg {
+                    ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) => {
+                        ExprPlanner::plan_expr(e, &PlanSchema::new()).ok()
+                    }
+                    _ => None,
+                })
+                .collect(),
+            ast::FunctionArguments::None => Vec::new(),
+            ast::FunctionArguments::Subquery(_) => {
+                return Err(Error::unsupported("Subquery in CALL not supported"));
+            }
+        };
+
+        Ok(LogicalPlan::Call {
+            procedure_name,
+            args,
+        })
     }
 }

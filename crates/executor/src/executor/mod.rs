@@ -180,10 +180,18 @@ impl<'a> PlanExecutor<'a> {
             ExecutorPlan::Truncate { table_name } => self.execute_truncate(table_name),
             ExecutorPlan::CreateView {
                 name,
-                query,
+                query: _,
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
-            } => self.execute_create_view(name, query, *or_replace, *if_not_exists),
+            } => self.execute_create_view(
+                name,
+                query_sql,
+                column_aliases,
+                *or_replace,
+                *if_not_exists,
+            ),
             ExecutorPlan::DropView { name, if_exists } => self.execute_drop_view(name, *if_exists),
             ExecutorPlan::CreateSchema {
                 name,
@@ -203,6 +211,15 @@ impl<'a> PlanExecutor<'a> {
             } => self.execute_create_function(name, args, return_type, body, *or_replace),
             ExecutorPlan::DropFunction { name, if_exists } => {
                 self.execute_drop_function(name, *if_exists)
+            }
+            ExecutorPlan::CreateProcedure {
+                name,
+                args,
+                body,
+                or_replace,
+            } => self.execute_create_procedure(name, args, body, *or_replace),
+            ExecutorPlan::DropProcedure { name, if_exists } => {
+                self.execute_drop_procedure(name, *if_exists)
             }
             ExecutorPlan::Call {
                 procedure_name,
@@ -228,6 +245,10 @@ impl<'a> PlanExecutor<'a> {
             } => self.execute_if(condition, then_branch, else_branch.as_deref()),
             ExecutorPlan::While { condition, body } => self.execute_while(condition, body),
             ExecutorPlan::Loop { body, label } => self.execute_loop(body, label.as_deref()),
+            ExecutorPlan::Repeat {
+                body,
+                until_condition,
+            } => self.execute_repeat(body, until_condition),
             ExecutorPlan::For {
                 variable,
                 query,
@@ -239,6 +260,15 @@ impl<'a> PlanExecutor<'a> {
             ExecutorPlan::Raise { message, level } => self.execute_raise(message.as_ref(), *level),
             ExecutorPlan::Break => Err(Error::InvalidQuery("BREAK outside of loop".into())),
             ExecutorPlan::Continue => Err(Error::InvalidQuery("CONTINUE outside of loop".into())),
+            ExecutorPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => self.execute_create_snapshot(snapshot_name, source_name, *if_not_exists),
+            ExecutorPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => self.execute_drop_snapshot(snapshot_name, *if_exists),
         }
     }
 }

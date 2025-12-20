@@ -157,6 +157,8 @@ pub enum LogicalPlan {
     CreateView {
         name: String,
         query: Box<LogicalPlan>,
+        query_sql: String,
+        column_aliases: Vec<String>,
         or_replace: bool,
         if_not_exists: bool,
     },
@@ -186,6 +188,18 @@ pub enum LogicalPlan {
     },
 
     DropFunction {
+        name: String,
+        if_exists: bool,
+    },
+
+    CreateProcedure {
+        name: String,
+        args: Vec<ProcedureArg>,
+        body: Vec<LogicalPlan>,
+        or_replace: bool,
+    },
+
+    DropProcedure {
         name: String,
         if_exists: bool,
     },
@@ -234,6 +248,11 @@ pub enum LogicalPlan {
         label: Option<String>,
     },
 
+    Repeat {
+        body: Vec<LogicalPlan>,
+        until_condition: Expr,
+    },
+
     For {
         variable: String,
         query: Box<LogicalPlan>,
@@ -252,6 +271,17 @@ pub enum LogicalPlan {
     Break,
 
     Continue,
+
+    CreateSnapshot {
+        snapshot_name: String,
+        source_name: String,
+        if_not_exists: bool,
+    },
+
+    DropSnapshot {
+        snapshot_name: String,
+        if_exists: bool,
+    },
 }
 
 impl LogicalPlan {
@@ -286,6 +316,8 @@ impl LogicalPlan {
             LogicalPlan::DropSchema { .. } => &EMPTY_SCHEMA,
             LogicalPlan::CreateFunction { .. } => &EMPTY_SCHEMA,
             LogicalPlan::DropFunction { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::CreateProcedure { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::DropProcedure { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Call { .. } => &EMPTY_SCHEMA,
             LogicalPlan::ExportData { .. } => &EMPTY_SCHEMA,
             LogicalPlan::LoadData { .. } => &EMPTY_SCHEMA,
@@ -294,11 +326,14 @@ impl LogicalPlan {
             LogicalPlan::If { .. } => &EMPTY_SCHEMA,
             LogicalPlan::While { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Loop { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Repeat { .. } => &EMPTY_SCHEMA,
             LogicalPlan::For { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Return { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Raise { .. } => &EMPTY_SCHEMA,
             LogicalPlan::Break => &EMPTY_SCHEMA,
             LogicalPlan::Continue => &EMPTY_SCHEMA,
+            LogicalPlan::CreateSnapshot { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::DropSnapshot { .. } => &EMPTY_SCHEMA,
         }
     }
 

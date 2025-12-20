@@ -284,6 +284,8 @@ impl PhysicalPlanner {
             LogicalPlan::CreateView {
                 name,
                 query,
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
             } => {
@@ -291,6 +293,8 @@ impl PhysicalPlanner {
                 Ok(PhysicalPlan::CreateView {
                     name: name.clone(),
                     query: Box::new(query),
+                    query_sql: query_sql.clone(),
+                    column_aliases: column_aliases.clone(),
                     or_replace: *or_replace,
                     if_not_exists: *if_not_exists,
                 })
@@ -334,6 +338,29 @@ impl PhysicalPlanner {
             }),
 
             LogicalPlan::DropFunction { name, if_exists } => Ok(PhysicalPlan::DropFunction {
+                name: name.clone(),
+                if_exists: *if_exists,
+            }),
+
+            LogicalPlan::CreateProcedure {
+                name,
+                args,
+                body,
+                or_replace,
+            } => {
+                let body = body
+                    .iter()
+                    .map(|stmt| self.plan(stmt))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(PhysicalPlan::CreateProcedure {
+                    name: name.clone(),
+                    args: args.clone(),
+                    body,
+                    or_replace: *or_replace,
+                })
+            }
+
+            LogicalPlan::DropProcedure { name, if_exists } => Ok(PhysicalPlan::DropProcedure {
                 name: name.clone(),
                 if_exists: *if_exists,
             }),
@@ -428,6 +455,20 @@ impl PhysicalPlanner {
                 })
             }
 
+            LogicalPlan::Repeat {
+                body,
+                until_condition,
+            } => {
+                let body = body
+                    .iter()
+                    .map(|p| self.plan(p))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(PhysicalPlan::Repeat {
+                    body,
+                    until_condition: until_condition.clone(),
+                })
+            }
+
             LogicalPlan::For {
                 variable,
                 query,
@@ -457,6 +498,24 @@ impl PhysicalPlanner {
             LogicalPlan::Break => Ok(PhysicalPlan::Break),
 
             LogicalPlan::Continue => Ok(PhysicalPlan::Continue),
+
+            LogicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => Ok(PhysicalPlan::CreateSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                source_name: source_name.clone(),
+                if_not_exists: *if_not_exists,
+            }),
+
+            LogicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => Ok(PhysicalPlan::DropSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                if_exists: *if_exists,
+            }),
         }
     }
 }
@@ -683,11 +742,15 @@ impl PhysicalPlan {
             PhysicalPlan::CreateView {
                 name,
                 query,
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
             } => LogicalPlan::CreateView {
                 name,
                 query: Box::new(query.into_logical()),
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
             },
@@ -723,6 +786,20 @@ impl PhysicalPlan {
             },
             PhysicalPlan::DropFunction { name, if_exists } => {
                 LogicalPlan::DropFunction { name, if_exists }
+            }
+            PhysicalPlan::CreateProcedure {
+                name,
+                args,
+                body,
+                or_replace,
+            } => LogicalPlan::CreateProcedure {
+                name,
+                args,
+                body: body.into_iter().map(|p| p.into_logical()).collect(),
+                or_replace,
+            },
+            PhysicalPlan::DropProcedure { name, if_exists } => {
+                LogicalPlan::DropProcedure { name, if_exists }
             }
             PhysicalPlan::Call {
                 procedure_name,
@@ -773,6 +850,13 @@ impl PhysicalPlan {
                 body: body.into_iter().map(|p| p.into_logical()).collect(),
                 label,
             },
+            PhysicalPlan::Repeat {
+                body,
+                until_condition,
+            } => LogicalPlan::Repeat {
+                body: body.into_iter().map(|p| p.into_logical()).collect(),
+                until_condition,
+            },
             PhysicalPlan::For {
                 variable,
                 query,
@@ -786,6 +870,22 @@ impl PhysicalPlan {
             PhysicalPlan::Raise { message, level } => LogicalPlan::Raise { message, level },
             PhysicalPlan::Break => LogicalPlan::Break,
             PhysicalPlan::Continue => LogicalPlan::Continue,
+            PhysicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => LogicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            },
+            PhysicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => LogicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            },
         }
     }
 }

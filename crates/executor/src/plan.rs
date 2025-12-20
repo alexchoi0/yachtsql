@@ -1,8 +1,8 @@
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
     AlterTableOp, Assignment, ColumnDef, CteDefinition, ExportOptions, Expr, FunctionArg,
-    FunctionBody, JoinType, LoadOptions, MergeClause, PlanSchema, RaiseLevel, SortExpr,
-    UnnestColumn,
+    FunctionBody, JoinType, LoadOptions, MergeClause, PlanSchema, ProcedureArg, RaiseLevel,
+    SortExpr, UnnestColumn,
 };
 use yachtsql_optimizer::PhysicalPlan;
 
@@ -166,6 +166,8 @@ pub enum ExecutorPlan {
     CreateView {
         name: String,
         query: Box<ExecutorPlan>,
+        query_sql: String,
+        column_aliases: Vec<String>,
         or_replace: bool,
         if_not_exists: bool,
     },
@@ -195,6 +197,18 @@ pub enum ExecutorPlan {
     },
 
     DropFunction {
+        name: String,
+        if_exists: bool,
+    },
+
+    CreateProcedure {
+        name: String,
+        args: Vec<ProcedureArg>,
+        body: Vec<ExecutorPlan>,
+        or_replace: bool,
+    },
+
+    DropProcedure {
         name: String,
         if_exists: bool,
     },
@@ -243,6 +257,11 @@ pub enum ExecutorPlan {
         label: Option<String>,
     },
 
+    Repeat {
+        body: Vec<ExecutorPlan>,
+        until_condition: Expr,
+    },
+
     For {
         variable: String,
         query: Box<ExecutorPlan>,
@@ -261,6 +280,17 @@ pub enum ExecutorPlan {
     Break,
 
     Continue,
+
+    CreateSnapshot {
+        snapshot_name: String,
+        source_name: String,
+        if_not_exists: bool,
+    },
+
+    DropSnapshot {
+        snapshot_name: String,
+        if_exists: bool,
+    },
 }
 
 impl ExecutorPlan {
@@ -300,7 +330,7 @@ impl ExecutorPlan {
             } => ExecutorPlan::NestedLoopJoin {
                 left: Box::new(Self::from_physical(left)),
                 right: Box::new(Self::from_physical(right)),
-                join_type: join_type.clone(),
+                join_type: *join_type,
                 condition: condition.clone(),
                 schema: schema.clone(),
             },
@@ -501,11 +531,15 @@ impl ExecutorPlan {
             PhysicalPlan::CreateView {
                 name,
                 query,
+                query_sql,
+                column_aliases,
                 or_replace,
                 if_not_exists,
             } => ExecutorPlan::CreateView {
                 name: name.clone(),
                 query: Box::new(Self::from_physical(query)),
+                query_sql: query_sql.clone(),
+                column_aliases: column_aliases.clone(),
                 or_replace: *or_replace,
                 if_not_exists: *if_not_exists,
             },
@@ -548,6 +582,23 @@ impl ExecutorPlan {
             },
 
             PhysicalPlan::DropFunction { name, if_exists } => ExecutorPlan::DropFunction {
+                name: name.clone(),
+                if_exists: *if_exists,
+            },
+
+            PhysicalPlan::CreateProcedure {
+                name,
+                args,
+                body,
+                or_replace,
+            } => ExecutorPlan::CreateProcedure {
+                name: name.clone(),
+                args: args.clone(),
+                body: body.iter().map(Self::from_physical).collect(),
+                or_replace: *or_replace,
+            },
+
+            PhysicalPlan::DropProcedure { name, if_exists } => ExecutorPlan::DropProcedure {
                 name: name.clone(),
                 if_exists: *if_exists,
             },
@@ -614,6 +665,14 @@ impl ExecutorPlan {
                 label: label.clone(),
             },
 
+            PhysicalPlan::Repeat {
+                body,
+                until_condition,
+            } => ExecutorPlan::Repeat {
+                body: body.iter().map(Self::from_physical).collect(),
+                until_condition: until_condition.clone(),
+            },
+
             PhysicalPlan::For {
                 variable,
                 query,
@@ -636,6 +695,24 @@ impl ExecutorPlan {
             PhysicalPlan::Break => ExecutorPlan::Break,
 
             PhysicalPlan::Continue => ExecutorPlan::Continue,
+
+            PhysicalPlan::CreateSnapshot {
+                snapshot_name,
+                source_name,
+                if_not_exists,
+            } => ExecutorPlan::CreateSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                source_name: source_name.clone(),
+                if_not_exists: *if_not_exists,
+            },
+
+            PhysicalPlan::DropSnapshot {
+                snapshot_name,
+                if_exists,
+            } => ExecutorPlan::DropSnapshot {
+                snapshot_name: snapshot_name.clone(),
+                if_exists: *if_exists,
+            },
         }
     }
 }
