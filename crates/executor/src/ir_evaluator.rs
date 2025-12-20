@@ -230,6 +230,7 @@ impl<'a> IrEvaluator<'a> {
                 time_zone,
             } => self.eval_at_time_zone(timestamp, time_zone, record),
             Expr::JsonAccess { expr, path } => self.eval_json_access(expr, path, record),
+            Expr::Default => Ok(Value::Default),
         }
     }
 
@@ -2120,7 +2121,8 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Struct(_)
                     | Value::Geography(_)
                     | Value::Interval(_)
-                    | Value::Range(_) => {
+                    | Value::Range(_)
+                    | Value::Default => {
                         return Err(Error::InvalidQuery(
                             "CONCAT with BYTES requires all arguments to be BYTES".into(),
                         ));
@@ -2148,7 +2150,8 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Struct(_)
                     | Value::Geography(_)
                     | Value::Interval(_)
-                    | Value::Range(_) => {
+                    | Value::Range(_)
+                    | Value::Default => {
                         return Err(Error::InvalidQuery(
                             "CONCAT requires STRING arguments".into(),
                         ));
@@ -3637,7 +3640,8 @@ impl<'a> IrEvaluator<'a> {
             | Value::Struct(_)
             | Value::Geography(_)
             | Value::Interval(_)
-            | Value::Range(_) => Err(Error::InvalidQuery(
+            | Value::Range(_)
+            | Value::Default => Err(Error::InvalidQuery(
                 "FORMAT requires a format string as first argument".into(),
             )),
         }
@@ -3662,6 +3666,7 @@ impl<'a> IrEvaluator<'a> {
             Value::Geography(g) => g.clone(),
             Value::Interval(i) => format!("{:?}", i),
             Value::Range(r) => format!("{:?}", r),
+            Value::Default => "DEFAULT".to_string(),
         }
     }
 
@@ -3840,7 +3845,8 @@ impl<'a> IrEvaluator<'a> {
             | Value::Struct(_)
             | Value::Geography(_)
             | Value::Interval(_)
-            | Value::Range(_) => Err(Error::InvalidQuery(
+            | Value::Range(_)
+            | Value::Default => Err(Error::InvalidQuery(
                 "SAFE_CONVERT_BYTES_TO_STRING requires BYTES argument".into(),
             )),
         }
@@ -3873,7 +3879,8 @@ impl<'a> IrEvaluator<'a> {
             | Value::Struct(_)
             | Value::Geography(_)
             | Value::Interval(_)
-            | Value::Range(_) => Err(Error::InvalidQuery(
+            | Value::Range(_)
+            | Value::Default => Err(Error::InvalidQuery(
                 "CONVERT_BYTES_TO_STRING requires BYTES argument".into(),
             )),
         }
@@ -4075,6 +4082,7 @@ impl<'a> IrEvaluator<'a> {
             Some(Value::Interval(_)) => Ok(Value::String("INTERVAL".to_string())),
             Some(Value::Geography(_)) => Ok(Value::String("GEOGRAPHY".to_string())),
             Some(Value::Range(_)) => Ok(Value::String("RANGE".to_string())),
+            Some(Value::Default) => Ok(Value::String("DEFAULT".to_string())),
             None => Ok(Value::Null),
         }
     }
@@ -7288,6 +7296,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
             "[{:?}, {:?})",
             r.start, r.end
         ))),
+        Value::Default => Ok(serde_json::Value::Null),
     }
 }
 

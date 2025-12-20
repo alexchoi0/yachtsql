@@ -61,6 +61,80 @@ impl<'a> PlanExecutor<'a> {
         columns: &[String],
         source: &ExecutorPlan,
     ) -> Result<Table> {
+        let target_schema = self
+            .catalog
+            .get_table(table_name)
+            .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?
+            .schema()
+            .clone();
+
+        let evaluator = IrEvaluator::new(&target_schema);
+        let empty_record = yachtsql_storage::Record::new();
+
+        let mut default_values: Vec<Option<Value>> = vec![None; target_schema.field_count()];
+        if let Some(defaults) = self.catalog.get_table_defaults(table_name) {
+            for default in defaults {
+                if let Some(idx) = target_schema.field_index(&default.column_name) {
+                    if let Ok(val) = evaluator.evaluate(&default.default_expr, &empty_record) {
+                        default_values[idx] = Some(val);
+                    }
+                }
+            }
+        }
+
+        let fields = target_schema.fields().to_vec();
+
+        if let ExecutorPlan::Values { values, .. } = source {
+            let target = self
+                .catalog
+                .get_table_mut(table_name)
+                .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+
+            let empty_schema = yachtsql_storage::Schema::new();
+            let values_evaluator = IrEvaluator::new(&empty_schema);
+            let empty_rec = yachtsql_storage::Record::from_values(vec![]);
+
+            for row_exprs in values {
+                if columns.is_empty() {
+                    let mut coerced_row = Vec::with_capacity(target_schema.field_count());
+                    for (i, expr) in row_exprs.iter().enumerate() {
+                        if i < fields.len() {
+                            let final_val = match expr {
+                                Expr::Default => default_values[i].clone().unwrap_or(Value::Null),
+                                _ => values_evaluator.evaluate(expr, &empty_rec)?,
+                            };
+                            coerced_row.push(coerce_value(final_val, &fields[i].data_type)?);
+                        } else {
+                            coerced_row.push(values_evaluator.evaluate(expr, &empty_rec)?);
+                        }
+                    }
+                    target.push_row(coerced_row)?;
+                } else {
+                    let mut row: Vec<Value> = default_values
+                        .iter()
+                        .map(|opt| opt.clone().unwrap_or(Value::Null))
+                        .collect();
+                    for (i, col_name) in columns.iter().enumerate() {
+                        if let Some(col_idx) = target_schema.field_index(col_name) {
+                            if i < row_exprs.len() && col_idx < fields.len() {
+                                let expr = &row_exprs[i];
+                                let final_val = match expr {
+                                    Expr::Default => {
+                                        default_values[col_idx].clone().unwrap_or(Value::Null)
+                                    }
+                                    _ => values_evaluator.evaluate(expr, &empty_rec)?,
+                                };
+                                row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
+                            }
+                        }
+                    }
+                    target.push_row(row)?;
+                }
+            }
+
+            return Ok(Table::empty(Schema::new()));
+        }
+
         let source_table = self.execute_plan(source)?;
 
         let target = self
@@ -68,29 +142,37 @@ impl<'a> PlanExecutor<'a> {
             .get_table_mut(table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
 
-        let target_schema = target.schema().clone();
-
-        let fields = target_schema.fields();
         for record in source_table.rows()? {
             if columns.is_empty() {
                 let mut coerced_row = Vec::with_capacity(target_schema.field_count());
                 for (i, val) in record.values().iter().enumerate() {
                     if i < fields.len() {
-                        coerced_row.push(coerce_value(val.clone(), &fields[i].data_type)?);
+                        let final_val = match val {
+                            Value::Default => default_values[i].clone().unwrap_or(Value::Null),
+                            _ => val.clone(),
+                        };
+                        coerced_row.push(coerce_value(final_val, &fields[i].data_type)?);
                     } else {
                         coerced_row.push(val.clone());
                     }
                 }
                 target.push_row(coerced_row)?;
             } else {
-                let mut row = vec![Value::Null; target_schema.field_count()];
+                let mut row: Vec<Value> = default_values
+                    .iter()
+                    .map(|opt| opt.clone().unwrap_or(Value::Null))
+                    .collect();
                 for (i, col_name) in columns.iter().enumerate() {
                     if let Some(col_idx) = target_schema.field_index(col_name) {
                         if i < record.values().len() && col_idx < fields.len() {
-                            row[col_idx] = coerce_value(
-                                record.values()[i].clone(),
-                                &fields[col_idx].data_type,
-                            )?;
+                            let val = &record.values()[i];
+                            let final_val = match val {
+                                Value::Default => {
+                                    default_values[col_idx].clone().unwrap_or(Value::Null)
+                                }
+                                _ => val.clone(),
+                            };
+                            row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
                         }
                     }
                 }

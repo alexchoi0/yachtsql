@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use yachtsql_common::error::{Error, Result};
@@ -510,6 +510,70 @@ impl Column {
             (Column::Range { data, nulls, .. }, Value::Range(v)) => {
                 data.push(v);
                 nulls.push(false);
+            }
+            (Column::Bool { data, nulls }, Value::Default) => {
+                data.push(false);
+                nulls.push(true);
+            }
+            (Column::Int64 { data, nulls }, Value::Default) => {
+                data.push(0);
+                nulls.push(true);
+            }
+            (Column::Float64 { data, nulls }, Value::Default) => {
+                data.push(0.0);
+                nulls.push(true);
+            }
+            (Column::Numeric { data, nulls }, Value::Default) => {
+                data.push(Decimal::ZERO);
+                nulls.push(true);
+            }
+            (Column::String { data, nulls }, Value::Default) => {
+                data.push(String::new());
+                nulls.push(true);
+            }
+            (Column::Bytes { data, nulls }, Value::Default) => {
+                data.push(Vec::new());
+                nulls.push(true);
+            }
+            (Column::Date { data, nulls }, Value::Default) => {
+                data.push(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+                nulls.push(true);
+            }
+            (Column::Time { data, nulls }, Value::Default) => {
+                data.push(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+                nulls.push(true);
+            }
+            (Column::Timestamp { data, nulls }, Value::Default) => {
+                data.push(DateTime::UNIX_EPOCH);
+                nulls.push(true);
+            }
+            (Column::DateTime { data, nulls }, Value::Default) => {
+                data.push(NaiveDateTime::default());
+                nulls.push(true);
+            }
+            (Column::Interval { data, nulls }, Value::Default) => {
+                data.push(IntervalValue::new(0, 0, 0));
+                nulls.push(true);
+            }
+            (Column::Json { data, nulls }, Value::Default) => {
+                data.push(serde_json::Value::Null);
+                nulls.push(true);
+            }
+            (Column::Array { data, nulls, .. }, Value::Default) => {
+                data.push(Vec::new());
+                nulls.push(true);
+            }
+            (Column::Struct { data, nulls, .. }, Value::Default) => {
+                data.push(Vec::new());
+                nulls.push(true);
+            }
+            (Column::Geography { data, nulls }, Value::Default) => {
+                data.push(String::new());
+                nulls.push(true);
+            }
+            (Column::Range { data, nulls, .. }, Value::Default) => {
+                data.push(RangeValue::new(None, None));
+                nulls.push(true);
             }
             (col, val) => {
                 return Err(Error::type_mismatch(format!(

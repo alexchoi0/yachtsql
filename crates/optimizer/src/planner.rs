@@ -262,10 +262,10 @@ impl PhysicalPlanner {
             }),
 
             LogicalPlan::DropTable {
-                table_name,
+                table_names,
                 if_exists,
             } => Ok(PhysicalPlan::DropTable {
-                table_name: table_name.clone(),
+                table_names: table_names.clone(),
                 if_exists: *if_exists,
             }),
 
@@ -654,10 +654,10 @@ impl PhysicalPlan {
                 or_replace,
             },
             PhysicalPlan::DropTable {
-                table_name,
+                table_names,
                 if_exists,
             } => LogicalPlan::DropTable {
-                table_name,
+                table_names,
                 if_exists,
             },
             PhysicalPlan::AlterTable {

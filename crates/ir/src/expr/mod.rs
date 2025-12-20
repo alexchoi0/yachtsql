@@ -224,6 +224,8 @@ pub enum Expr {
         expr: Box<Expr>,
         path: Vec<JsonPathElement>,
     },
+
+    Default,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

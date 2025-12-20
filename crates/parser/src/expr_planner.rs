@@ -40,7 +40,12 @@ impl ExprPlanner {
         named_windows: &[ast::NamedWindowDefinition],
     ) -> Result<Expr> {
         match sql_expr {
-            ast::Expr::Identifier(ident) => Self::resolve_column(&ident.value, None, schema),
+            ast::Expr::Identifier(ident) => {
+                if ident.value.eq_ignore_ascii_case("DEFAULT") {
+                    return Ok(Expr::Default);
+                }
+                Self::resolve_column(&ident.value, None, schema)
+            }
 
             ast::Expr::CompoundIdentifier(parts) => {
                 let (table, name) = if parts.len() > 1 {

@@ -149,7 +149,7 @@ pub enum PhysicalPlan {
     },
 
     DropTable {
-        table_name: String,
+        table_names: Vec<String>,
         if_exists: bool,
     },
 

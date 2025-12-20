@@ -141,7 +141,7 @@ pub enum LogicalPlan {
     },
 
     DropTable {
-        table_name: String,
+        table_names: Vec<String>,
         if_exists: bool,
     },
 

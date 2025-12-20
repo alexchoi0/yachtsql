@@ -166,7 +166,8 @@ fn extract_agg_arg(
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => evaluator.evaluate(agg_expr, record),
+        | Expr::JsonAccess { .. }
+        | Expr::Default => evaluator.evaluate(agg_expr, record),
     }
 }
 
@@ -226,7 +227,8 @@ fn extract_conditional_agg_args(
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => Ok((Value::Null, false)),
+        | Expr::JsonAccess { .. }
+        | Expr::Default => Ok((Value::Null, false)),
     }
 }
 
@@ -282,7 +284,8 @@ fn extract_bivariate_args(
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => Ok((Value::Null, Value::Null)),
+        | Expr::JsonAccess { .. }
+        | Expr::Default => Ok((Value::Null, Value::Null)),
     }
 }
 
@@ -337,7 +340,8 @@ fn extract_order_by_keys(
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => Ok(Vec::new()),
+        | Expr::JsonAccess { .. }
+        | Expr::Default => Ok(Vec::new()),
     }
 }
 
@@ -381,7 +385,8 @@ fn has_order_by(agg_expr: &Expr) -> bool {
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => false,
+        | Expr::JsonAccess { .. }
+        | Expr::Default => false,
     }
 }
 
@@ -425,7 +430,8 @@ fn get_agg_func(expr: &Expr) -> Option<&AggregateFunction> {
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => None,
+        | Expr::JsonAccess { .. }
+        | Expr::Default => None,
     }
 }
 
@@ -469,7 +475,8 @@ fn is_distinct_aggregate(expr: &Expr) -> bool {
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => false,
+        | Expr::JsonAccess { .. }
+        | Expr::Default => false,
     }
 }
 
@@ -513,7 +520,8 @@ fn has_ignore_nulls(expr: &Expr) -> bool {
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => false,
+        | Expr::JsonAccess { .. }
+        | Expr::Default => false,
     }
 }
 
@@ -564,7 +572,8 @@ fn extract_string_agg_separator(expr: &Expr) -> String {
         | Expr::Placeholder { .. }
         | Expr::Lambda { .. }
         | Expr::AtTimeZone { .. }
-        | Expr::JsonAccess { .. } => ",".to_string(),
+        | Expr::JsonAccess { .. }
+        | Expr::Default => ",".to_string(),
     }
 }
 

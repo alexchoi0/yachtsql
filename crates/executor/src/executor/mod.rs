@@ -170,9 +170,9 @@ impl<'a> PlanExecutor<'a> {
                 or_replace,
             } => self.execute_create_table(table_name, columns, *if_not_exists, *or_replace),
             ExecutorPlan::DropTable {
-                table_name,
+                table_names,
                 if_exists,
-            } => self.execute_drop_table(table_name, *if_exists),
+            } => self.execute_drop_tables(table_names, *if_exists),
             ExecutorPlan::AlterTable {
                 table_name,
                 operation,

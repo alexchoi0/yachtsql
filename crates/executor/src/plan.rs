@@ -149,7 +149,7 @@ pub enum ExecutorPlan {
     },
 
     DropTable {
-        table_name: String,
+        table_names: Vec<String>,
         if_exists: bool,
     },
 
@@ -471,10 +471,10 @@ impl ExecutorPlan {
             },
 
             PhysicalPlan::DropTable {
-                table_name,
+                table_names,
                 if_exists,
             } => ExecutorPlan::DropTable {
-                table_name: table_name.clone(),
+                table_names: table_names.clone(),
                 if_exists: *if_exists,
             },
 

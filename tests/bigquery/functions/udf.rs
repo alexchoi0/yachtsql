@@ -104,7 +104,8 @@ fn test_javascript_udf_float_math() {
         | yachtsql_common::types::Value::Struct(_)
         | yachtsql_common::types::Value::Geography(_)
         | yachtsql_common::types::Value::Interval(_)
-        | yachtsql_common::types::Value::Range(_) => panic!("Expected Float64 result"),
+        | yachtsql_common::types::Value::Range(_)
+        | yachtsql_common::types::Value::Default => panic!("Expected Float64 result"),
     }
 }
 

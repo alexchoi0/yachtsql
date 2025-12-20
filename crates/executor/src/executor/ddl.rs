@@ -1,10 +1,13 @@
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::DataType;
-use yachtsql_ir::{AlterTableOp, ColumnDef, ExportOptions, FunctionArg, FunctionBody};
-use yachtsql_storage::{Field, FieldMode, Schema, Table};
+use yachtsql_common::types::{DataType, Value};
+use yachtsql_ir::{
+    AlterColumnAction, AlterTableOp, ColumnDef, ExportOptions, FunctionArg, FunctionBody,
+};
+use yachtsql_storage::{Field, FieldMode, Schema, Table, TableSchemaOps};
 
 use super::PlanExecutor;
-use crate::catalog::UserFunction;
+use crate::catalog::{ColumnDefault, UserFunction};
+use crate::ir_evaluator::IrEvaluator;
 use crate::plan::ExecutorPlan;
 
 impl<'a> PlanExecutor<'a> {
@@ -29,6 +32,7 @@ impl<'a> PlanExecutor<'a> {
         }
 
         let mut schema = Schema::new();
+        let mut defaults = Vec::new();
         for col in columns {
             let mode = if col.nullable {
                 FieldMode::Nullable
@@ -36,22 +40,37 @@ impl<'a> PlanExecutor<'a> {
                 FieldMode::Required
             };
             schema.add_field(Field::new(&col.name, col.data_type.clone(), mode));
+            if let Some(ref default_expr) = col.default_value {
+                defaults.push(ColumnDefault {
+                    column_name: col.name.clone(),
+                    default_expr: default_expr.clone(),
+                });
+            }
         }
 
         let table = Table::empty(schema);
         self.catalog.insert_table(table_name, table)?;
+        if !defaults.is_empty() {
+            self.catalog.set_table_defaults(table_name, defaults);
+        }
 
         Ok(Table::empty(Schema::new()))
     }
 
-    pub fn execute_drop_table(&mut self, table_name: &str, if_exists: bool) -> Result<Table> {
-        if self.catalog.get_table(table_name).is_none() {
-            if if_exists {
-                return Ok(Table::empty(Schema::new()));
+    pub fn execute_drop_tables(
+        &mut self,
+        table_names: &[String],
+        if_exists: bool,
+    ) -> Result<Table> {
+        for table_name in table_names {
+            if self.catalog.get_table(table_name).is_none() {
+                if if_exists {
+                    continue;
+                }
+                return Err(Error::TableNotFound(table_name.to_string()));
             }
-            return Err(Error::TableNotFound(table_name.to_string()));
+            self.catalog.drop_table(table_name)?;
         }
-        self.catalog.drop_table(table_name)?;
         Ok(Table::empty(Schema::new()))
     }
 
@@ -66,23 +85,89 @@ impl<'a> PlanExecutor<'a> {
             .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
 
         match operation {
-            AlterTableOp::AddColumn { column } => Err(Error::UnsupportedFeature(
-                "ALTER TABLE ADD COLUMN not yet implemented".into(),
-            )),
-            AlterTableOp::DropColumn { name } => Err(Error::UnsupportedFeature(
-                "ALTER TABLE DROP COLUMN not yet implemented".into(),
-            )),
-            AlterTableOp::RenameColumn { old_name, new_name } => Err(Error::UnsupportedFeature(
-                "ALTER TABLE RENAME COLUMN not yet implemented".into(),
-            )),
+            AlterTableOp::AddColumn { column } => {
+                let mode = if column.nullable {
+                    FieldMode::Nullable
+                } else {
+                    FieldMode::Required
+                };
+                let field = Field::new(&column.name, column.data_type.clone(), mode);
+
+                let default_value = match &column.default_value {
+                    Some(default_expr) => {
+                        let empty_schema = yachtsql_storage::Schema::new();
+                        let evaluator = IrEvaluator::new(&empty_schema);
+                        let empty_record = yachtsql_storage::Record::new();
+                        evaluator.evaluate(default_expr, &empty_record).ok()
+                    }
+                    None => None,
+                };
+
+                let table = self
+                    .catalog
+                    .get_table_mut(table_name)
+                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+                table.add_column(field, default_value)?;
+
+                if let Some(ref default_expr) = column.default_value {
+                    let mut defaults = self
+                        .catalog
+                        .get_table_defaults(table_name)
+                        .cloned()
+                        .unwrap_or_default();
+                    defaults.push(ColumnDefault {
+                        column_name: column.name.clone(),
+                        default_expr: default_expr.clone(),
+                    });
+                    self.catalog.set_table_defaults(table_name, defaults);
+                }
+
+                Ok(Table::empty(Schema::new()))
+            }
+            AlterTableOp::DropColumn { name } => {
+                let table = self
+                    .catalog
+                    .get_table_mut(table_name)
+                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+                table.drop_column(name)?;
+                Ok(Table::empty(Schema::new()))
+            }
+            AlterTableOp::RenameColumn { old_name, new_name } => {
+                let table = self
+                    .catalog
+                    .get_table_mut(table_name)
+                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+                table.rename_column(old_name, new_name)?;
+                Ok(Table::empty(Schema::new()))
+            }
             AlterTableOp::RenameTable { new_name } => {
                 self.catalog.rename_table(table_name, new_name)?;
                 Ok(Table::empty(Schema::new()))
             }
             AlterTableOp::SetOptions { .. } => Ok(Table::empty(Schema::new())),
-            AlterTableOp::AlterColumn { .. } => Err(Error::UnsupportedFeature(
-                "ALTER TABLE ALTER COLUMN not yet implemented".into(),
-            )),
+            AlterTableOp::AlterColumn { name, action } => {
+                let table = self
+                    .catalog
+                    .get_table_mut(table_name)
+                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+                match action {
+                    AlterColumnAction::SetNotNull => {
+                        table.set_column_not_null(name)?;
+                    }
+                    AlterColumnAction::DropNotNull => {
+                        table.set_column_nullable(name)?;
+                    }
+                    AlterColumnAction::SetDefault { .. }
+                    | AlterColumnAction::DropDefault
+                    | AlterColumnAction::SetDataType { .. } => {
+                        return Err(Error::UnsupportedFeature(format!(
+                            "ALTER COLUMN {:?} not yet implemented",
+                            action
+                        )));
+                    }
+                }
+                Ok(Table::empty(Schema::new()))
+            }
         }
     }
 

@@ -366,6 +366,7 @@ impl<'a> PlanExecutor<'a> {
             Value::Json(j) => Literal::Json(j),
             Value::Geography(_) => Literal::Null,
             Value::Range(_) => Literal::Null,
+            Value::Default => Literal::Null,
         }
     }
 

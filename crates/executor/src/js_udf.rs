@@ -107,6 +107,7 @@ fn value_to_js(mv8: &MiniV8, value: &Value) -> Result<JsValue, String> {
                 .map_err(|e| format!("Failed to set range end: {}", e))?;
             Ok(JsValue::Object(obj))
         }
+        Value::Default => Ok(JsValue::Null),
     }
 }
 

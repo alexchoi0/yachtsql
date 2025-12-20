@@ -5,8 +5,8 @@ use sqlparser::ast::{self, SetExpr, Statement, TableFactor};
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
-    AlterTableOp, Assignment, BinaryOp, ColumnDef, CteDefinition, Expr, JoinType, Literal,
-    LogicalPlan, PlanField, PlanSchema, SetOperationType, SortExpr,
+    AlterColumnAction, AlterTableOp, Assignment, BinaryOp, ColumnDef, CteDefinition, Expr,
+    JoinType, Literal, LogicalPlan, PlanField, PlanSchema, SetOperationType, SortExpr,
 };
 use yachtsql_storage::Schema;
 
@@ -53,6 +53,13 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 if_not_exists,
                 ..
             } => self.plan_create_schema(schema_name, *if_not_exists),
+            Statement::CreateView {
+                name,
+                query,
+                or_replace,
+                if_not_exists,
+                ..
+            } => self.plan_create_view(name, query, *or_replace, *if_not_exists),
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
@@ -257,15 +264,14 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         if has_aggregates || has_group_by {
             plan = self.plan_aggregate(plan, select)?;
         } else {
+            if let Some(ref qualify) = select.qualify {
+                let predicate = ExprPlanner::plan_expr(qualify, plan.schema())?;
+                plan = LogicalPlan::Qualify {
+                    input: Box::new(plan),
+                    predicate,
+                };
+            }
             plan = self.plan_projection(plan, &select.projection, &select.named_window)?;
-        }
-
-        if let Some(ref qualify) = select.qualify {
-            let predicate = ExprPlanner::plan_expr(qualify, plan.schema())?;
-            plan = LogicalPlan::Qualify {
-                input: Box::new(plan),
-                predicate,
-            };
         }
 
         if select.distinct.is_some() {
@@ -852,6 +858,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         let mut final_projection_fields: Vec<PlanField> = Vec::new();
         let group_by_count = group_by_exprs.len();
 
+        let mut window_funcs: Vec<Expr> = Vec::new();
+        let mut window_expr_indices: Vec<usize> = Vec::new();
+
         for item in &select.projection {
             match item {
                 ast::SelectItem::UnnamedExpr(expr)
@@ -900,6 +909,27 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                             final_projection_exprs.push(replaced_expr);
                             final_projection_fields.push(PlanField::new(output_name, data_type));
                         }
+                    } else if Self::ast_has_window_expr(expr) {
+                        let planned = ExprPlanner::plan_expr_with_subquery(
+                            expr,
+                            input.schema(),
+                            Some(&subquery_planner),
+                        )?;
+                        let (replaced_window_expr, _) = self.extract_aggregates_from_expr(
+                            &planned,
+                            &mut agg_canonical_names,
+                            &mut aggregate_exprs,
+                            &mut agg_fields,
+                            input.schema(),
+                            group_by_count,
+                        );
+                        let data_type = self.infer_expr_type(&planned, input.schema());
+                        window_expr_indices.push(final_projection_exprs.len());
+                        if let Some(wf) = Self::extract_window_function(&replaced_window_expr) {
+                            window_funcs.push(wf);
+                        }
+                        final_projection_exprs.push(replaced_window_expr);
+                        final_projection_fields.push(PlanField::new(output_name, data_type));
                     } else {
                         let col_name = self.expr_name(expr);
                         let col_table = self.expr_table(expr);
@@ -971,6 +1001,91 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             };
         }
 
+        if let Some(ref qualify) = select.qualify {
+            let qualify_predicate = self.plan_qualify_expr_with_agg_schema(qualify, &agg_schema)?;
+
+            if Self::expr_has_window(&qualify_predicate) {
+                if let Some(wf) = Self::extract_window_function(&qualify_predicate) {
+                    let agg_field_count = agg_plan.schema().fields.len();
+                    let mut qualify_window_schema_fields = agg_plan.schema().fields.clone();
+                    let qualify_window_type = self.infer_expr_type(&wf, &agg_schema);
+                    qualify_window_schema_fields.push(PlanField::new(
+                        "__qualify_window_0".to_string(),
+                        qualify_window_type,
+                    ));
+                    let qualify_window_schema =
+                        PlanSchema::from_fields(qualify_window_schema_fields.clone());
+
+                    let qualify_window_plan = LogicalPlan::Window {
+                        input: Box::new(agg_plan),
+                        window_exprs: vec![wf],
+                        schema: qualify_window_schema.clone(),
+                    };
+
+                    let replaced_predicate = Self::replace_window_with_column(
+                        qualify_predicate,
+                        "__qualify_window_0",
+                        agg_field_count,
+                    );
+
+                    agg_plan = LogicalPlan::Qualify {
+                        input: Box::new(qualify_window_plan),
+                        predicate: replaced_predicate,
+                    };
+                } else {
+                    agg_plan = LogicalPlan::Qualify {
+                        input: Box::new(agg_plan),
+                        predicate: qualify_predicate,
+                    };
+                }
+            } else {
+                agg_plan = LogicalPlan::Qualify {
+                    input: Box::new(agg_plan),
+                    predicate: qualify_predicate,
+                };
+            }
+        }
+
+        if !window_funcs.is_empty() {
+            let agg_field_count = agg_plan.schema().fields.len();
+            let mut window_schema_fields = agg_plan.schema().fields.clone();
+            for (j, &idx) in window_expr_indices.iter().enumerate() {
+                window_schema_fields.push(PlanField::new(
+                    format!("__window_{}", j),
+                    final_projection_fields[idx].data_type.clone(),
+                ));
+            }
+            let window_schema = PlanSchema::from_fields(window_schema_fields);
+
+            let window_plan = LogicalPlan::Window {
+                input: Box::new(agg_plan),
+                window_exprs: window_funcs,
+                schema: window_schema.clone(),
+            };
+
+            let mut new_projection_exprs = Vec::new();
+            let mut window_offset = 0usize;
+            for (i, expr) in final_projection_exprs.iter().enumerate() {
+                if window_expr_indices.contains(&i) {
+                    let col_idx = agg_field_count + window_offset;
+                    let col_name = format!("__window_{}", window_offset);
+                    let replaced =
+                        Self::replace_window_with_column(expr.clone(), &col_name, col_idx);
+                    new_projection_exprs.push(Self::remap_column_indices(replaced, &window_schema));
+                    window_offset += 1;
+                } else {
+                    new_projection_exprs
+                        .push(Self::remap_column_indices(expr.clone(), &window_schema));
+                }
+            }
+
+            return Ok(LogicalPlan::Project {
+                input: Box::new(window_plan),
+                expressions: new_projection_exprs,
+                schema: PlanSchema::from_fields(final_projection_fields),
+            });
+        }
+
         if !final_projection_exprs.is_empty() {
             Ok(LogicalPlan::Project {
                 input: Box::new(agg_plan),
@@ -1031,11 +1146,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
     ) -> Expr {
         match expr {
             Expr::Aggregate { .. } => {
-                let canonical = format!("_agg_{}", agg_exprs.len());
+                let canonical = Self::canonical_planned_agg_name(expr);
                 if let Some(idx) = agg_names.iter().position(|n| n == &canonical) {
                     return Expr::Column {
                         table: None,
-                        name: canonical,
+                        name: agg_names[idx].clone(),
                         index: Some(group_by_count + idx),
                     };
                 }
@@ -1201,12 +1316,209 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     name: name.clone(),
                 }
             }
+            Expr::Window {
+                func,
+                args,
+                partition_by,
+                order_by,
+                frame,
+            } => {
+                let new_args: Vec<Expr> = args
+                    .iter()
+                    .map(|a| {
+                        self.replace_aggregates_with_columns(
+                            a,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        )
+                    })
+                    .collect();
+                let new_partition_by: Vec<Expr> = partition_by
+                    .iter()
+                    .map(|e| {
+                        self.replace_aggregates_with_columns(
+                            e,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        )
+                    })
+                    .collect();
+                let new_order_by: Vec<yachtsql_ir::SortExpr> = order_by
+                    .iter()
+                    .map(|se| yachtsql_ir::SortExpr {
+                        expr: self.replace_aggregates_with_columns(
+                            &se.expr,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        ),
+                        asc: se.asc,
+                        nulls_first: se.nulls_first,
+                    })
+                    .collect();
+                Expr::Window {
+                    func: *func,
+                    args: new_args,
+                    partition_by: new_partition_by,
+                    order_by: new_order_by,
+                    frame: frame.clone(),
+                }
+            }
+            Expr::AggregateWindow {
+                func,
+                args,
+                distinct,
+                partition_by,
+                order_by,
+                frame,
+            } => {
+                let new_args: Vec<Expr> = args
+                    .iter()
+                    .map(|a| {
+                        self.replace_aggregates_with_columns(
+                            a,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        )
+                    })
+                    .collect();
+                let new_partition_by: Vec<Expr> = partition_by
+                    .iter()
+                    .map(|e| {
+                        self.replace_aggregates_with_columns(
+                            e,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        )
+                    })
+                    .collect();
+                let new_order_by: Vec<yachtsql_ir::SortExpr> = order_by
+                    .iter()
+                    .map(|se| yachtsql_ir::SortExpr {
+                        expr: self.replace_aggregates_with_columns(
+                            &se.expr,
+                            agg_names,
+                            agg_exprs,
+                            agg_fields,
+                            input_schema,
+                            group_by_count,
+                            extracted,
+                        ),
+                        asc: se.asc,
+                        nulls_first: se.nulls_first,
+                    })
+                    .collect();
+                Expr::AggregateWindow {
+                    func: *func,
+                    args: new_args,
+                    distinct: *distinct,
+                    partition_by: new_partition_by,
+                    order_by: new_order_by,
+                    frame: frame.clone(),
+                }
+            }
             _ => expr.clone(),
         }
     }
 
     fn canonical_agg_name(expr: &ast::Expr) -> String {
         format!("{}", expr).to_uppercase().replace(' ', "")
+    }
+
+    fn agg_func_to_sql_name(func: &yachtsql_ir::AggregateFunction) -> &'static str {
+        use yachtsql_ir::AggregateFunction;
+        match func {
+            AggregateFunction::Count => "COUNT",
+            AggregateFunction::Sum => "SUM",
+            AggregateFunction::Avg => "AVG",
+            AggregateFunction::Min => "MIN",
+            AggregateFunction::Max => "MAX",
+            AggregateFunction::ArrayAgg => "ARRAY_AGG",
+            AggregateFunction::StringAgg => "STRING_AGG",
+            AggregateFunction::XmlAgg => "XMLAGG",
+            AggregateFunction::AnyValue => "ANY_VALUE",
+            AggregateFunction::CountIf => "COUNTIF",
+            AggregateFunction::SumIf => "SUMIF",
+            AggregateFunction::AvgIf => "AVGIF",
+            AggregateFunction::MinIf => "MINIF",
+            AggregateFunction::MaxIf => "MAXIF",
+            AggregateFunction::Grouping => "GROUPING",
+            AggregateFunction::LogicalAnd => "LOGICAL_AND",
+            AggregateFunction::LogicalOr => "LOGICAL_OR",
+            AggregateFunction::BitAnd => "BIT_AND",
+            AggregateFunction::BitOr => "BIT_OR",
+            AggregateFunction::BitXor => "BIT_XOR",
+            AggregateFunction::Variance => "VARIANCE",
+            AggregateFunction::Stddev => "STDDEV",
+            AggregateFunction::StddevPop => "STDDEV_POP",
+            AggregateFunction::StddevSamp => "STDDEV_SAMP",
+            AggregateFunction::VarPop => "VAR_POP",
+            AggregateFunction::VarSamp => "VAR_SAMP",
+            AggregateFunction::Corr => "CORR",
+            AggregateFunction::CovarPop => "COVAR_POP",
+            AggregateFunction::CovarSamp => "COVAR_SAMP",
+            AggregateFunction::ApproxCountDistinct => "APPROX_COUNT_DISTINCT",
+            AggregateFunction::ApproxQuantiles => "APPROX_QUANTILES",
+            AggregateFunction::ApproxTopCount => "APPROX_TOP_COUNT",
+            AggregateFunction::ApproxTopSum => "APPROX_TOP_SUM",
+        }
+    }
+
+    fn canonical_planned_agg_name(expr: &Expr) -> String {
+        match expr {
+            Expr::Aggregate {
+                func,
+                args,
+                distinct,
+                ..
+            } => {
+                let func_name = Self::agg_func_to_sql_name(func);
+                let args_str = args
+                    .iter()
+                    .map(|a| Self::canonical_planned_expr_name(a))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if *distinct {
+                    format!("{}(DISTINCT{})", func_name, args_str)
+                } else {
+                    format!("{}({})", func_name, args_str)
+                }
+            }
+            _ => format!("{:?}", expr),
+        }
+    }
+
+    fn canonical_planned_expr_name(expr: &Expr) -> String {
+        match expr {
+            Expr::Column { table, name, .. } => {
+                if let Some(t) = table {
+                    format!("{}.{}", t.to_uppercase(), name.to_uppercase())
+                } else {
+                    name.to_uppercase()
+                }
+            }
+            Expr::Aggregate { .. } => Self::canonical_planned_agg_name(expr),
+            _ => format!("{:?}", expr).to_uppercase(),
+        }
     }
 
     fn collect_having_aggregates(
@@ -1340,6 +1652,168 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
     fn canonical_agg_name_matches(name: &str, canonical: &str) -> bool {
         let name_normalized = name.to_uppercase().replace(' ', "");
         name_normalized == canonical
+    }
+
+    fn plan_qualify_expr_with_agg_schema(
+        &self,
+        expr: &ast::Expr,
+        agg_schema: &PlanSchema,
+    ) -> Result<Expr> {
+        match expr {
+            ast::Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if func.over.is_some() {
+                    let planned = ExprPlanner::plan_expr(expr, agg_schema)?;
+                    self.replace_aggs_in_window_with_columns(&planned, agg_schema)
+                } else if Self::is_aggregate_function_name(&name) {
+                    let canonical = Self::canonical_agg_name(expr);
+                    if let Some(idx) = agg_schema.field_index(&canonical) {
+                        Ok(Expr::Column {
+                            table: None,
+                            name: canonical,
+                            index: Some(idx),
+                        })
+                    } else {
+                        for (idx, field) in agg_schema.fields.iter().enumerate() {
+                            if Self::canonical_agg_name_matches(&field.name, &canonical) {
+                                return Ok(Expr::Column {
+                                    table: None,
+                                    name: field.name.clone(),
+                                    index: Some(idx),
+                                });
+                            }
+                        }
+                        ExprPlanner::plan_expr(expr, agg_schema)
+                    }
+                } else {
+                    ExprPlanner::plan_expr(expr, agg_schema)
+                }
+            }
+            ast::Expr::BinaryOp { left, op, right } => {
+                let left_expr = self.plan_qualify_expr_with_agg_schema(left, agg_schema)?;
+                let right_expr = self.plan_qualify_expr_with_agg_schema(right, agg_schema)?;
+                Ok(Expr::BinaryOp {
+                    left: Box::new(left_expr),
+                    op: ExprPlanner::plan_binary_op(op)?,
+                    right: Box::new(right_expr),
+                })
+            }
+            ast::Expr::UnaryOp { op, expr: inner } => {
+                let inner_expr = self.plan_qualify_expr_with_agg_schema(inner, agg_schema)?;
+                Ok(Expr::UnaryOp {
+                    op: ExprPlanner::plan_unary_op(op)?,
+                    expr: Box::new(inner_expr),
+                })
+            }
+            ast::Expr::Nested(inner) => self.plan_qualify_expr_with_agg_schema(inner, agg_schema),
+            _ => ExprPlanner::plan_expr(expr, agg_schema),
+        }
+    }
+
+    fn replace_aggs_in_window_with_columns(
+        &self,
+        expr: &Expr,
+        schema: &PlanSchema,
+    ) -> Result<Expr> {
+        match expr {
+            Expr::Window {
+                func,
+                args,
+                partition_by,
+                order_by,
+                frame,
+            } => {
+                let new_args: Vec<Expr> = args
+                    .iter()
+                    .map(|a| Self::replace_agg_with_column(a, schema))
+                    .collect::<Result<Vec<_>>>()?;
+                let new_partition_by: Vec<Expr> = partition_by
+                    .iter()
+                    .map(|e| Self::replace_agg_with_column(e, schema))
+                    .collect::<Result<Vec<_>>>()?;
+                let new_order_by: Vec<yachtsql_ir::SortExpr> = order_by
+                    .iter()
+                    .map(|se| {
+                        Ok(yachtsql_ir::SortExpr {
+                            expr: Self::replace_agg_with_column(&se.expr, schema)?,
+                            asc: se.asc,
+                            nulls_first: se.nulls_first,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Expr::Window {
+                    func: *func,
+                    args: new_args,
+                    partition_by: new_partition_by,
+                    order_by: new_order_by,
+                    frame: frame.clone(),
+                })
+            }
+            Expr::AggregateWindow {
+                func,
+                args,
+                distinct,
+                partition_by,
+                order_by,
+                frame,
+            } => {
+                let new_args: Vec<Expr> = args
+                    .iter()
+                    .map(|a| Self::replace_agg_with_column(a, schema))
+                    .collect::<Result<Vec<_>>>()?;
+                let new_partition_by: Vec<Expr> = partition_by
+                    .iter()
+                    .map(|e| Self::replace_agg_with_column(e, schema))
+                    .collect::<Result<Vec<_>>>()?;
+                let new_order_by: Vec<yachtsql_ir::SortExpr> = order_by
+                    .iter()
+                    .map(|se| {
+                        Ok(yachtsql_ir::SortExpr {
+                            expr: Self::replace_agg_with_column(&se.expr, schema)?,
+                            asc: se.asc,
+                            nulls_first: se.nulls_first,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Expr::AggregateWindow {
+                    func: *func,
+                    args: new_args,
+                    distinct: *distinct,
+                    partition_by: new_partition_by,
+                    order_by: new_order_by,
+                    frame: frame.clone(),
+                })
+            }
+            _ => Ok(expr.clone()),
+        }
+    }
+
+    fn replace_agg_with_column(expr: &Expr, schema: &PlanSchema) -> Result<Expr> {
+        match expr {
+            Expr::Aggregate { .. } => {
+                let canonical = Self::canonical_planned_agg_name(expr);
+                for (idx, field) in schema.fields.iter().enumerate() {
+                    if Self::canonical_agg_name_matches(&field.name, &canonical) {
+                        return Ok(Expr::Column {
+                            table: None,
+                            name: field.name.clone(),
+                            index: Some(idx),
+                        });
+                    }
+                }
+                Ok(expr.clone())
+            }
+            Expr::BinaryOp { left, op, right } => Ok(Expr::BinaryOp {
+                left: Box::new(Self::replace_agg_with_column(left, schema)?),
+                op: *op,
+                right: Box::new(Self::replace_agg_with_column(right, schema)?),
+            }),
+            Expr::UnaryOp { op, expr: inner } => Ok(Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(Self::replace_agg_with_column(inner, schema)?),
+            }),
+            _ => Ok(expr.clone()),
+        }
     }
 
     fn plan_order_by(&self, input: LogicalPlan, order_by: &ast::OrderBy) -> Result<LogicalPlan> {
@@ -1562,6 +2036,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
     fn plan_create_table(&self, create: &ast::CreateTable) -> Result<LogicalPlan> {
         let table_name = create.name.to_string();
+        let empty_schema = PlanSchema::new();
 
         let columns: Vec<ColumnDef> = create
             .columns
@@ -1572,10 +2047,17 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     .options
                     .iter()
                     .any(|o| matches!(o.option, ast::ColumnOption::NotNull));
+                let default_value = col.options.iter().find_map(|o| match &o.option {
+                    ast::ColumnOption::Default(expr) => {
+                        ExprPlanner::plan_expr(expr, &empty_schema).ok()
+                    }
+                    _ => None,
+                });
                 ColumnDef {
                     name: col.name.value.clone(),
                     data_type,
                     nullable,
+                    default_value,
                 }
             })
             .collect();
@@ -1596,13 +2078,13 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
     ) -> Result<LogicalPlan> {
         match object_type {
             ast::ObjectType::Table => {
-                let table_name = names
-                    .first()
-                    .map(|n| n.to_string())
-                    .ok_or_else(|| Error::parse_error("DROP TABLE requires a table name"))?;
+                if names.is_empty() {
+                    return Err(Error::parse_error("DROP TABLE requires a table name"));
+                }
+                let table_names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
 
                 Ok(LogicalPlan::DropTable {
-                    table_name,
+                    table_names,
                     if_exists,
                 })
             }
@@ -1668,11 +2150,19 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     .options
                     .iter()
                     .any(|o| matches!(o.option, ast::ColumnOption::NotNull));
+                let empty_schema = PlanSchema::new();
+                let default_value = column_def.options.iter().find_map(|o| match &o.option {
+                    ast::ColumnOption::Default(expr) => {
+                        ExprPlanner::plan_expr(expr, &empty_schema).ok()
+                    }
+                    _ => None,
+                });
                 AlterTableOp::AddColumn {
                     column: ColumnDef {
                         name: column_def.name.value.clone(),
                         data_type,
                         nullable,
+                        default_value,
                     },
                 }
             }
@@ -1692,9 +2182,42 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             },
             ast::AlterTableOperation::RenameTable {
                 table_name: new_name,
-            } => AlterTableOp::RenameTable {
-                new_name: new_name.to_string(),
-            },
+            } => {
+                let new_name_str = match new_name {
+                    ast::RenameTableNameKind::To(name) | ast::RenameTableNameKind::As(name) => {
+                        name.to_string()
+                    }
+                };
+                AlterTableOp::RenameTable {
+                    new_name: new_name_str,
+                }
+            }
+            ast::AlterTableOperation::AlterColumn { column_name, op } => {
+                let action = match op {
+                    ast::AlterColumnOperation::SetNotNull => AlterColumnAction::SetNotNull,
+                    ast::AlterColumnOperation::DropNotNull => AlterColumnAction::DropNotNull,
+                    ast::AlterColumnOperation::DropDefault => AlterColumnAction::DropDefault,
+                    ast::AlterColumnOperation::SetDefault { value } => {
+                        let empty_schema = PlanSchema::new();
+                        let expr = ExprPlanner::plan_expr(value, &empty_schema)?;
+                        AlterColumnAction::SetDefault { default: expr }
+                    }
+                    ast::AlterColumnOperation::SetDataType { data_type, .. } => {
+                        let dt = self.sql_type_to_data_type(data_type);
+                        AlterColumnAction::SetDataType { data_type: dt }
+                    }
+                    _ => {
+                        return Err(Error::unsupported(format!(
+                            "Unsupported ALTER COLUMN operation: {:?}",
+                            op
+                        )));
+                    }
+                };
+                AlterTableOp::AlterColumn {
+                    name: column_name.value.clone(),
+                    action,
+                }
+            }
             _ => {
                 return Err(Error::unsupported(format!(
                     "Unsupported ALTER TABLE operation: {:?}",
@@ -1706,6 +2229,24 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         Ok(LogicalPlan::AlterTable {
             table_name,
             operation: op,
+        })
+    }
+
+    fn plan_create_view(
+        &self,
+        name: &ast::ObjectName,
+        query: &ast::Query,
+        or_replace: bool,
+        if_not_exists: bool,
+    ) -> Result<LogicalPlan> {
+        let view_name = name.to_string();
+        let query_plan = self.plan_query(query)?;
+
+        Ok(LogicalPlan::CreateView {
+            name: view_name,
+            query: Box::new(query_plan),
+            or_replace,
+            if_not_exists,
         })
     }
 
@@ -1796,6 +2337,36 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
     fn is_aggregate_expr(&self, expr: &ast::Expr) -> bool {
         Self::check_aggregate_expr(expr)
+    }
+
+    fn ast_has_window_expr(expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Function(func) => func.over.is_some(),
+            ast::Expr::BinaryOp { left, right, .. } => {
+                Self::ast_has_window_expr(left) || Self::ast_has_window_expr(right)
+            }
+            ast::Expr::UnaryOp { expr, .. } => Self::ast_has_window_expr(expr),
+            ast::Expr::Nested(inner) => Self::ast_has_window_expr(inner),
+            ast::Expr::Case {
+                operand,
+                conditions,
+                else_result,
+                ..
+            } => {
+                operand
+                    .as_ref()
+                    .is_some_and(|e| Self::ast_has_window_expr(e))
+                    || conditions.iter().any(|cw| {
+                        Self::ast_has_window_expr(&cw.condition)
+                            || Self::ast_has_window_expr(&cw.result)
+                    })
+                    || else_result
+                        .as_ref()
+                        .is_some_and(|e| Self::ast_has_window_expr(e))
+            }
+            ast::Expr::Cast { expr, .. } => Self::ast_has_window_expr(expr),
+            _ => false,
+        }
     }
 
     fn check_aggregate_expr(expr: &ast::Expr) -> bool {
