@@ -50,7 +50,8 @@ pub fn parse_and_plan<C: CatalogProvider>(sql: &str, catalog: &C) -> Result<Logi
         return parse_drop_snapshot(trimmed);
     }
 
-    let statements = parse_sql(sql)?;
+    let preprocessed = preprocess_range_types(sql);
+    let statements = parse_sql(&preprocessed)?;
 
     if statements.is_empty() {
         return Err(yachtsql_common::error::Error::parse_error(
@@ -347,4 +348,28 @@ fn parse_drop_snapshot(sql: &str) -> Result<LogicalPlan> {
         snapshot_name,
         if_exists,
     })
+}
+
+fn preprocess_range_types(sql: &str) -> String {
+    use regex::Regex;
+    let mut result = sql.to_string();
+
+    let range_re = Regex::new(r"(?i)\bRANGE\s*<\s*(DATE|DATETIME|TIMESTAMP)\s*>").unwrap();
+    result = range_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            format!("RANGE_{}", caps[1].to_uppercase())
+        })
+        .to_string();
+
+    let replace_proc_re =
+        Regex::new(r"(?i)CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)").unwrap();
+    result = replace_proc_re
+        .replace_all(&result, "CREATE PROCEDURE __orp__$1")
+        .to_string();
+
+    let proc_re =
+        Regex::new(r"(?i)(CREATE\s+PROCEDURE\s+\w+\s*\([^)]*\))\s*\n?\s*(BEGIN)").unwrap();
+    result = proc_re.replace_all(&result, "$1 AS $2").to_string();
+
+    result
 }

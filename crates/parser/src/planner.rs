@@ -3643,6 +3643,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                             DataType::Range(Box::new(DataType::Unknown))
                         }
                     }
+                    "RANGE_DATE" => DataType::Range(Box::new(DataType::Date)),
+                    "RANGE_DATETIME" => DataType::Range(Box::new(DataType::DateTime)),
+                    "RANGE_TIMESTAMP" => DataType::Range(Box::new(DataType::Timestamp)),
                     _ => DataType::Unknown,
                 }
             }
@@ -4704,7 +4707,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         body: &ast::ConditionalStatements,
         or_replace: bool,
     ) -> Result<LogicalPlan> {
-        let proc_name = object_name_to_raw_string(name);
+        let raw_name = object_name_to_raw_string(name);
+        let (proc_name, or_replace) = if raw_name.starts_with("__orp__") {
+            (raw_name[7..].to_string(), true)
+        } else {
+            (raw_name, or_replace)
+        };
         let args = match params {
             Some(params) => params
                 .iter()
