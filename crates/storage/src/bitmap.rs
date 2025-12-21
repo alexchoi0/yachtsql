@@ -129,6 +129,10 @@ impl NullBitmap {
     pub fn count_valid(&self) -> usize {
         self.len - self.count_null()
     }
+
+    pub fn words(&self) -> &[u64] {
+        &self.data
+    }
 }
 
 impl Default for NullBitmap {

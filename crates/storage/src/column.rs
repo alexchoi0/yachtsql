@@ -238,38 +238,95 @@ impl Column {
             Column::Int64 { data, nulls } => {
                 let mut sum: i64 = 0;
                 let mut has_value = false;
-                for (i, &val) in data.iter().enumerate() {
-                    if !nulls.is_null(i) {
-                        sum += val;
+                let chunks = data.chunks_exact(64);
+                let remainder = chunks.remainder();
+
+                for (&bitmap_word, chunk) in nulls.words().iter().zip(chunks) {
+                    if bitmap_word == 0 {
+                        sum += chunk.iter().sum::<i64>();
                         has_value = true;
+                    } else if bitmap_word != u64::MAX {
+                        let mut valid_mask = !bitmap_word;
+                        while valid_mask != 0 {
+                            let bit = valid_mask.trailing_zeros() as usize;
+                            sum += chunk[bit];
+                            has_value = true;
+                            valid_mask &= valid_mask - 1;
+                        }
                     }
                 }
+
+                if !remainder.is_empty() {
+                    let last_word = nulls.words().last().copied().unwrap_or(0);
+                    if last_word == 0 {
+                        sum += remainder.iter().sum::<i64>();
+                        has_value = true;
+                    } else {
+                        for (i, &val) in remainder.iter().enumerate() {
+                            if (last_word >> i) & 1 == 0 {
+                                sum += val;
+                                has_value = true;
+                            }
+                        }
+                    }
+                }
+
                 if has_value { Some(sum as f64) } else { None }
             }
             Column::Float64 { data, nulls } => {
                 let mut sum: f64 = 0.0;
                 let mut has_value = false;
-                for (i, &val) in data.iter().enumerate() {
-                    if !nulls.is_null(i) {
-                        sum += val;
+                let chunks = data.chunks_exact(64);
+                let remainder = chunks.remainder();
+
+                for (&bitmap_word, chunk) in nulls.words().iter().zip(chunks) {
+                    if bitmap_word == 0 {
+                        sum += chunk.iter().sum::<f64>();
                         has_value = true;
+                    } else if bitmap_word != u64::MAX {
+                        let mut valid_mask = !bitmap_word;
+                        while valid_mask != 0 {
+                            let bit = valid_mask.trailing_zeros() as usize;
+                            sum += chunk[bit];
+                            has_value = true;
+                            valid_mask &= valid_mask - 1;
+                        }
                     }
                 }
+
+                if !remainder.is_empty() {
+                    let last_word = nulls.words().last().copied().unwrap_or(0);
+                    if last_word == 0 {
+                        sum += remainder.iter().sum::<f64>();
+                        has_value = true;
+                    } else {
+                        for (i, &val) in remainder.iter().enumerate() {
+                            if (last_word >> i) & 1 == 0 {
+                                sum += val;
+                                has_value = true;
+                            }
+                        }
+                    }
+                }
+
                 if has_value { Some(sum) } else { None }
             }
             Column::Numeric { data, nulls } => {
                 use rust_decimal::prelude::ToPrimitive;
-                let mut sum: f64 = 0.0;
-                let mut has_value = false;
-                for (i, val) in data.iter().enumerate() {
-                    if !nulls.is_null(i)
-                        && let Some(f) = val.to_f64()
-                    {
-                        sum += f;
-                        has_value = true;
-                    }
+                let null_count = nulls.count_null();
+                if null_count == data.len() {
+                    None
+                } else if null_count == 0 {
+                    Some(data.iter().filter_map(|v| v.to_f64()).sum())
+                } else {
+                    let sum: f64 = data
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !nulls.is_null(*i))
+                        .filter_map(|(_, v)| v.to_f64())
+                        .sum();
+                    Some(sum)
                 }
-                if has_value { Some(sum) } else { None }
             }
             Column::Bool { .. }
             | Column::String { .. }
