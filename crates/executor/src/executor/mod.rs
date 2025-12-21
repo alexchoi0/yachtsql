@@ -1,4 +1,6 @@
 mod aggregate;
+#[cfg(feature = "concurrent")]
+pub mod concurrent;
 mod cte;
 mod ddl;
 mod distinct;
