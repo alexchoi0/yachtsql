@@ -7,7 +7,7 @@ use yachtsql_ir::{
 };
 use yachtsql_storage::{Record, Table};
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 

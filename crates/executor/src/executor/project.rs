@@ -4,7 +4,7 @@ use yachtsql_ir::{BinaryOp, Expr, LogicalPlan, PlanSchema};
 use yachtsql_optimizer::optimize;
 use yachtsql_storage::{Record, Schema, Table};
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 

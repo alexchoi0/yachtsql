@@ -3,7 +3,7 @@ use yachtsql_common::error::Result;
 use yachtsql_ir::{CteDefinition, LogicalPlan, SetOperationType};
 use yachtsql_storage::Table;
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::plan::PhysicalPlan;
 
 const MAX_RECURSION_DEPTH: usize = 500;

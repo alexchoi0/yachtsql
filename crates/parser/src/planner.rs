@@ -4708,8 +4708,8 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         or_replace: bool,
     ) -> Result<LogicalPlan> {
         let raw_name = object_name_to_raw_string(name);
-        let (proc_name, or_replace) = if raw_name.starts_with("__orp__") {
-            (raw_name[7..].to_string(), true)
+        let (proc_name, or_replace) = if let Some(stripped) = raw_name.strip_prefix("__orp__") {
+            (stripped.to_string(), true)
         } else {
             (raw_name, or_replace)
         };

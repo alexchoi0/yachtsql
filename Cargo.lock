@@ -4135,26 +4135,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlparser"
-version = "0.59.0"
-source = "git+https://github.com/alexchoi0/yachtsql-sqlparser.git?branch=main#2a218a89a6075df4da9f520313f2fd64b34f98bb"
-dependencies = [
- "log",
- "recursive",
- "sqlparser_derive",
-]
-
-[[package]]
-name = "sqlparser_derive"
-version = "0.3.0"
-source = "git+https://github.com/alexchoi0/yachtsql-sqlparser.git?branch=main#2a218a89a6075df4da9f520313f2fd64b34f98bb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5391,7 +5371,6 @@ dependencies = [
  "serde_json_path",
  "sha1",
  "sha2",
- "sqlparser",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -5406,6 +5385,7 @@ dependencies = [
  "yachtsql-ir",
  "yachtsql-optimizer",
  "yachtsql-parser",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
  "yachtsql-test-utils",
 ]
@@ -5554,7 +5534,6 @@ dependencies = [
  "sha1",
  "sha2",
  "siphasher",
- "sqlparser",
  "url",
  "urlencoding",
  "uuid",
@@ -5562,6 +5541,7 @@ dependencies = [
  "yachtsql",
  "yachtsql-common",
  "yachtsql-parser",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
  "yachtsql-test-utils",
 ]
@@ -5576,9 +5556,9 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sqlparser",
  "yachtsql",
  "yachtsql-common",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
  "yachtsql-test-utils",
 ]
@@ -5603,10 +5583,32 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sqlparser",
  "yachtsql-common",
  "yachtsql-ir",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
+]
+
+[[package]]
+name = "yachtsql-sqlparser"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d269de611109b9eeafd671837a110dda689cb8615823fe35615bdbd1c11e937"
+dependencies = [
+ "log",
+ "recursive",
+ "yachtsql-sqlparser-derive",
+]
+
+[[package]]
+name = "yachtsql-sqlparser-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e795d3ca85da50f016a24d1f1da73024f840edb5cb2b1bf7898081027872fb2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
 ]
 
 [[package]]

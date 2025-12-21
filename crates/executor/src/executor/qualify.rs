@@ -5,8 +5,8 @@ use yachtsql_common::types::Value;
 use yachtsql_ir::{Expr, SortExpr, WindowFrame};
 use yachtsql_storage::{Record, Schema, Table};
 
-use super::window::WindowFuncType;
 use super::PlanExecutor;
+use super::window::WindowFuncType;
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 

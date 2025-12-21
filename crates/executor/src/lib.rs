@@ -12,7 +12,7 @@ mod session;
 
 pub use catalog::{Catalog, ColumnDefault, UserFunction, UserProcedure, ViewDef};
 pub use error::{Error, Result};
-pub use executor::{plan_schema_to_schema, PlanExecutor};
+pub use executor::{PlanExecutor, plan_schema_to_schema};
 pub use ir_evaluator::{IrEvaluator, UserFunctionDef};
 pub use plan::PhysicalPlan;
 use serde::{Deserialize, Serialize};
