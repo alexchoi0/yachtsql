@@ -5599,6 +5599,7 @@ dependencies = [
  "chrono",
  "hex",
  "ordered-float 4.6.0",
+ "regex",
  "rust_decimal",
  "serde",
  "serde_json",

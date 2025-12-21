@@ -176,7 +176,6 @@ fn test_function_in_select() {
 }
 
 #[test]
-#[ignore = "Requires custom BEGIN...END parser not yet in new executor"]
 fn test_create_procedure() {
     let mut executor = create_executor();
 
@@ -194,7 +193,6 @@ fn test_create_procedure() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_create_or_replace_procedure() {
     let mut executor = create_executor();
 
@@ -221,7 +219,6 @@ fn test_create_or_replace_procedure() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_drop_procedure() {
     let mut executor = create_executor();
 
@@ -249,7 +246,6 @@ fn test_drop_procedure_if_exists() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_procedure_with_out_param() {
     let mut executor = create_executor();
 
