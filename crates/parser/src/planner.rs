@@ -151,6 +151,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             Statement::If(if_stmt) => self.plan_if(if_stmt),
             Statement::While(while_stmt) => self.plan_while(while_stmt),
             Statement::Loop(loop_stmt) => self.plan_loop(loop_stmt),
+            Statement::Case(case_stmt) => self.plan_case(case_stmt),
             Statement::Leave { .. } | Statement::Break { .. } => Ok(LogicalPlan::Break),
             Statement::Iterate { .. } | Statement::Continue { .. } => Ok(LogicalPlan::Continue),
             _ => Err(Error::unsupported(format!(
@@ -248,6 +249,48 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             condition: cond_expr,
             body,
         })
+    }
+
+    fn plan_case(&self, case_stmt: &ast::CaseStatement) -> Result<LogicalPlan> {
+        let empty_schema = PlanSchema::new();
+
+        let else_branch = if let Some(else_block) = &case_stmt.else_block {
+            Some(self.plan_statement_sequence(&else_block.conditional_statements)?)
+        } else {
+            None
+        };
+
+        let mut result_plan = else_branch;
+
+        for when_block in case_stmt.when_blocks.iter().rev() {
+            let when_condition = when_block
+                .condition
+                .as_ref()
+                .ok_or_else(|| Error::parse_error("CASE WHEN block missing condition"))?;
+
+            let condition = if let Some(match_expr) = &case_stmt.match_expr {
+                let eq_expr = ast::Expr::BinaryOp {
+                    left: Box::new(match_expr.clone()),
+                    op: ast::BinaryOperator::Eq,
+                    right: Box::new(when_condition.clone()),
+                };
+                ExprPlanner::plan_expr(&eq_expr, &empty_schema)?
+            } else {
+                ExprPlanner::plan_expr(when_condition, &empty_schema)?
+            };
+
+            let then_branch = self.plan_statement_sequence(&when_block.conditional_statements)?;
+
+            result_plan = Some(vec![LogicalPlan::If {
+                condition,
+                then_branch,
+                else_branch: result_plan,
+            }]);
+        }
+
+        result_plan
+            .and_then(|plans| plans.into_iter().next())
+            .ok_or_else(|| Error::parse_error("CASE statement has no WHEN blocks"))
     }
 
     fn plan_statement_sequence(

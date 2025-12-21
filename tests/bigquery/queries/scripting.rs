@@ -383,7 +383,6 @@ fn test_execute_immediate_ddl() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_case_statement() {
     let mut executor = create_executor();
 
