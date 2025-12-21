@@ -37,11 +37,12 @@ pub use values::*;
 pub use window::*;
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::Value;
+use yachtsql_ir::Expr;
 use yachtsql_optimizer::PhysicalPlan;
 use yachtsql_storage::{Field, FieldMode, Schema, Table};
 
 use crate::catalog::Catalog;
-use crate::ir_evaluator::UserFunctionDef;
+use crate::ir_evaluator::{IrEvaluator, UserFunctionDef};
 use crate::plan::ExecutorPlan;
 use crate::session::Session;
 
@@ -69,10 +70,12 @@ impl<'a> PlanExecutor<'a> {
             })
             .collect();
 
+        let variables = session.variables().clone();
+
         Self {
             catalog,
             session,
-            variables: HashMap::new(),
+            variables,
             cte_results: HashMap::new(),
             user_function_defs,
         }
@@ -323,6 +326,38 @@ impl<'a> PlanExecutor<'a> {
                 snapshot_name,
                 if_exists,
             } => self.execute_drop_snapshot(snapshot_name, *if_exists),
+            ExecutorPlan::Assert { condition, message } => {
+                self.execute_assert(condition, message.as_ref())
+            }
+        }
+    }
+
+    fn execute_assert(&mut self, condition: &Expr, message: Option<&Expr>) -> Result<Table> {
+        use yachtsql_storage::Record;
+
+        let empty_schema = Schema::new();
+        let evaluator = IrEvaluator::new(&empty_schema)
+            .with_variables(&self.variables)
+            .with_user_functions(&self.user_function_defs);
+        let empty_record = Record::new();
+        let result = evaluator.evaluate(condition, &empty_record)?;
+        match result {
+            Value::Bool(true) => Ok(Table::empty(Schema::new())),
+            Value::Bool(false) => {
+                let msg = if let Some(msg_expr) = message {
+                    let msg_val = evaluator.evaluate(msg_expr, &empty_record)?;
+                    match msg_val {
+                        Value::String(s) => s,
+                        _ => format!("{:?}", msg_val),
+                    }
+                } else {
+                    "Assertion failed".to_string()
+                };
+                Err(Error::InvalidQuery(format!("ASSERT failed: {}", msg)))
+            }
+            _ => Err(Error::InvalidQuery(
+                "ASSERT condition must evaluate to a boolean".into(),
+            )),
         }
     }
 }

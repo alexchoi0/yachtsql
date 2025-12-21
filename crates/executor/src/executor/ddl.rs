@@ -1526,5 +1526,9 @@ fn executor_plan_to_logical_plan(plan: &ExecutorPlan) -> yachtsql_ir::LogicalPla
             },
             sample_value: *sample_value,
         },
+        ExecutorPlan::Assert { condition, message } => LogicalPlan::Assert {
+            condition: condition.clone(),
+            message: message.clone(),
+        },
     }
 }
