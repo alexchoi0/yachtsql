@@ -145,7 +145,6 @@ fn test_if_elseif_else() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_loop_basic() {
     let mut executor = create_executor();
 
@@ -169,7 +168,6 @@ fn test_loop_basic() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_while_loop() {
     let mut executor = create_executor();
 
@@ -229,7 +227,6 @@ fn test_for_loop() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_break_continue() {
     let mut executor = create_executor();
 

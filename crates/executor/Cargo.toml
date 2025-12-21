@@ -117,7 +117,7 @@ geojson = { version = "0.24", features = ["geo-types"] }
 geohash = "0.13"
 
 # JavaScript UDF support (V8 engine)
-mini-v8 = "0.4"
+v8 = "0.106"
 
 # Features
 [features]
