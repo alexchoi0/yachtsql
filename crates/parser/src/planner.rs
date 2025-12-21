@@ -130,11 +130,23 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             }
             Statement::If(if_stmt) => self.plan_if(if_stmt),
             Statement::While(while_stmt) => self.plan_while(while_stmt),
+            Statement::Loop(loop_stmt) => self.plan_loop(loop_stmt),
+            Statement::Leave { .. } | Statement::Break { .. } => Ok(LogicalPlan::Break),
+            Statement::Iterate { .. } | Statement::Continue { .. } => Ok(LogicalPlan::Continue),
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
             ))),
         }
+    }
+
+    fn plan_loop(&self, loop_stmt: &ast::LoopStatement) -> Result<LogicalPlan> {
+        let body = loop_stmt
+            .body
+            .iter()
+            .map(|s| self.plan_statement(s))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(LogicalPlan::Loop { body, label: None })
     }
 
     fn plan_assert(

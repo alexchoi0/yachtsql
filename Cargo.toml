@@ -17,7 +17,7 @@ yachtsql-executor = { path = "crates/executor" }
 
 sentry = "0.45.0"
 
-# SQL parsing
+# SQL parsing (patched with BigQuery scripting support via [patch.crates-io])
 sqlparser = { version = "0.59", features = ["visitor"] }
 
 # Serialization
@@ -91,7 +91,7 @@ proptest = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "time"] }
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
-sqlparser = "0.59"
+sqlparser = { version = "0.59", features = ["visitor"] }
 arrow = { version = "54", default-features = false }
 parquet = { version = "54", default-features = false, features = ["arrow"] }
 tempfile = "3.14"
@@ -120,3 +120,7 @@ members = [
     "crates/test-utils",
 ]
 resolver = "2"
+
+# Use forked sqlparser with BigQuery scripting support for all workspace crates
+[patch.crates-io]
+sqlparser = { git = "https://github.com/alexchoi0/yachtsql-sqlparser.git", branch = "main" }

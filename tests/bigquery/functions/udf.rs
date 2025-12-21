@@ -216,3 +216,233 @@ fn test_javascript_udf_or_replace() {
     let result = executor.execute_sql("SELECT my_func(5)").unwrap();
     assert_table_eq!(result, [[105]]);
 }
+
+#[test]
+fn test_javascript_udf_json_parse() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION extract_name(json_str STRING)
+            RETURNS STRING
+            LANGUAGE js
+            AS 'return JSON.parse(json_str).name;'
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql(r#"SELECT extract_name('{"name": "Alice", "age": 30}')"#)
+        .unwrap();
+
+    assert_table_eq!(result, [["Alice"]]);
+}
+
+#[test]
+fn test_javascript_udf_json_stringify() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION make_person(name STRING, age INT64)
+            RETURNS STRING
+            LANGUAGE js
+            AS 'return JSON.stringify({name: name, age: age});'
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT make_person('Bob', 25)")
+        .unwrap();
+
+    assert_table_eq!(result, [[r#"{"name":"Bob","age":25}"#]]);
+}
+
+#[test]
+fn test_javascript_udf_regex() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION extract_digits(s STRING)
+            RETURNS STRING
+            LANGUAGE js
+            AS 'return s.replace(/[^0-9]/g, "");'
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT extract_digits('abc123def456')")
+        .unwrap();
+
+    assert_table_eq!(result, [["123456"]]);
+}
+
+#[test]
+fn test_javascript_udf_multi_statement() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION fibonacci(n INT64)
+            RETURNS INT64
+            LANGUAGE js
+            AS '''
+                if (n <= 1) return n;
+                let a = 0, b = 1;
+                for (let i = 2; i <= n; i++) {
+                    let temp = a + b;
+                    a = b;
+                    b = temp;
+                }
+                return b;
+            '''
+        "#,
+        )
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT fibonacci(10)").unwrap();
+    assert_table_eq!(result, [[55]]);
+}
+
+#[test]
+fn test_javascript_udf_array_operations() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION sum_csv(csv STRING)
+            RETURNS INT64
+            LANGUAGE js
+            AS '''
+                return csv.split(",").map(x => parseInt(x.trim())).reduce((a, b) => a + b, 0);
+            '''
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT sum_csv('1, 2, 3, 4, 5')")
+        .unwrap();
+    assert_table_eq!(result, [[15]]);
+}
+
+#[test]
+fn test_javascript_udf_helper_function() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION is_palindrome(s STRING)
+            RETURNS BOOL
+            LANGUAGE js
+            AS '''
+                const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const cleaned = normalize(s);
+                const reversed = cleaned.split("").reverse().join("");
+                return cleaned === reversed;
+            '''
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT is_palindrome('A man a plan a canal Panama')")
+        .unwrap();
+    assert_table_eq!(result, [[true]]);
+
+    let result = executor
+        .execute_sql("SELECT is_palindrome('hello')")
+        .unwrap();
+    assert_table_eq!(result, [[false]]);
+}
+
+#[test]
+fn test_javascript_udf_conditional_logic() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION grade(score INT64)
+            RETURNS STRING
+            LANGUAGE js
+            AS '''
+                if (score >= 90) return "A";
+                if (score >= 80) return "B";
+                if (score >= 70) return "C";
+                if (score >= 60) return "D";
+                return "F";
+            '''
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT grade(95), grade(82), grade(55)")
+        .unwrap();
+    assert_table_eq!(result, [["A", "B", "F"]]);
+}
+
+#[test]
+fn test_javascript_udf_string_formatting() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION format_phone(digits STRING)
+            RETURNS STRING
+            LANGUAGE js
+            AS '''
+                const d = digits.replace(/\D/g, "");
+                if (d.length !== 10) return "Invalid";
+                return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+            '''
+        "#,
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT format_phone('5551234567')")
+        .unwrap();
+    assert_table_eq!(result, [["(555) 123-4567"]]);
+}
+
+#[test]
+fn test_javascript_udf_math_functions() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            r#"
+            CREATE FUNCTION hypotenuse(a FLOAT64, b FLOAT64)
+            RETURNS FLOAT64
+            LANGUAGE js
+            AS 'return Math.sqrt(a * a + b * b);'
+        "#,
+        )
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT hypotenuse(3.0, 4.0)").unwrap();
+    let records = result.to_records().unwrap();
+    let value = &records[0].values()[0];
+    match value {
+        yachtsql_common::types::Value::Float64(f) => {
+            assert!((f.into_inner() - 5.0).abs() < 0.0001);
+        }
+        yachtsql_common::types::Value::String(s) => {
+            let f: f64 = s.parse().expect("Expected parseable float");
+            assert!((f - 5.0).abs() < 0.0001);
+        }
+        other => panic!("Expected Float64 or String result, got {:?}", other),
+    }
+}
