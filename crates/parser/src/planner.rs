@@ -125,11 +125,22 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             }
             Statement::Call(func) => self.plan_call(func),
             Statement::Declare { stmts } => self.plan_declare(stmts),
+            Statement::Assert { condition, message } => self.plan_assert(condition, message.as_ref()),
             _ => Err(Error::unsupported(format!(
                 "Unsupported statement: {:?}",
                 stmt
             ))),
         }
+    }
+
+    fn plan_assert(&self, condition: &ast::Expr, message: Option<&ast::Expr>) -> Result<LogicalPlan> {
+        let empty_schema = PlanSchema::new();
+        let cond_expr = ExprPlanner::plan_expr(condition, &empty_schema)?;
+        let msg_expr = message.map(|m| ExprPlanner::plan_expr(m, &empty_schema)).transpose()?;
+        Ok(LogicalPlan::Assert {
+            condition: cond_expr,
+            message: msg_expr,
+        })
     }
 
     fn plan_query(&self, query: &ast::Query) -> Result<LogicalPlan> {

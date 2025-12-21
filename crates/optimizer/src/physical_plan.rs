@@ -311,6 +311,11 @@ pub enum PhysicalPlan {
         snapshot_name: String,
         if_exists: bool,
     },
+
+    Assert {
+        condition: Expr,
+        message: Option<Expr>,
+    },
 }
 
 impl PhysicalPlan {
@@ -370,6 +375,7 @@ impl PhysicalPlan {
             PhysicalPlan::Continue => &EMPTY_SCHEMA,
             PhysicalPlan::CreateSnapshot { .. } => &EMPTY_SCHEMA,
             PhysicalPlan::DropSnapshot { .. } => &EMPTY_SCHEMA,
+            PhysicalPlan::Assert { .. } => &EMPTY_SCHEMA,
         }
     }
 }

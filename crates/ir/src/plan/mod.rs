@@ -302,6 +302,11 @@ pub enum LogicalPlan {
         snapshot_name: String,
         if_exists: bool,
     },
+
+    Assert {
+        condition: Expr,
+        message: Option<Expr>,
+    },
 }
 
 impl LogicalPlan {
@@ -356,6 +361,7 @@ impl LogicalPlan {
             LogicalPlan::Continue => &EMPTY_SCHEMA,
             LogicalPlan::CreateSnapshot { .. } => &EMPTY_SCHEMA,
             LogicalPlan::DropSnapshot { .. } => &EMPTY_SCHEMA,
+            LogicalPlan::Assert { .. } => &EMPTY_SCHEMA,
         }
     }
 

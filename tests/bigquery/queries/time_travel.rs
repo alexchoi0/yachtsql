@@ -199,7 +199,6 @@ fn test_for_system_time_comparison() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_assert_basic() {
     let mut executor = create_executor();
 
@@ -208,7 +207,6 @@ fn test_assert_basic() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_assert_with_message() {
     let mut executor = create_executor();
 
@@ -240,7 +238,6 @@ fn test_assert_with_subquery() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_assert_not_null() {
     let mut executor = create_executor();
 
@@ -249,7 +246,6 @@ fn test_assert_not_null() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_assert_comparison() {
     let mut executor = create_executor();
 

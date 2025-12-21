@@ -544,6 +544,11 @@ impl PhysicalPlanner {
                 snapshot_name: snapshot_name.clone(),
                 if_exists: *if_exists,
             }),
+
+            LogicalPlan::Assert { condition, message } => Ok(PhysicalPlan::Assert {
+                condition: condition.clone(),
+                message: message.clone(),
+            }),
         }
     }
 }
@@ -938,6 +943,7 @@ impl PhysicalPlan {
                 snapshot_name,
                 if_exists,
             },
+            PhysicalPlan::Assert { condition, message } => LogicalPlan::Assert { condition, message },
         }
     }
 }

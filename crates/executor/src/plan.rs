@@ -305,6 +305,11 @@ pub enum ExecutorPlan {
         snapshot_name: String,
         if_exists: bool,
     },
+
+    Assert {
+        condition: Expr,
+        message: Option<Expr>,
+    },
 }
 
 impl ExecutorPlan {
@@ -747,6 +752,11 @@ impl ExecutorPlan {
             } => ExecutorPlan::DropSnapshot {
                 snapshot_name: snapshot_name.clone(),
                 if_exists: *if_exists,
+            },
+
+            PhysicalPlan::Assert { condition, message } => ExecutorPlan::Assert {
+                condition: condition.clone(),
+                message: message.clone(),
             },
         }
     }
