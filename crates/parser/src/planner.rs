@@ -176,9 +176,16 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         message: Option<&ast::Expr>,
     ) -> Result<LogicalPlan> {
         let empty_schema = PlanSchema::new();
-        let cond_expr = ExprPlanner::plan_expr(condition, &empty_schema)?;
+        let subquery_planner = |query: &ast::Query| self.plan_query(query);
+        let cond_expr = ExprPlanner::plan_expr_with_subquery(
+            condition,
+            &empty_schema,
+            Some(&subquery_planner),
+        )?;
         let msg_expr = message
-            .map(|m| ExprPlanner::plan_expr(m, &empty_schema))
+            .map(|m| {
+                ExprPlanner::plan_expr_with_subquery(m, &empty_schema, Some(&subquery_planner))
+            })
             .transpose()?;
         Ok(LogicalPlan::Assert {
             condition: cond_expr,
