@@ -5,12 +5,12 @@ An in-memory test database for Rust programs. YachtSQL emulates BigQuery SQL fea
 ## Quick Start
 
 ```rust
-use yachtsql::{QueryExecutor, DialectType};
+use yachtsql::YachtSQLEngine;
 
 fn main() -> yachtsql::Result<()> {
-    let mut executor = QueryExecutor::with_dialect(DialectType::BigQuery);
+    let mut engine = YachtSQLEngine::new();
 
-    executor.execute_sql("
+    engine.execute("
         CREATE TABLE users (
             id INT64,
             name STRING NOT NULL,
@@ -18,13 +18,13 @@ fn main() -> yachtsql::Result<()> {
         )
     ")?;
 
-    executor.execute_sql("
+    engine.execute("
         INSERT INTO users (id, name, email) VALUES
             (1, 'Alice', 'alice@example.com'),
             (2, 'Bob', 'bob@example.com')
     ")?;
 
-    let results = executor.execute_sql("SELECT * FROM users")?;
+    let results = engine.execute("SELECT * FROM users")?;
     println!("{:?}", results);
     Ok(())
 }

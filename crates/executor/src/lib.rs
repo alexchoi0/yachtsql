@@ -205,6 +205,14 @@ impl QueryExecutor {
     pub fn catalog_mut(&mut self) -> &mut Catalog {
         &mut self.catalog
     }
+
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
 }
 
 impl Default for QueryExecutor {

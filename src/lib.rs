@@ -45,14 +45,12 @@ pub use yachtsql_storage::{Field, FieldMode, Schema};
 
 pub struct YachtSQLEngine {
     executor: QueryExecutor,
-    session: Session,
 }
 
 impl YachtSQLEngine {
     pub fn new() -> Self {
         Self {
             executor: QueryExecutor::new(),
-            session: Session::new(),
         }
     }
 
@@ -71,11 +69,11 @@ impl YachtSQLEngine {
     }
 
     pub fn session(&self) -> &Session {
-        &self.session
+        self.executor.session()
     }
 
     pub fn session_mut(&mut self) -> &mut Session {
-        &mut self.session
+        self.executor.session_mut()
     }
 
     pub fn executor(&self) -> &QueryExecutor {
