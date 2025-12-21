@@ -3015,22 +3015,27 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_date_diff(&self, args: &[Value]) -> Result<Value> {
-        if args.len() < 2 {
-            return Err(Error::InvalidQuery("DATE_DIFF requires 2 arguments".into()));
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery("DATE_DIFF requires 3 arguments".into()));
         }
+        let part = args[2].as_str().unwrap_or("DAY").to_uppercase();
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::Date(d1), Value::Date(d2)) => {
-                let diff = d1.signed_duration_since(*d2);
-                Ok(Value::Int64(diff.num_days()))
+                let result = date_diff_by_part(d1, d2, &part)?;
+                Ok(Value::Int64(result))
             }
             (Value::DateTime(dt1), Value::DateTime(dt2)) => {
-                let diff = dt1.signed_duration_since(*dt2);
-                Ok(Value::Int64(diff.num_days()))
+                let d1 = dt1.date();
+                let d2 = dt2.date();
+                let result = date_diff_by_part(&d1, &d2, &part)?;
+                Ok(Value::Int64(result))
             }
             (Value::Timestamp(ts1), Value::Timestamp(ts2)) => {
-                let diff = ts1.signed_duration_since(*ts2);
-                Ok(Value::Int64(diff.num_days()))
+                let d1 = ts1.naive_utc().date();
+                let d2 = ts2.naive_utc().date();
+                let result = date_diff_by_part(&d1, &d2, &part)?;
+                Ok(Value::Int64(result))
             }
             _ => Err(Error::InvalidQuery(
                 "DATE_DIFF requires date/datetime/timestamp arguments".into(),
@@ -8350,6 +8355,25 @@ fn negate_interval(interval: &IntervalValue) -> IntervalValue {
         months: -interval.months,
         days: -interval.days,
         nanos: -interval.nanos,
+    }
+}
+
+fn date_diff_by_part(d1: &NaiveDate, d2: &NaiveDate, part: &str) -> Result<i64> {
+    match part {
+        "DAY" => Ok(d1.signed_duration_since(*d2).num_days()),
+        "WEEK" => Ok(d1.signed_duration_since(*d2).num_weeks()),
+        "MONTH" => {
+            let months1 = d1.year() as i64 * 12 + d1.month() as i64;
+            let months2 = d2.year() as i64 * 12 + d2.month() as i64;
+            Ok(months1 - months2)
+        }
+        "QUARTER" => {
+            let q1 = d1.year() as i64 * 4 + ((d1.month() - 1) / 3) as i64;
+            let q2 = d2.year() as i64 * 4 + ((d2.month() - 1) / 3) as i64;
+            Ok(q1 - q2)
+        }
+        "YEAR" => Ok((d1.year() - d2.year()) as i64),
+        _ => Ok(d1.signed_duration_since(*d2).num_days()),
     }
 }
 

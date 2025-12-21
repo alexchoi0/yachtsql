@@ -4054,21 +4054,27 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     _ => Self::compute_expr_type(expr, schema),
                 }
             }
-            Expr::Aggregate { func, .. } => {
+            Expr::Aggregate { func, args, .. } => {
                 use yachtsql_ir::AggregateFunction;
                 match func {
                     AggregateFunction::Count
                     | AggregateFunction::CountIf
                     | AggregateFunction::Grouping
                     | AggregateFunction::GroupingId => DataType::Int64,
+                    AggregateFunction::Min
+                    | AggregateFunction::MinIf
+                    | AggregateFunction::Max
+                    | AggregateFunction::MaxIf => {
+                        if let Some(first_arg) = args.first() {
+                            Self::compute_expr_type(first_arg, schema)
+                        } else {
+                            DataType::Unknown
+                        }
+                    }
                     AggregateFunction::Avg
                     | AggregateFunction::AvgIf
                     | AggregateFunction::Sum
                     | AggregateFunction::SumIf
-                    | AggregateFunction::Min
-                    | AggregateFunction::MinIf
-                    | AggregateFunction::Max
-                    | AggregateFunction::MaxIf
                     | AggregateFunction::Stddev
                     | AggregateFunction::StddevPop
                     | AggregateFunction::StddevSamp
@@ -4124,18 +4130,24 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     }
                 }
             }
-            Expr::AggregateWindow { func, .. } => {
+            Expr::AggregateWindow { func, args, .. } => {
                 use yachtsql_ir::AggregateFunction;
                 match func {
                     AggregateFunction::Count | AggregateFunction::CountIf => DataType::Int64,
+                    AggregateFunction::Min
+                    | AggregateFunction::MinIf
+                    | AggregateFunction::Max
+                    | AggregateFunction::MaxIf => {
+                        if let Some(first_arg) = args.first() {
+                            Self::compute_expr_type(first_arg, schema)
+                        } else {
+                            DataType::Unknown
+                        }
+                    }
                     AggregateFunction::Avg
                     | AggregateFunction::AvgIf
                     | AggregateFunction::Sum
-                    | AggregateFunction::SumIf
-                    | AggregateFunction::Min
-                    | AggregateFunction::MinIf
-                    | AggregateFunction::Max
-                    | AggregateFunction::MaxIf => DataType::Float64,
+                    | AggregateFunction::SumIf => DataType::Float64,
                     _ => DataType::Unknown,
                 }
             }
