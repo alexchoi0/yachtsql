@@ -129,7 +129,6 @@ fn test_unnest_with_offset() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_unnest_struct_array() {
     let mut executor = create_executor();
     let result = executor
@@ -139,7 +138,6 @@ fn test_unnest_struct_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_unnest_struct_from_table() {
     let mut executor = create_executor();
     executor
@@ -155,7 +153,6 @@ fn test_unnest_struct_from_table() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_unnest_struct_from_table_with_alias() {
     let mut executor = create_executor();
     executor
@@ -171,7 +168,6 @@ fn test_unnest_struct_from_table_with_alias() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_unnest_struct_in_cte() {
     let mut executor = create_executor();
     executor
@@ -388,7 +384,6 @@ fn test_generate_date_array() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_filter() {
     let mut executor = create_executor();
     let result = executor
@@ -400,7 +395,6 @@ fn test_array_filter() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_array_transform() {
     let mut executor = create_executor();
     let result = executor
@@ -426,7 +420,6 @@ fn test_array_enumerate_empty() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_map_keys() {
     let mut executor = create_executor();
     let result = executor
@@ -436,7 +429,6 @@ fn test_map_keys() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_map_values() {
     let mut executor = create_executor();
     let result = executor

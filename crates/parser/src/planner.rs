@@ -466,26 +466,60 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         }
 
         let first = &from[0];
-        let mut plan = self.plan_table_factor(&first.relation)?;
+        let mut plan = self.plan_table_factor(&first.relation, None)?;
 
         for join in &first.joins {
-            let right = self.plan_table_factor(&join.relation)?;
-            plan = self.plan_join(plan, right, &join.join_operator)?;
+            let right = self.plan_table_factor(&join.relation, Some(plan.schema()))?;
+            plan = match (&right, &join.join_operator) {
+                (
+                    LogicalPlan::Unnest {
+                        input,
+                        columns,
+                        schema: unnest_schema,
+                    },
+                    ast::JoinOperator::CrossJoin(_),
+                ) if matches!(input.as_ref(), LogicalPlan::Empty { .. }) => {
+                    let combined_schema = plan.schema().clone().merge(unnest_schema.clone());
+                    LogicalPlan::Unnest {
+                        input: Box::new(plan),
+                        columns: columns.clone(),
+                        schema: combined_schema,
+                    }
+                }
+                _ => self.plan_join(plan, right, &join.join_operator)?,
+            };
         }
 
         for table_with_joins in from.iter().skip(1) {
-            let right = self.plan_table_factor(&table_with_joins.relation)?;
-            let combined_schema = plan.schema().clone().merge(right.schema().clone());
-            plan = LogicalPlan::Join {
-                left: Box::new(plan),
-                right: Box::new(right),
-                join_type: JoinType::Cross,
-                condition: None,
-                schema: combined_schema,
+            let right = self.plan_table_factor(&table_with_joins.relation, Some(plan.schema()))?;
+
+            plan = match right {
+                LogicalPlan::Unnest {
+                    input,
+                    columns,
+                    schema: unnest_schema,
+                } if matches!(input.as_ref(), LogicalPlan::Empty { .. }) => {
+                    let combined_schema = plan.schema().clone().merge(unnest_schema.clone());
+                    LogicalPlan::Unnest {
+                        input: Box::new(plan),
+                        columns,
+                        schema: combined_schema,
+                    }
+                }
+                _ => {
+                    let combined_schema = plan.schema().clone().merge(right.schema().clone());
+                    LogicalPlan::Join {
+                        left: Box::new(plan),
+                        right: Box::new(right),
+                        join_type: JoinType::Cross,
+                        condition: None,
+                        schema: combined_schema,
+                    }
+                }
             };
 
             for join in &table_with_joins.joins {
-                let right = self.plan_table_factor(&join.relation)?;
+                let right = self.plan_table_factor(&join.relation, Some(plan.schema()))?;
                 plan = self.plan_join(plan, right, &join.join_operator)?;
             }
         }
@@ -493,7 +527,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         Ok(plan)
     }
 
-    fn plan_table_factor(&self, factor: &TableFactor) -> Result<LogicalPlan> {
+    fn plan_table_factor(
+        &self,
+        factor: &TableFactor,
+        left_schema: Option<&PlanSchema>,
+    ) -> Result<LogicalPlan> {
         match factor {
             TableFactor::Table {
                 name,
@@ -649,8 +687,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     .unwrap_or_else(|| "offset".to_string());
 
                 let empty_schema = PlanSchema::new();
-                let array_expr = ExprPlanner::plan_expr(&array_exprs[0], &empty_schema)?;
-                let array_type = self.infer_expr_type(&array_expr, &empty_schema);
+                let context_schema = left_schema.unwrap_or(&empty_schema);
+                let array_expr = ExprPlanner::plan_expr(&array_exprs[0], context_schema)?;
+                let array_type = self.infer_expr_type(&array_expr, context_schema);
                 let element_type = match array_type {
                     DataType::Array(inner) => *inner,
                     _ => DataType::Unknown,
@@ -2661,7 +2700,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             target_alias.as_deref().or(Some(&target_name)),
         );
 
-        let source_plan = self.plan_table_factor(source)?;
+        let source_plan = self.plan_table_factor(source, None)?;
         let source_schema = source_plan.schema().clone();
 
         let source_alias = match source {
