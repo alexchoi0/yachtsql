@@ -12,5 +12,5 @@ pub mod static_cell;
 pub mod types;
 
 pub use error::{Error, Result};
-pub use result::{ColumnInfo, QueryResult};
+pub use result::{ColumnInfo, QueryResult, Row};
 pub use static_cell::{LazyStaticRefCell, StaticCell, StaticRefCell};

@@ -279,7 +279,7 @@ impl Table {
     }
 
     pub fn to_query_result(&self) -> Result<yachtsql_common::QueryResult> {
-        use yachtsql_common::{ColumnInfo, QueryResult};
+        use yachtsql_common::{ColumnInfo, QueryResult, Row};
 
         let schema: Vec<ColumnInfo> = self
             .schema
@@ -289,9 +289,9 @@ impl Table {
             .collect();
 
         let records = self.to_records()?;
-        let rows: Vec<Vec<Value>> = records
+        let rows: Vec<Row> = records
             .into_iter()
-            .map(|record| record.into_values())
+            .map(|record| Row::new(record.into_values()))
             .collect();
 
         Ok(QueryResult::new(schema, rows))

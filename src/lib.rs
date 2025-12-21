@@ -35,7 +35,7 @@
 //! ```
 
 pub use yachtsql_common::error::{Error, Result};
-pub use yachtsql_common::result::{ColumnInfo, QueryResult};
+pub use yachtsql_common::result::{ColumnInfo, QueryResult, Row};
 pub use yachtsql_common::types::{DataType, Value};
 pub use yachtsql_executor::{Catalog, QueryExecutor, Record, Session, Table};
 pub use yachtsql_ir::LogicalPlan;
