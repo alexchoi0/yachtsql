@@ -287,7 +287,6 @@ fn test_atan2_quadrant() {
 }
 
 #[test]
-#[ignore]
 fn test_sinh() {
     let mut session = create_session();
 
@@ -297,7 +296,6 @@ fn test_sinh() {
 }
 
 #[test]
-#[ignore]
 fn test_cosh() {
     let mut session = create_session();
 
@@ -307,7 +305,6 @@ fn test_cosh() {
 }
 
 #[test]
-#[ignore]
 fn test_tanh() {
     let mut session = create_session();
 
