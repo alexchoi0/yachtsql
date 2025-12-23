@@ -1,34 +1,32 @@
 use crate::assert_table_eq;
-use crate::common::create_executor;
+use crate::common::create_session;
 
-fn setup_sales_table(executor: &mut yachtsql::QueryExecutor) {
-    executor
+fn setup_sales_table(session: &mut yachtsql::YachtSQLSession) {
+    session
         .execute_sql("CREATE TABLE sales (product STRING, region STRING, year INT64, amount INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO sales VALUES ('Widget', 'East', 2023, 100), ('Widget', 'East', 2024, 150), ('Widget', 'West', 2023, 120), ('Widget', 'West', 2024, 180), ('Gadget', 'East', 2023, 80), ('Gadget', 'East', 2024, 90), ('Gadget', 'West', 2023, 70), ('Gadget', 'West', 2024, 110)")
         .unwrap();
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollup_single_column() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, SUM(amount) AS total FROM sales GROUP BY ROLLUP(product) ORDER BY product NULLS LAST")
         .unwrap();
     assert_table_eq!(result, [["Gadget", 350], ["Widget", 550], [null, 900],]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollup_multiple_columns() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY ROLLUP(product, region) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -46,12 +44,11 @@ fn test_rollup_multiple_columns() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollup_three_columns() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, year, SUM(amount) AS total FROM sales GROUP BY ROLLUP(product, region, year) ORDER BY product NULLS LAST, region NULLS LAST, year NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -77,24 +74,22 @@ fn test_rollup_three_columns() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cube_single_column() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, SUM(amount) AS total FROM sales GROUP BY CUBE(product) ORDER BY product NULLS LAST")
         .unwrap();
     assert_table_eq!(result, [["Gadget", 350], ["Widget", 550], [null, 900],]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cube_two_columns() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY CUBE(product, region) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -114,24 +109,22 @@ fn test_cube_two_columns() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cube_three_columns() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT COUNT(*) FROM (SELECT product, region, year, SUM(amount) AS total FROM sales GROUP BY CUBE(product, region, year)) AS sub")
         .unwrap();
     assert_table_eq!(result, [[27]]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_sets_basic() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((product), (region)) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -146,12 +139,11 @@ fn test_grouping_sets_basic() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_sets_with_empty() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((product), (region), ()) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -167,12 +159,11 @@ fn test_grouping_sets_with_empty() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_sets_multiple_columns() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((product, region), (product)) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -189,12 +180,11 @@ fn test_grouping_sets_multiple_columns() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_function() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total, GROUPING(product) AS gp, GROUPING(region) AS gr FROM sales GROUP BY ROLLUP(product, region) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -212,12 +202,11 @@ fn test_grouping_function() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_id() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total, GROUPING_ID(product, region) AS gid FROM sales GROUP BY CUBE(product, region) ORDER BY gid, product, region")
         .unwrap();
     assert_table_eq!(
@@ -237,24 +226,22 @@ fn test_grouping_id() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollup_with_having() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, SUM(amount) AS total FROM sales GROUP BY ROLLUP(product) HAVING SUM(amount) > 500 ORDER BY product NULLS LAST")
         .unwrap();
     assert_table_eq!(result, [["Widget", 550], [null, 900],]);
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_cube_with_where() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales WHERE year = 2024 GROUP BY CUBE(product, region) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -274,12 +261,11 @@ fn test_cube_with_where() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_rollup_multiple_aggregates() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total, COUNT(*) AS cnt, AVG(amount) AS avg_amt FROM sales GROUP BY ROLLUP(product, region) ORDER BY product NULLS LAST, region NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -297,12 +283,11 @@ fn test_rollup_multiple_aggregates() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_partial_rollup() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, year, SUM(amount) AS total FROM sales GROUP BY product, ROLLUP(region, year) ORDER BY product, region NULLS LAST, year NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -327,12 +312,11 @@ fn test_partial_rollup() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_partial_cube() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, year, SUM(amount) AS total FROM sales GROUP BY product, CUBE(region, year) ORDER BY product, region NULLS LAST, year NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -363,10 +347,10 @@ fn test_partial_cube() {
 #[test]
 #[ignore = "BUG: Parser does not support ROLLUP inside GROUPING SETS"]
 fn test_mixed_grouping() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, year, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS (ROLLUP(product, region), (year)) ORDER BY product NULLS LAST, region NULLS LAST, year NULLS LAST")
         .unwrap();
     assert_table_eq!(
@@ -386,12 +370,11 @@ fn test_mixed_grouping() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_with_order_by_aggregate() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, region, SUM(amount) AS total FROM sales GROUP BY CUBE(product, region) ORDER BY total DESC")
         .unwrap();
     assert_table_eq!(
@@ -411,16 +394,19 @@ fn test_grouping_with_order_by_aggregate() {
 }
 
 #[test]
-#[ignore = "Implement me!"]
 fn test_grouping_case_expression() {
-    let mut executor = create_executor();
-    setup_sales_table(&mut executor);
+    let mut session = create_session();
+    setup_sales_table(&mut session);
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT CASE WHEN GROUPING(product) = 1 THEN 'All Products' ELSE product END AS product_label, SUM(amount) AS total FROM sales GROUP BY ROLLUP(product) ORDER BY product_label")
         .unwrap();
     assert_table_eq!(
         result,
-        [["All Products", 900], ["Gadget", 350], ["Widget", 550],]
+        [
+            ["All Products", 900.0],
+            ["Gadget", 350.0],
+            ["Widget", 550.0],
+        ]
     );
 }

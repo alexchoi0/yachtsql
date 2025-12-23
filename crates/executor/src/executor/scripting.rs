@@ -1,23 +1,85 @@
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, Value};
-use yachtsql_ir::{Expr, RaiseLevel};
+use yachtsql_ir::{Expr, ProcedureArgMode, RaiseLevel};
+use yachtsql_optimizer::optimize;
 use yachtsql_storage::{Record, Schema, Table};
 
 use super::PlanExecutor;
 use crate::ir_evaluator::IrEvaluator;
-use crate::plan::ExecutorPlan;
+use crate::plan::PhysicalPlan;
 
 impl<'a> PlanExecutor<'a> {
     pub fn execute_call(&mut self, procedure_name: &str, args: &[Expr]) -> Result<Table> {
-        let _proc = self
+        let proc = self
             .catalog
             .get_procedure(procedure_name)
             .ok_or_else(|| Error::InvalidQuery(format!("Procedure not found: {}", procedure_name)))?
             .clone();
 
-        Err(Error::UnsupportedFeature(
-            "CALL not yet fully implemented in new executor".into(),
-        ))
+        let empty_schema = Schema::new();
+        let empty_record = Record::from_values(vec![]);
+
+        let mut out_var_mappings: Vec<(String, String)> = Vec::new();
+
+        for (i, param) in proc.parameters.iter().enumerate() {
+            let param_name = param.name.to_uppercase();
+
+            match param.mode {
+                ProcedureArgMode::In => {
+                    let value = if let Some(arg_expr) = args.get(i) {
+                        let evaluator =
+                            IrEvaluator::new(&empty_schema).with_variables(&self.variables);
+                        evaluator.evaluate(arg_expr, &empty_record)?
+                    } else {
+                        default_value_for_type(&param.data_type)
+                    };
+                    self.variables.insert(param_name.clone(), value.clone());
+                    self.session.set_variable(&param_name, value);
+                }
+                ProcedureArgMode::Out => {
+                    let value = default_value_for_type(&param.data_type);
+                    self.variables.insert(param_name.clone(), value.clone());
+                    self.session.set_variable(&param_name, value);
+
+                    if let Some(Expr::Variable { name }) = args.get(i) {
+                        out_var_mappings.push((param_name.clone(), name.clone()));
+                    }
+                }
+                ProcedureArgMode::InOut => {
+                    let value = if let Some(arg_expr) = args.get(i) {
+                        let evaluator =
+                            IrEvaluator::new(&empty_schema).with_variables(&self.variables);
+                        evaluator.evaluate(arg_expr, &empty_record)?
+                    } else {
+                        default_value_for_type(&param.data_type)
+                    };
+                    self.variables.insert(param_name.clone(), value.clone());
+                    self.session.set_variable(&param_name, value);
+
+                    if let Some(Expr::Variable { name }) = args.get(i) {
+                        out_var_mappings.push((param_name.clone(), name.clone()));
+                    }
+                }
+            }
+        }
+
+        let mut last_result = Table::empty(Schema::new());
+
+        for body_plan in &proc.body {
+            let physical_plan = optimize(body_plan)?;
+            let executor_plan = PhysicalPlan::from_physical(&physical_plan);
+            last_result = self.execute_plan(&executor_plan)?;
+        }
+
+        for (param_name, var_name) in out_var_mappings {
+            if let Some(value) = self.variables.get(&param_name).cloned() {
+                let var_name_upper = var_name.to_uppercase();
+                self.variables.insert(var_name_upper.clone(), value.clone());
+                self.session.set_variable(&var_name_upper, value);
+            }
+        }
+
+        Ok(last_result)
     }
 
     pub fn execute_declare(
@@ -30,7 +92,7 @@ impl<'a> PlanExecutor<'a> {
             Some(expr) => {
                 let empty_schema = Schema::new();
                 let empty_record = Record::from_values(vec![]);
-                let evaluator = IrEvaluator::new(&empty_schema);
+                let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
                 evaluator.evaluate(expr, &empty_record)?
             }
             None => default_value_for_type(data_type),
@@ -45,24 +107,62 @@ impl<'a> PlanExecutor<'a> {
     pub fn execute_set_variable(&mut self, name: &str, value: &Expr) -> Result<Table> {
         let empty_schema = Schema::new();
         let empty_record = Record::from_values(vec![]);
-        let evaluator = IrEvaluator::new(&empty_schema);
-        let val = evaluator.evaluate(value, &empty_record)?;
 
-        self.variables.insert(name.to_uppercase(), val.clone());
+        let val = match value {
+            Expr::Subquery(plan) | Expr::ScalarSubquery(plan) => {
+                self.eval_scalar_subquery_for_set(plan)?
+            }
+            _ => {
+                let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
+                evaluator.evaluate(value, &empty_record)?
+            }
+        };
+
+        let upper_name = name.to_uppercase();
+        if upper_name == "SEARCH_PATH"
+            && let Some(schema_name) = val.as_str()
+        {
+            self.catalog.set_search_path(vec![schema_name.to_string()]);
+        }
+
+        self.variables.insert(upper_name, val.clone());
         self.session.set_variable(name, val);
 
         Ok(Table::empty(Schema::new()))
     }
 
+    fn eval_scalar_subquery_for_set(&mut self, plan: &yachtsql_ir::LogicalPlan) -> Result<Value> {
+        let physical = optimize(plan)?;
+        let executor_plan = PhysicalPlan::from_physical(&physical);
+        let result_table = self.execute_plan(&executor_plan)?;
+
+        if result_table.is_empty() {
+            return Ok(Value::Null);
+        }
+
+        let rows: Vec<_> = result_table.rows()?.into_iter().collect();
+        if rows.is_empty() {
+            return Ok(Value::Null);
+        }
+
+        let first_row = &rows[0];
+        let values = first_row.values();
+        if values.is_empty() {
+            return Ok(Value::Null);
+        }
+
+        Ok(values[0].clone())
+    }
+
     pub fn execute_if(
         &mut self,
         condition: &Expr,
-        then_branch: &[ExecutorPlan],
-        else_branch: Option<&[ExecutorPlan]>,
+        then_branch: &[PhysicalPlan],
+        else_branch: Option<&[PhysicalPlan]>,
     ) -> Result<Table> {
         let empty_schema = Schema::new();
         let empty_record = Record::from_values(vec![]);
-        let evaluator = IrEvaluator::new(&empty_schema);
+        let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
         let cond_val = evaluator.evaluate(condition, &empty_record)?;
 
         if cond_val.as_bool().unwrap_or(false) {
@@ -78,12 +178,12 @@ impl<'a> PlanExecutor<'a> {
         Ok(Table::empty(Schema::new()))
     }
 
-    pub fn execute_while(&mut self, condition: &Expr, body: &[ExecutorPlan]) -> Result<Table> {
+    pub fn execute_while(&mut self, condition: &Expr, body: &[PhysicalPlan]) -> Result<Table> {
         let empty_schema = Schema::new();
         let empty_record = Record::from_values(vec![]);
-        let evaluator = IrEvaluator::new(&empty_schema);
 
         loop {
+            let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
             let cond_val = evaluator.evaluate(condition, &empty_record)?;
             if !cond_val.as_bool().unwrap_or(false) {
                 break;
@@ -106,7 +206,7 @@ impl<'a> PlanExecutor<'a> {
         Ok(Table::empty(Schema::new()))
     }
 
-    pub fn execute_loop(&mut self, body: &[ExecutorPlan], _label: Option<&str>) -> Result<Table> {
+    pub fn execute_loop(&mut self, body: &[PhysicalPlan], _label: Option<&str>) -> Result<Table> {
         loop {
             for plan in body {
                 match self.execute_plan(plan) {
@@ -123,11 +223,43 @@ impl<'a> PlanExecutor<'a> {
         }
     }
 
+    pub fn execute_repeat(
+        &mut self,
+        body: &[PhysicalPlan],
+        until_condition: &Expr,
+    ) -> Result<Table> {
+        let empty_schema = Schema::new();
+        let empty_record = Record::from_values(vec![]);
+
+        loop {
+            for plan in body {
+                match self.execute_plan(plan) {
+                    Ok(_) => {}
+                    Err(Error::InvalidQuery(msg)) if msg.contains("BREAK") => {
+                        return Ok(Table::empty(Schema::new()));
+                    }
+                    Err(Error::InvalidQuery(msg)) if msg.contains("CONTINUE") => {
+                        break;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
+            let cond_val = evaluator.evaluate(until_condition, &empty_record)?;
+            if cond_val.as_bool().unwrap_or(false) {
+                break;
+            }
+        }
+
+        Ok(Table::empty(Schema::new()))
+    }
+
     pub fn execute_for(
         &mut self,
         variable: &str,
-        query: &ExecutorPlan,
-        body: &[ExecutorPlan],
+        query: &PhysicalPlan,
+        body: &[PhysicalPlan],
     ) -> Result<Table> {
         let result = self.execute_plan(query)?;
 
@@ -159,7 +291,7 @@ impl<'a> PlanExecutor<'a> {
             Some(expr) => {
                 let empty_schema = Schema::new();
                 let empty_record = Record::from_values(vec![]);
-                let evaluator = IrEvaluator::new(&empty_schema);
+                let evaluator = IrEvaluator::new(&empty_schema).with_variables(&self.variables);
                 evaluator
                     .evaluate(expr, &empty_record)?
                     .as_str()
