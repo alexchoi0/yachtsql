@@ -1,14 +1,14 @@
-use crate::common::create_executor;
+use crate::common::create_session;
 
 #[test]
 #[ignore]
 fn test_grant_role_on_schema() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE SCHEMA myProject.myDataset")
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON SCHEMA `myProject`.myDataset
            TO "user:raha@example-pet-store.com", "user:sasha@example-pet-store.com""#,
     );
@@ -18,10 +18,10 @@ fn test_grant_role_on_schema() {
 #[test]
 #[ignore]
 fn test_grant_multiple_roles_on_schema() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA test_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA test_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer`, `roles/bigquery.dataEditor`
            ON SCHEMA test_schema
            TO "user:alice@example.com""#,
@@ -32,12 +32,12 @@ fn test_grant_multiple_roles_on_schema() {
 #[test]
 #[ignore]
 fn test_grant_role_on_table() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE myTable (id INT64, name STRING)")
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON TABLE myTable
            TO "user:reader@example.com""#,
     );
@@ -47,10 +47,10 @@ fn test_grant_role_on_table() {
 #[test]
 #[ignore]
 fn test_grant_to_group() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA group_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA group_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON SCHEMA group_schema
            TO "group:analytics-team@example.com""#,
     );
@@ -60,12 +60,10 @@ fn test_grant_to_group() {
 #[test]
 #[ignore]
 fn test_grant_to_service_account() {
-    let mut executor = create_executor();
-    executor
-        .execute_sql("CREATE SCHEMA service_schema")
-        .unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA service_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON SCHEMA service_schema
            TO "serviceAccount:robot@example.iam.gserviceaccount.com""#,
     );
@@ -75,10 +73,10 @@ fn test_grant_to_service_account() {
 #[test]
 #[ignore]
 fn test_grant_to_domain() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA domain_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA domain_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON SCHEMA domain_schema
            TO "domain:example.com""#,
     );
@@ -88,12 +86,12 @@ fn test_grant_to_domain() {
 #[test]
 #[ignore]
 fn test_revoke_role_from_schema() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE SCHEMA myProject.myDataset")
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.admin` ON SCHEMA `myProject`.myDataset
            FROM "group:example-team@example-pet-store.com", "serviceAccount:user@test-project.iam.gserviceaccount.com""#,
     );
@@ -103,12 +101,12 @@ fn test_revoke_role_from_schema() {
 #[test]
 #[ignore]
 fn test_revoke_role_from_table() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE revoke_table (id INT64)")
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.dataViewer` ON TABLE revoke_table
            FROM "user:former-employee@example.com""#,
     );
@@ -118,10 +116,10 @@ fn test_revoke_role_from_table() {
 #[test]
 #[ignore]
 fn test_revoke_multiple_roles() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA multi_revoke").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA multi_revoke").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.dataViewer`, `roles/bigquery.dataEditor`
            ON SCHEMA multi_revoke
            FROM "user:test@example.com""#,
@@ -132,15 +130,15 @@ fn test_revoke_multiple_roles() {
 #[test]
 #[ignore]
 fn test_grant_on_fully_qualified_table() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE SCHEMA project.dataset")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE project.dataset.orders (id INT64, amount FLOAT64)")
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.dataViewer` ON TABLE `project.dataset`.orders
            TO "user:analyst@example.com""#,
     );
@@ -150,10 +148,10 @@ fn test_grant_on_fully_qualified_table() {
 #[test]
 #[ignore]
 fn test_revoke_from_multiple_users() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA shared_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA shared_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.dataEditor` ON SCHEMA shared_schema
            FROM "user:user1@example.com", "user:user2@example.com", "user:user3@example.com""#,
     );
@@ -163,10 +161,10 @@ fn test_revoke_from_multiple_users() {
 #[test]
 #[ignore]
 fn test_grant_admin_role() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA admin_test").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA admin_test").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.admin` ON SCHEMA admin_test
            TO "user:admin@example.com""#,
     );
@@ -176,10 +174,10 @@ fn test_grant_admin_role() {
 #[test]
 #[ignore]
 fn test_grant_job_user_role() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA jobs_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA jobs_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"GRANT `roles/bigquery.jobUser` ON SCHEMA jobs_schema
            TO "serviceAccount:batch-processor@example.iam.gserviceaccount.com""#,
     );
@@ -189,10 +187,10 @@ fn test_grant_job_user_role() {
 #[test]
 #[ignore]
 fn test_revoke_from_special_group() {
-    let mut executor = create_executor();
-    executor.execute_sql("CREATE SCHEMA public_schema").unwrap();
+    let mut session = create_session();
+    session.execute_sql("CREATE SCHEMA public_schema").unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.dataViewer` ON SCHEMA public_schema
            FROM "specialGroup:allAuthenticatedUsers""#,
     );
@@ -202,19 +200,19 @@ fn test_revoke_from_special_group() {
 #[test]
 #[ignore]
 fn test_grant_then_revoke() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE SCHEMA lifecycle_schema")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             r#"GRANT `roles/bigquery.dataViewer` ON SCHEMA lifecycle_schema
                TO "user:temp@example.com""#,
         )
         .unwrap();
 
-    let result = executor.execute_sql(
+    let result = session.execute_sql(
         r#"REVOKE `roles/bigquery.dataViewer` ON SCHEMA lifecycle_schema
            FROM "user:temp@example.com""#,
     );

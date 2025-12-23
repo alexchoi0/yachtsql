@@ -1,17 +1,17 @@
 use crate::assert_table_eq;
-use crate::common::create_executor;
+use crate::common::create_session;
 
-fn setup_tables(executor: &mut yachtsql::QueryExecutor) {
-    executor
+fn setup_tables(session: &mut yachtsql::YachtSQLSession) {
+    session
         .execute_sql("CREATE TABLE target (id INT64, name STRING, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, name STRING, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)")
         .unwrap();
-    executor
+    session
         .execute_sql(
             "INSERT INTO source VALUES (2, 'b_updated', 25), (3, 'c_updated', 35), (4, 'd', 40)",
         )
@@ -20,14 +20,14 @@ fn setup_tables(executor: &mut yachtsql::QueryExecutor) {
 
 #[test]
 fn test_merge_update_when_matched() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, name, value FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(
@@ -38,14 +38,14 @@ fn test_merge_update_when_matched() {
 
 #[test]
 fn test_merge_insert_when_not_matched() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1], [2], [3], [4]]);
@@ -53,14 +53,14 @@ fn test_merge_insert_when_not_matched() {
 
 #[test]
 fn test_merge_delete_when_matched() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN DELETE")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1]]);
@@ -68,14 +68,14 @@ fn test_merge_delete_when_matched() {
 
 #[test]
 fn test_merge_update_and_insert() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, name FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(
@@ -86,14 +86,14 @@ fn test_merge_update_and_insert() {
 
 #[test]
 fn test_merge_with_condition() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN UPDATE SET name = S.name, value = S.value")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, value FROM target WHERE id = 3")
         .unwrap();
     assert_table_eq!(result, [[3, 35]]);
@@ -101,14 +101,14 @@ fn test_merge_with_condition() {
 
 #[test]
 fn test_merge_update_delete_insert() {
-    let mut executor = create_executor();
-    setup_tables(&mut executor);
+    let mut session = create_session();
+    setup_tables(&mut session);
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN DELETE WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1], [2], [4]]);
@@ -116,25 +116,25 @@ fn test_merge_update_delete_insert() {
 
 #[test]
 fn test_merge_with_subquery_source() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (2, 25), (3, 30)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING (SELECT id, value FROM source WHERE value > 20) S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED THEN INSERT (id, value) VALUES (S.id, S.value)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1, 10], [2, 25], [3, 30]]);
@@ -142,24 +142,24 @@ fn test_merge_with_subquery_source() {
 
 #[test]
 fn test_merge_insert_row() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, name STRING, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, name STRING, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (1, 'new', 100)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED THEN INSERT ROW",
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, name, value FROM target")
         .unwrap();
     assert_table_eq!(result, [[1, "new", 100]]);
@@ -167,25 +167,25 @@ fn test_merge_insert_row() {
 
 #[test]
 fn test_merge_when_not_matched_by_source() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (2, 25)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED BY SOURCE THEN DELETE")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[2]]);
@@ -193,25 +193,25 @@ fn test_merge_when_not_matched_by_source() {
 
 #[test]
 fn test_merge_all_clauses() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (2, 25), (4, 40)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED BY TARGET THEN INSERT (id, value) VALUES (S.id, S.value) WHEN NOT MATCHED BY SOURCE THEN DELETE")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[2, 25], [4, 40]]);
@@ -219,25 +219,25 @@ fn test_merge_all_clauses() {
 
 #[test]
 fn test_merge_with_constants() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, status STRING, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 'old', 10)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (1, 20), (2, 30)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET status = 'updated', value = S.value WHEN NOT MATCHED THEN INSERT (id, status, value) VALUES (S.id, 'new', S.value)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, status FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1, "updated"], [2, "new"]]);
@@ -246,9 +246,9 @@ fn test_merge_with_constants() {
 #[test]
 #[ignore]
 fn test_merge_insert_new_items_with_condition() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -259,11 +259,11 @@ fn test_merge_insert_new_items_with_condition() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('microwave', 20, NULL, []),
@@ -271,7 +271,7 @@ fn test_merge_insert_new_items_with_condition() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dishwasher', 30),
@@ -281,7 +281,7 @@ fn test_merge_insert_new_items_with_condition() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO detailed_inventory T
             USING inventory S
@@ -295,7 +295,7 @@ fn test_merge_insert_new_items_with_condition() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, supply_constrained
             FROM detailed_inventory
@@ -317,13 +317,13 @@ fn test_merge_insert_new_items_with_condition() {
 
 #[test]
 fn test_merge_update_and_delete_with_condition() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64, warehouse STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('dryer', 20, 'warehouse #2'),
@@ -332,7 +332,7 @@ fn test_merge_update_and_delete_with_condition() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO new_arrivals T
             USING (SELECT * FROM new_arrivals WHERE warehouse <> 'warehouse #2') S
@@ -344,7 +344,7 @@ fn test_merge_update_and_delete_with_condition() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, quantity FROM new_arrivals ORDER BY product")
         .unwrap();
 
@@ -354,17 +354,17 @@ fn test_merge_update_and_delete_with_condition() {
 #[test]
 #[ignore]
 fn test_merge_false_predicate_replace() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dishwasher', 30),
@@ -375,14 +375,14 @@ fn test_merge_false_predicate_replace() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('washer', 30)",
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO inventory T
             USING new_arrivals S
@@ -394,7 +394,7 @@ fn test_merge_false_predicate_replace() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product FROM inventory ORDER BY product")
         .unwrap();
 
@@ -404,9 +404,9 @@ fn test_merge_false_predicate_replace() {
 #[test]
 #[ignore]
 fn test_merge_with_avg_subquery() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -415,11 +415,11 @@ fn test_merge_with_avg_subquery() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('dryer', []),
@@ -430,7 +430,7 @@ fn test_merge_with_avg_subquery() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dryer', 50),
@@ -441,7 +441,7 @@ fn test_merge_with_avg_subquery() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO detailed_inventory T
             USING inventory S
@@ -451,7 +451,7 @@ fn test_merge_with_avg_subquery() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, ARRAY_LENGTH(comments)
             FROM detailed_inventory
@@ -473,21 +473,21 @@ fn test_merge_with_avg_subquery() {
 
 #[test]
 fn test_merge_with_joined_source() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64, warehouse STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE warehouse (warehouse STRING, state STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dryer', 50),
@@ -498,7 +498,7 @@ fn test_merge_with_joined_source() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('dryer', 20, 'warehouse #2'),
@@ -507,7 +507,7 @@ fn test_merge_with_joined_source() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO warehouse VALUES
             ('warehouse #1', 'WA'),
@@ -516,7 +516,7 @@ fn test_merge_with_joined_source() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO inventory T
             USING (SELECT product, quantity, state FROM new_arrivals t1 JOIN warehouse t2 ON t1.warehouse = t2.warehouse) S
@@ -528,7 +528,7 @@ fn test_merge_with_joined_source() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, quantity FROM inventory ORDER BY product")
         .unwrap();
 
@@ -545,21 +545,21 @@ fn test_merge_with_joined_source() {
 
 #[test]
 fn test_merge_without_into_keyword() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 10)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (1, 20), (2, 30)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE target T
             USING source S
@@ -569,7 +569,7 @@ fn test_merge_without_into_keyword() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
         .unwrap();
     assert_table_eq!(result, [[1, 20], [2, 30]]);
@@ -577,22 +577,22 @@ fn test_merge_without_into_keyword() {
 
 #[test]
 fn test_merge_update_by_source_condition() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
         .unwrap();
-    executor
+    session
         .execute_sql("INSERT INTO source VALUES (2, 25)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "MERGE INTO target T
             USING source S
@@ -602,7 +602,7 @@ fn test_merge_update_by_source_condition() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
         .unwrap();
 

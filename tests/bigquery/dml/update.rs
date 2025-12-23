@@ -1,13 +1,13 @@
-use yachtsql::QueryExecutor;
+use yachtsql::YachtSQLSession;
 
 use crate::assert_table_eq;
-use crate::common::create_executor;
+use crate::common::create_session;
 
-fn setup_users_table(executor: &mut QueryExecutor) {
-    executor
+fn setup_users_table(session: &mut YachtSQLSession) {
+    session
         .execute_sql("CREATE TABLE users (id INT64, name STRING, age INT64)")
         .unwrap();
-    executor
+    session
         .execute_sql(
             "INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)",
         )
@@ -16,14 +16,14 @@ fn setup_users_table(executor: &mut QueryExecutor) {
 
 #[test]
 fn test_update_single_column() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 31 WHERE id = 1")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT age FROM users WHERE id = 1")
         .unwrap();
 
@@ -32,14 +32,14 @@ fn test_update_single_column() {
 
 #[test]
 fn test_update_multiple_columns() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET name = 'Alicia', age = 31 WHERE id = 1")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT name, age FROM users WHERE id = 1")
         .unwrap();
 
@@ -48,14 +48,14 @@ fn test_update_multiple_columns() {
 
 #[test]
 fn test_update_all_rows() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = age + 1")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, age FROM users ORDER BY id")
         .unwrap();
 
@@ -64,14 +64,14 @@ fn test_update_all_rows() {
 
 #[test]
 fn test_update_with_expression() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = age * 2 WHERE id = 1")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT age FROM users WHERE id = 1")
         .unwrap();
 
@@ -80,14 +80,14 @@ fn test_update_with_expression() {
 
 #[test]
 fn test_update_with_multiple_conditions() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 40 WHERE age > 25 AND age < 35")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT name, age FROM users WHERE age = 40")
         .unwrap();
 
@@ -96,14 +96,14 @@ fn test_update_with_multiple_conditions() {
 
 #[test]
 fn test_update_with_or_condition() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 50 WHERE id = 1 OR id = 3")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, age FROM users WHERE age = 50 ORDER BY id")
         .unwrap();
 
@@ -112,14 +112,14 @@ fn test_update_with_or_condition() {
 
 #[test]
 fn test_update_set_null() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET name = NULL WHERE id = 1")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT name FROM users WHERE id = 1")
         .unwrap();
 
@@ -128,14 +128,14 @@ fn test_update_set_null() {
 
 #[test]
 fn test_update_no_matching_rows() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 100 WHERE id = 999")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT * FROM users WHERE age = 100")
         .unwrap();
 
@@ -144,14 +144,14 @@ fn test_update_no_matching_rows() {
 
 #[test]
 fn test_update_with_in_clause() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 99 WHERE id IN (1, 3)")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, age FROM users WHERE age = 99 ORDER BY id")
         .unwrap();
 
@@ -160,14 +160,14 @@ fn test_update_with_in_clause() {
 
 #[test]
 fn test_update_with_like_condition() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = 0 WHERE name LIKE 'A%'")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT name, age FROM users WHERE age = 0")
         .unwrap();
 
@@ -177,19 +177,19 @@ fn test_update_with_like_condition() {
 #[test]
 #[ignore]
 fn test_update_with_from_clause() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE inventory (product STRING, quantity INT64, supply_constrained BOOL)",
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64, warehouse STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dishwasher', 30, NULL),
@@ -198,7 +198,7 @@ fn test_update_with_from_clause() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('dryer', 200, 'warehouse #2'),
@@ -206,7 +206,7 @@ fn test_update_with_from_clause() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE inventory i
             SET quantity = i.quantity + n.quantity,
@@ -216,7 +216,7 @@ fn test_update_with_from_clause() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, quantity FROM inventory ORDER BY product")
         .unwrap();
 
@@ -229,19 +229,19 @@ fn test_update_with_from_clause() {
 #[test]
 #[ignore]
 fn test_update_with_subquery_in_set() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE inventory (product STRING, quantity INT64, supply_constrained BOOL)",
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('dryer', 30, NULL),
@@ -249,7 +249,7 @@ fn test_update_with_subquery_in_set() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('dryer', 200),
@@ -257,7 +257,7 @@ fn test_update_with_subquery_in_set() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE inventory
             SET quantity = quantity +
@@ -268,7 +268,7 @@ fn test_update_with_subquery_in_set() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT product, quantity FROM inventory ORDER BY product")
         .unwrap();
 
@@ -278,9 +278,9 @@ fn test_update_with_subquery_in_set() {
 #[test]
 #[ignore]
 fn test_update_nested_struct_field() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -289,7 +289,7 @@ fn test_update_nested_struct_field() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', STRUCT('blue', '6 months')),
@@ -297,7 +297,7 @@ fn test_update_nested_struct_field() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET specifications.color = 'white',
@@ -306,7 +306,7 @@ fn test_update_nested_struct_field() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, specifications.color, specifications.warranty
             FROM detailed_inventory
@@ -320,9 +320,9 @@ fn test_update_nested_struct_field() {
 #[test]
 #[ignore]
 fn test_update_entire_struct() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -331,14 +331,14 @@ fn test_update_entire_struct() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', STRUCT('blue', '6 months'))",
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET specifications = STRUCT('white', '1 year')
@@ -346,7 +346,7 @@ fn test_update_entire_struct() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT specifications.color FROM detailed_inventory")
         .unwrap();
 
@@ -356,9 +356,9 @@ fn test_update_entire_struct() {
 #[test]
 #[ignore]
 fn test_update_with_default_keyword() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE inventory (
                 product STRING,
@@ -368,7 +368,7 @@ fn test_update_with_default_keyword() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO inventory VALUES
             ('washer', 10, false),
@@ -376,7 +376,7 @@ fn test_update_with_default_keyword() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE inventory
             SET quantity = quantity - 10,
@@ -385,7 +385,7 @@ fn test_update_with_default_keyword() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, quantity, supply_constrained FROM inventory WHERE product = 'washer'",
         )
@@ -396,9 +396,9 @@ fn test_update_with_default_keyword() {
 
 #[test]
 fn test_update_array_append() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -407,7 +407,7 @@ fn test_update_array_append() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', []),
@@ -415,7 +415,7 @@ fn test_update_array_append() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET comments = ARRAY_CONCAT(comments,
@@ -424,7 +424,7 @@ fn test_update_array_append() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, ARRAY_LENGTH(comments) FROM detailed_inventory ORDER BY product",
         )
@@ -436,21 +436,21 @@ fn test_update_array_append() {
 #[test]
 #[ignore]
 fn test_update_with_three_table_join() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE detailed_inventory (product STRING, supply_constrained BOOL)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, warehouse STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE warehouse (warehouse STRING, state STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('dryer', false),
@@ -459,7 +459,7 @@ fn test_update_with_three_table_join() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('dryer', 'warehouse #2'),
@@ -468,7 +468,7 @@ fn test_update_with_three_table_join() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO warehouse VALUES
             ('warehouse #1', 'WA'),
@@ -477,7 +477,7 @@ fn test_update_with_three_table_join() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET supply_constrained = true
@@ -488,7 +488,7 @@ fn test_update_with_three_table_join() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, supply_constrained
             FROM detailed_inventory
@@ -502,14 +502,14 @@ fn test_update_with_three_table_join() {
 
 #[test]
 fn test_update_where_true() {
-    let mut executor = create_executor();
-    setup_users_table(&mut executor);
+    let mut session = create_session();
+    setup_users_table(&mut session);
 
-    executor
+    session
         .execute_sql("UPDATE users SET age = age + 1 WHERE true")
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql("SELECT id, age FROM users ORDER BY id")
         .unwrap();
 
@@ -519,21 +519,21 @@ fn test_update_where_true() {
 #[test]
 #[ignore]
 fn test_update_with_join_on_clause() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql("CREATE TABLE detailed_inventory (product STRING, supply_constrained BOOL)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, warehouse STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql("CREATE TABLE warehouse (warehouse STRING, state STRING)")
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('dryer', false),
@@ -542,7 +542,7 @@ fn test_update_with_join_on_clause() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO new_arrivals VALUES
             ('oven', 'warehouse #3'),
@@ -550,7 +550,7 @@ fn test_update_with_join_on_clause() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO warehouse VALUES
             ('warehouse #1', 'WA'),
@@ -558,7 +558,7 @@ fn test_update_with_join_on_clause() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET supply_constrained = true
@@ -570,7 +570,7 @@ fn test_update_with_join_on_clause() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product FROM detailed_inventory
             WHERE supply_constrained = true
@@ -584,9 +584,9 @@ fn test_update_with_join_on_clause() {
 #[test]
 #[ignore]
 fn test_update_repeated_records_with_array_subquery() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -595,7 +595,7 @@ fn test_update_repeated_records_with_array_subquery() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', []),
@@ -603,7 +603,7 @@ fn test_update_repeated_records_with_array_subquery() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET comments = ARRAY(
@@ -615,7 +615,7 @@ fn test_update_repeated_records_with_array_subquery() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, ARRAY_LENGTH(comments) FROM detailed_inventory ORDER BY product",
         )
@@ -627,9 +627,9 @@ fn test_update_repeated_records_with_array_subquery() {
 #[test]
 #[ignore]
 fn test_update_delete_from_repeated_records() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -638,7 +638,7 @@ fn test_update_delete_from_repeated_records() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', [(DATE '2024-01-01', 'comment1'), (DATE '2024-01-02', 'comment2')]),
@@ -646,7 +646,7 @@ fn test_update_delete_from_repeated_records() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET comments = ARRAY(
@@ -657,7 +657,7 @@ fn test_update_delete_from_repeated_records() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, ARRAY_LENGTH(comments) FROM detailed_inventory ORDER BY product",
         )
@@ -669,9 +669,9 @@ fn test_update_delete_from_repeated_records() {
 #[test]
 #[ignore]
 fn test_update_append_second_entry_to_repeated_records() {
-    let mut executor = create_executor();
+    let mut session = create_session();
 
-    executor
+    session
         .execute_sql(
             "CREATE TABLE detailed_inventory (
                 product STRING,
@@ -680,7 +680,7 @@ fn test_update_append_second_entry_to_repeated_records() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "INSERT INTO detailed_inventory VALUES
             ('washer', [(DATE '2024-01-01', 'comment1')]),
@@ -688,7 +688,7 @@ fn test_update_append_second_entry_to_repeated_records() {
         )
         .unwrap();
 
-    executor
+    session
         .execute_sql(
             "UPDATE detailed_inventory
             SET comments = ARRAY(
@@ -700,7 +700,7 @@ fn test_update_append_second_entry_to_repeated_records() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT product, ARRAY_LENGTH(comments) FROM detailed_inventory ORDER BY product",
         )

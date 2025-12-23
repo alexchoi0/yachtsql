@@ -1,10 +1,10 @@
 use crate::assert_table_eq;
-use crate::common::{create_executor, d, dt, null, ts};
+use crate::common::{create_session, d, dt, null, ts};
 
 #[test]
 fn test_date_bucket_basic() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 7 DAY)")
         .unwrap();
     assert_table_eq!(result, [[d(2024, 6, 13)]]);
@@ -13,8 +13,8 @@ fn test_date_bucket_basic() {
 #[test]
 #[ignore]
 fn test_date_bucket_2_day() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_dates AS (
                 SELECT DATE '1949-12-29' AS my_date UNION ALL
@@ -45,8 +45,8 @@ fn test_date_bucket_2_day() {
 #[test]
 #[ignore]
 fn test_date_bucket_with_origin() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_dates AS (
                 SELECT DATE '2000-12-20' AS my_date UNION ALL
@@ -76,8 +76,8 @@ fn test_date_bucket_with_origin() {
 
 #[test]
 fn test_date_bucket_with_null() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATE_BUCKET(NULL, INTERVAL 7 DAY)")
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
@@ -86,8 +86,8 @@ fn test_date_bucket_with_null() {
 #[test]
 #[ignore]
 fn test_date_bucket_month_interval() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 1 MONTH)")
         .unwrap();
     assert_table_eq!(result, [[d(2024, 5, 31)]]);
@@ -95,8 +95,8 @@ fn test_date_bucket_month_interval() {
 
 #[test]
 fn test_datetime_bucket_basic() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
         .unwrap();
     assert_table_eq!(result, [[dt(2024, 6, 15, 12, 0, 0)]]);
@@ -105,8 +105,8 @@ fn test_datetime_bucket_basic() {
 #[test]
 #[ignore]
 fn test_datetime_bucket_12_hour() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_datetimes AS (
                 SELECT DATETIME '1949-12-30 13:00:00' AS my_datetime UNION ALL
@@ -137,8 +137,8 @@ fn test_datetime_bucket_12_hour() {
 #[test]
 #[ignore]
 fn test_datetime_bucket_with_origin() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_datetimes AS (
                 SELECT DATETIME '2000-12-20 00:00:00' AS my_datetime UNION ALL
@@ -168,8 +168,8 @@ fn test_datetime_bucket_with_origin() {
 
 #[test]
 fn test_datetime_bucket_with_null() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATETIME_BUCKET(NULL, INTERVAL 12 HOUR)")
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
@@ -177,8 +177,8 @@ fn test_datetime_bucket_with_null() {
 
 #[test]
 fn test_datetime_bucket_minute_interval() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:37:00', INTERVAL 15 MINUTE)")
         .unwrap();
     assert_table_eq!(result, [[dt(2024, 6, 15, 14, 30, 0)]]);
@@ -186,8 +186,8 @@ fn test_datetime_bucket_minute_interval() {
 
 #[test]
 fn test_timestamp_bucket_basic() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
         .unwrap();
     assert_table_eq!(result, [[ts(2024, 6, 15, 12, 0, 0)]]);
@@ -196,8 +196,8 @@ fn test_timestamp_bucket_basic() {
 #[test]
 #[ignore]
 fn test_timestamp_bucket_12_hour() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_timestamps AS (
                 SELECT TIMESTAMP '1949-12-30 13:00:00' AS my_timestamp UNION ALL
@@ -228,8 +228,8 @@ fn test_timestamp_bucket_12_hour() {
 #[test]
 #[ignore]
 fn test_timestamp_bucket_with_origin() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "WITH some_timestamps AS (
                 SELECT TIMESTAMP '2000-12-20 00:00:00' AS my_timestamp UNION ALL
@@ -259,8 +259,8 @@ fn test_timestamp_bucket_with_origin() {
 
 #[test]
 fn test_timestamp_bucket_with_null() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(NULL, INTERVAL 12 HOUR)")
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
@@ -268,8 +268,8 @@ fn test_timestamp_bucket_with_null() {
 
 #[test]
 fn test_timestamp_bucket_minute_interval() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:37:00', INTERVAL 15 MINUTE)")
         .unwrap();
     assert_table_eq!(result, [[ts(2024, 6, 15, 14, 30, 0)]]);
@@ -278,8 +278,8 @@ fn test_timestamp_bucket_minute_interval() {
 #[test]
 #[ignore]
 fn test_gap_fill_locf() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -293,7 +293,7 @@ fn test_gap_fill_locf() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT *
             FROM GAP_FILL(
@@ -321,8 +321,8 @@ fn test_gap_fill_locf() {
 #[test]
 #[ignore]
 fn test_gap_fill_linear() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -336,7 +336,7 @@ fn test_gap_fill_linear() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT *
             FROM GAP_FILL(
@@ -364,8 +364,8 @@ fn test_gap_fill_linear() {
 #[test]
 #[ignore]
 fn test_gap_fill_null() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -379,7 +379,7 @@ fn test_gap_fill_null() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT time, signal
             FROM GAP_FILL(
@@ -402,8 +402,8 @@ fn test_gap_fill_null() {
 #[test]
 #[ignore]
 fn test_gap_fill_with_partitions() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -424,7 +424,7 @@ fn test_gap_fill_with_partitions() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT *
             FROM GAP_FILL(
@@ -458,8 +458,8 @@ fn test_gap_fill_with_partitions() {
 #[test]
 #[ignore]
 fn test_gap_fill_multiple_columns() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -473,7 +473,7 @@ fn test_gap_fill_multiple_columns() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT *
             FROM GAP_FILL(
@@ -503,8 +503,8 @@ fn test_gap_fill_multiple_columns() {
 #[test]
 #[ignore]
 fn test_gap_fill_with_origin() {
-    let mut executor = create_executor();
-    executor
+    let mut session = create_session();
+    session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
             SELECT * FROM UNNEST(
@@ -518,7 +518,7 @@ fn test_gap_fill_with_origin() {
         )
         .unwrap();
 
-    let result = executor
+    let result = session
         .execute_sql(
             "SELECT time, signal
             FROM GAP_FILL(
@@ -549,8 +549,8 @@ fn test_gap_fill_with_origin() {
 #[test]
 #[ignore]
 fn test_gap_fill_subquery() {
-    let mut executor = create_executor();
-    let result = executor
+    let mut session = create_session();
+    let result = session
         .execute_sql(
             "SELECT *
             FROM GAP_FILL(
