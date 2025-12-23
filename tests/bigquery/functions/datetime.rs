@@ -1165,7 +1165,6 @@ fn test_timestamp_trunc_minute() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_trunc_second() {
     let mut session = create_session();
     let result = session
@@ -1202,7 +1201,6 @@ fn test_timestamp_trunc_quarter() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_trunc_week() {
     let mut session = create_session();
     let result = session
