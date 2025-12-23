@@ -83,6 +83,24 @@ fn test_sqrt() {
 }
 
 #[test]
+fn test_cbrt() {
+    let mut executor = create_executor();
+
+    let result = executor.execute_sql("SELECT CBRT(27)").unwrap();
+
+    assert_table_eq!(result, [[3.0]]);
+}
+
+#[test]
+fn test_cbrt_negative() {
+    let mut executor = create_executor();
+
+    let result = executor.execute_sql("SELECT CBRT(-8)").unwrap();
+
+    assert_table_eq!(result, [[-2.0]]);
+}
+
+#[test]
 fn test_sign() {
     let mut executor = create_executor();
 

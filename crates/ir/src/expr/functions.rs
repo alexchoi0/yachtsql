@@ -89,6 +89,7 @@ pub enum ScalarFunction {
     Floor,
     Ceil,
     Sqrt,
+    Cbrt,
     Power,
     Pow,
     Mod,
