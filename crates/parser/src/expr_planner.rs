@@ -409,14 +409,30 @@ impl ExprPlanner {
                 expr,
                 trim_where,
                 trim_what,
-                ..
+                trim_characters,
             } => {
                 let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
-                let trim_what = trim_what
-                    .as_ref()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
-                    .transpose()?
-                    .map(Box::new);
+                let trim_what = if let Some(e) = trim_what {
+                    Some(Box::new(Self::plan_expr_full(
+                        e,
+                        schema,
+                        subquery_planner,
+                        named_windows,
+                    )?))
+                } else if let Some(chars) = trim_characters {
+                    if let Some(first_char) = chars.first() {
+                        Some(Box::new(Self::plan_expr_full(
+                            first_char,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                        )?))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 let trim_where_ir = match trim_where {
                     Some(ast::TrimWhereField::Both) | None => TrimWhere::Both,
                     Some(ast::TrimWhereField::Leading) => TrimWhere::Leading,
@@ -1061,12 +1077,88 @@ impl ExprPlanner {
             });
         }
 
+        if matches!(
+            name.as_str(),
+            "TIMESTAMP_TRUNC" | "DATETIME_TRUNC" | "DATE_TRUNC" | "TIME_TRUNC"
+        ) {
+            let args = Self::extract_trunc_args(func, schema)?;
+            let scalar_func = Self::try_scalar_function(&name)?;
+            return Ok(Expr::ScalarFunction {
+                name: scalar_func,
+                args,
+            });
+        }
+
         let args = Self::extract_function_args(func, schema)?;
         let scalar_func = Self::try_scalar_function(&name)?;
         Ok(Expr::ScalarFunction {
             name: scalar_func,
             args,
         })
+    }
+
+    fn extract_trunc_args(func: &ast::Function, schema: &PlanSchema) -> Result<Vec<Expr>> {
+        match &func.args {
+            ast::FunctionArguments::None => Ok(vec![]),
+            ast::FunctionArguments::Subquery(_) => {
+                Err(Error::unsupported("Subquery function arguments"))
+            }
+            ast::FunctionArguments::List(list) => {
+                let mut args = Vec::new();
+                for (i, arg) in list.args.iter().enumerate() {
+                    match arg {
+                        ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                            ast::FunctionArgExpr::Expr(e) => {
+                                if i == 1 {
+                                    let part_str = Self::extract_date_part_string(e)?;
+                                    args.push(Expr::Literal(Literal::String(part_str)));
+                                } else {
+                                    args.push(Self::plan_expr(e, schema)?);
+                                }
+                            }
+                            ast::FunctionArgExpr::Wildcard => {
+                                args.push(Expr::Wildcard { table: None });
+                            }
+                            ast::FunctionArgExpr::QualifiedWildcard(name) => {
+                                args.push(Expr::Wildcard {
+                                    table: Some(name.to_string()),
+                                });
+                            }
+                        },
+                        ast::FunctionArg::Named { arg, .. } => {
+                            if let ast::FunctionArgExpr::Expr(e) = arg {
+                                args.push(Self::plan_expr(e, schema)?);
+                            }
+                        }
+                        ast::FunctionArg::ExprNamed { arg, .. } => {
+                            if let ast::FunctionArgExpr::Expr(e) = arg {
+                                args.push(Self::plan_expr(e, schema)?);
+                            }
+                        }
+                    }
+                }
+                Ok(args)
+            }
+        }
+    }
+
+    fn extract_date_part_string(e: &ast::Expr) -> Result<String> {
+        match e {
+            ast::Expr::Identifier(ident) => Ok(ident.value.to_uppercase()),
+            ast::Expr::Function(func) => {
+                let name = func.name.to_string().to_uppercase();
+                if let ast::FunctionArguments::List(list) = &func.args {
+                    if let Some(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                        ast::Expr::Identifier(day_ident),
+                    ))) = list.args.first()
+                    {
+                        return Ok(format!("{}_{}", name, day_ident.value.to_uppercase()));
+                    }
+                }
+                Ok(name)
+            }
+            _ => Ok(e.to_string().to_uppercase()),
+        }
     }
 
     fn extract_make_interval_args(func: &ast::Function, schema: &PlanSchema) -> Result<Vec<Expr>> {
@@ -1329,8 +1421,17 @@ impl ExprPlanner {
             "ASCII" => Ok(ScalarFunction::Ascii),
             "CHR" => Ok(ScalarFunction::Chr),
             "UNICODE" => Ok(ScalarFunction::Unicode),
+            "OCTET_LENGTH" => Ok(ScalarFunction::ByteLength),
+            "TO_CODE_POINTS" => Ok(ScalarFunction::ToCodePoints),
+            "CODE_POINTS_TO_STRING" => Ok(ScalarFunction::CodePointsToString),
+            "CODE_POINTS_TO_BYTES" => Ok(ScalarFunction::CodePointsToBytes),
+            "NORMALIZE_AND_CASEFOLD" => Ok(ScalarFunction::NormalizeAndCasefold),
+            "EDIT_DISTANCE" => Ok(ScalarFunction::EditDistance),
+            "CONTAINS_SUBSTR" => Ok(ScalarFunction::ContainsSubstr),
             "TO_BASE64" => Ok(ScalarFunction::ToBase64),
             "FROM_BASE64" => Ok(ScalarFunction::FromBase64),
+            "TO_BASE32" => Ok(ScalarFunction::ToBase32),
+            "FROM_BASE32" => Ok(ScalarFunction::FromBase32),
             "TO_HEX" => Ok(ScalarFunction::ToHex),
             "FROM_HEX" => Ok(ScalarFunction::FromHex),
             "REGEXP_CONTAINS" => Ok(ScalarFunction::RegexpContains),
@@ -1370,6 +1471,9 @@ impl ExprPlanner {
             "COT" => Ok(ScalarFunction::Cot),
             "CSC" => Ok(ScalarFunction::Csc),
             "SEC" => Ok(ScalarFunction::Sec),
+            "COTH" => Ok(ScalarFunction::Coth),
+            "CSCH" => Ok(ScalarFunction::Csch),
+            "SECH" => Ok(ScalarFunction::Sech),
             "SAFE_DIVIDE" => Ok(ScalarFunction::SafeDivide),
             "SAFE_MULTIPLY" => Ok(ScalarFunction::SafeMultiply),
             "SAFE_ADD" => Ok(ScalarFunction::SafeAdd),
@@ -1378,6 +1482,8 @@ impl ExprPlanner {
             "IEEE_DIVIDE" => Ok(ScalarFunction::IeeeDivide),
             "IS_NAN" => Ok(ScalarFunction::IsNan),
             "IS_INF" => Ok(ScalarFunction::IsInf),
+            "COSINE_DISTANCE" => Ok(ScalarFunction::CosineDistance),
+            "EUCLIDEAN_DISTANCE" => Ok(ScalarFunction::EuclideanDistance),
             "RAND" => Ok(ScalarFunction::Rand),
             "PI" => Ok(ScalarFunction::Pi),
             "COALESCE" => Ok(ScalarFunction::Coalesce),

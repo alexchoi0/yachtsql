@@ -151,6 +151,7 @@ pub enum LogicalPlan {
         columns: Vec<ColumnDef>,
         if_not_exists: bool,
         or_replace: bool,
+        query: Option<Box<LogicalPlan>>,
     },
 
     DropTable {
@@ -161,6 +162,7 @@ pub enum LogicalPlan {
     AlterTable {
         table_name: String,
         operation: AlterTableOp,
+        if_exists: bool,
     },
 
     Truncate {

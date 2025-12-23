@@ -273,12 +273,21 @@ impl PhysicalPlanner {
                 columns,
                 if_not_exists,
                 or_replace,
-            } => Ok(OptimizedLogicalPlan::CreateTable {
-                table_name: table_name.clone(),
-                columns: columns.clone(),
-                if_not_exists: *if_not_exists,
-                or_replace: *or_replace,
-            }),
+                query,
+            } => {
+                let optimized_query = if let Some(q) = query {
+                    Some(Box::new(self.plan(q)?))
+                } else {
+                    None
+                };
+                Ok(OptimizedLogicalPlan::CreateTable {
+                    table_name: table_name.clone(),
+                    columns: columns.clone(),
+                    if_not_exists: *if_not_exists,
+                    or_replace: *or_replace,
+                    query: optimized_query,
+                })
+            }
 
             LogicalPlan::DropTable {
                 table_names,
@@ -291,9 +300,11 @@ impl PhysicalPlanner {
             LogicalPlan::AlterTable {
                 table_name,
                 operation,
+                if_exists,
             } => Ok(OptimizedLogicalPlan::AlterTable {
                 table_name: table_name.clone(),
                 operation: operation.clone(),
+                if_exists: *if_exists,
             }),
 
             LogicalPlan::Truncate { table_name } => Ok(OptimizedLogicalPlan::Truncate {
@@ -798,11 +809,13 @@ impl OptimizedLogicalPlan {
                 columns,
                 if_not_exists,
                 or_replace,
+                query,
             } => LogicalPlan::CreateTable {
                 table_name,
                 columns,
                 if_not_exists,
                 or_replace,
+                query: query.map(|q| Box::new(q.into_logical())),
             },
             OptimizedLogicalPlan::DropTable {
                 table_names,
@@ -814,9 +827,11 @@ impl OptimizedLogicalPlan {
             OptimizedLogicalPlan::AlterTable {
                 table_name,
                 operation,
+                if_exists,
             } => LogicalPlan::AlterTable {
                 table_name,
                 operation,
+                if_exists,
             },
             OptimizedLogicalPlan::Truncate { table_name } => LogicalPlan::Truncate { table_name },
             OptimizedLogicalPlan::CreateView {

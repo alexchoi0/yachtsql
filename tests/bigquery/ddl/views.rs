@@ -820,7 +820,6 @@ fn test_materialized_view_with_complex_aggregation() {
 }
 
 #[test]
-#[ignore]
 fn test_view_with_array_column() {
     let mut session = create_session();
 
@@ -843,7 +842,6 @@ fn test_view_with_array_column() {
 }
 
 #[test]
-#[ignore]
 fn test_view_with_struct_column() {
     let mut session = create_session();
 

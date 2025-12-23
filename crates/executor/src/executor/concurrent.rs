@@ -198,7 +198,14 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 columns,
                 if_not_exists,
                 or_replace,
-            } => self.execute_create_table(table_name, columns, *if_not_exists, *or_replace),
+                query,
+            } => self.execute_create_table(
+                table_name,
+                columns,
+                *if_not_exists,
+                *or_replace,
+                query.as_deref(),
+            ),
             PhysicalPlan::DropTable {
                 table_names,
                 if_exists,
@@ -1063,6 +1070,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         columns: &[ColumnDef],
         if_not_exists: bool,
         or_replace: bool,
+        query: Option<&PhysicalPlan>,
     ) -> Result<Table> {
         if self.catalog.table_exists(table_name) {
             if if_not_exists {
@@ -1074,6 +1082,17 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                     table_name
                 )));
             }
+        }
+
+        if let Some(query_plan) = query {
+            let result = self.execute(query_plan)?;
+            let schema = result.schema().clone();
+            if or_replace && self.catalog.table_exists(table_name) {
+                self.catalog.create_or_replace_table(table_name, result);
+            } else {
+                self.catalog.insert_table(table_name, result);
+            }
+            return Ok(Table::empty(schema));
         }
 
         let mut schema = Schema::new();

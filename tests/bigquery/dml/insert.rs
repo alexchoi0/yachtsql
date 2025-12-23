@@ -496,7 +496,6 @@ fn test_insert_values_with_subquery_simple() {
 }
 
 #[test]
-#[ignore]
 fn test_insert_values_with_subquery() {
     let mut session = create_session();
     setup_simple_table(&mut session);

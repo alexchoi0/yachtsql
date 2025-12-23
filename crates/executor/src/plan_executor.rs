@@ -79,7 +79,8 @@ impl<'a> PlanExecutor<'a> {
                 columns,
                 if_not_exists,
                 or_replace,
-            } => self.execute_create_table(table_name, columns, *if_not_exists, *or_replace),
+                query,
+            } => self.execute_create_table(table_name, columns, *if_not_exists, *or_replace, query.as_deref()),
             LogicalPlan::DropTable {
                 table_names,
                 if_exists,
@@ -183,6 +184,7 @@ impl<'a> PlanExecutor<'a> {
         columns: &[yachtsql_ir::ColumnDef],
         if_not_exists: bool,
         or_replace: bool,
+        query: Option<&LogicalPlan>,
     ) -> Result<Table> {
         if self.catalog.get_table(table_name).is_some() {
             if or_replace {
@@ -195,6 +197,13 @@ impl<'a> PlanExecutor<'a> {
                     table_name
                 )));
             }
+        }
+
+        if let Some(query_plan) = query {
+            let result = self.execute(query_plan)?;
+            let schema = result.schema().clone();
+            self.catalog.insert_table(table_name, result)?;
+            return Ok(Table::empty(schema));
         }
 
         let mut schema = Schema::new();
@@ -276,6 +285,7 @@ mod tests {
             ],
             if_not_exists: false,
             or_replace: false,
+            query: None,
         };
 
         let result = executor.execute(&plan);
@@ -301,6 +311,7 @@ mod tests {
             }],
             if_not_exists: false,
             or_replace: false,
+            query: None,
         };
         executor.execute(&plan).unwrap();
 
@@ -314,6 +325,7 @@ mod tests {
             }],
             if_not_exists: true,
             or_replace: false,
+            query: None,
         };
         let result = executor.execute(&plan2);
         assert!(result.is_ok());
@@ -334,6 +346,7 @@ mod tests {
             }],
             if_not_exists: false,
             or_replace: false,
+            query: None,
         };
         executor.execute(&create_plan).unwrap();
 

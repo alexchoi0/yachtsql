@@ -1381,7 +1381,6 @@ fn test_if_with_subquery_condition() {
 }
 
 #[test]
-#[ignore]
 fn test_multiple_elseif() {
     let mut session = create_session();
 

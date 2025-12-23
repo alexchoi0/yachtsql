@@ -8,9 +8,11 @@ use crate::schema::ColumnDef;
 pub enum AlterTableOp {
     AddColumn {
         column: ColumnDef,
+        if_not_exists: bool,
     },
     DropColumn {
         name: String,
+        if_exists: bool,
     },
     RenameColumn {
         old_name: String,

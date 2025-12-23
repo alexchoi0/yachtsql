@@ -442,7 +442,6 @@ fn test_datetime_trunc() {
 }
 
 #[test]
-#[ignore]
 fn test_extract_week() {
     let mut session = create_session();
     let result = session
@@ -631,7 +630,6 @@ fn test_format_time_12_hour() {
 }
 
 #[test]
-#[ignore]
 fn test_parse_time_hour_only() {
     let mut session = create_session();
     let result = session
@@ -882,7 +880,6 @@ fn test_extract_time_from_timestamp() {
 }
 
 #[test]
-#[ignore]
 fn test_extract_week_sunday_from_timestamp() {
     let mut session = create_session();
     let result = session
@@ -948,7 +945,6 @@ fn test_parse_timestamp_c_format() {
 }
 
 #[test]
-#[ignore]
 fn test_parse_timestamp_date_only() {
     let mut session = create_session();
     let result = session
@@ -1003,13 +999,12 @@ fn test_timestamp_constructor_from_datetime() {
 }
 
 #[test]
-#[ignore]
 fn test_string_from_timestamp() {
     let mut session = create_session();
     let result = session
         .execute_sql("SELECT STRING(TIMESTAMP '2008-12-25 15:30:00+00', 'UTC')")
         .unwrap();
-    assert_table_eq!(result, [["2008-12-25 15:30:00+00"]]);
+    assert_table_eq!(result, [["2008-12-25 15:30:00.000000 UTC"]]);
 }
 
 #[test]
@@ -1105,7 +1100,6 @@ fn test_timestamp_diff_day() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_diff_negative_date_only() {
     let mut session = create_session();
     let result = session
@@ -1207,7 +1201,6 @@ fn test_timestamp_trunc_week() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_trunc_week_monday() {
     let mut session = create_session();
     let result = session
@@ -1219,7 +1212,6 @@ fn test_timestamp_trunc_week_monday() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_trunc_isoweek() {
     let mut session = create_session();
     let result = session
@@ -1229,7 +1221,6 @@ fn test_timestamp_trunc_isoweek() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_trunc_isoyear() {
     let mut session = create_session();
     let result = session

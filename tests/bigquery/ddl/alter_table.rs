@@ -259,7 +259,6 @@ fn test_alter_table_alter_column_drop_default() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_if_exists() {
     let mut session = create_session();
 
@@ -309,7 +308,6 @@ fn test_alter_table_alter_column_set_data_type() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_primary_key() {
     let mut session = create_session();
 
@@ -373,7 +371,6 @@ fn test_alter_materialized_view_set_options() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_column_if_not_exists() {
     let mut session = create_session();
 
@@ -400,7 +397,6 @@ fn test_alter_table_add_column_if_not_exists() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_drop_column_if_exists() {
     let mut session = create_session();
 
@@ -448,7 +444,6 @@ fn test_alter_table_rename_multiple_columns() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_column_with_struct() {
     let mut session = create_session();
 
@@ -471,7 +466,6 @@ fn test_alter_table_add_column_with_struct() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_column_with_array() {
     let mut session = create_session();
 
@@ -494,7 +488,6 @@ fn test_alter_table_add_column_with_array() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_foreign_key() {
     let mut session = create_session();
 
@@ -620,7 +613,6 @@ fn test_alter_table_set_options_multiple() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_column_with_geography() {
     let mut session = create_session();
 
@@ -641,7 +633,6 @@ fn test_alter_table_add_column_with_geography() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_column_with_json() {
     let mut session = create_session();
 
@@ -706,7 +697,6 @@ fn test_alter_table_alter_column_set_data_type_widening() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_with_qualified_name() {
     let mut session = create_session();
 
@@ -731,7 +721,6 @@ fn test_alter_table_with_qualified_name() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_check_constraint() {
     let mut session = create_session();
 
@@ -775,7 +764,6 @@ fn test_alter_table_alter_column_collate() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_nested_struct_column() {
     let mut session = create_session();
 
@@ -808,7 +796,6 @@ fn test_alter_table_add_nested_struct_column() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_array_of_struct_column() {
     let mut session = create_session();
 
@@ -872,7 +859,6 @@ fn test_alter_table_set_require_partition_filter() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_composite_primary_key() {
     let mut session = create_session();
 
@@ -897,7 +883,6 @@ fn test_alter_table_add_composite_primary_key() {
 }
 
 #[test]
-#[ignore]
 fn test_alter_table_add_composite_foreign_key() {
     let mut session = create_session();
 

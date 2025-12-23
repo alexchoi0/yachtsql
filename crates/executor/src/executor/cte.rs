@@ -223,7 +223,13 @@ fn references_table(plan: &LogicalPlan, table_name: &str) -> bool {
         LogicalPlan::Update { .. } => false,
         LogicalPlan::Delete { .. } => false,
         LogicalPlan::Merge { source, .. } => references_table(source, table_name),
-        LogicalPlan::CreateTable { .. } => false,
+        LogicalPlan::CreateTable { query, .. } => {
+            if let Some(q) = query {
+                references_table(q, table_name)
+            } else {
+                false
+            }
+        }
         LogicalPlan::DropTable { .. } => false,
         LogicalPlan::AlterTable { .. } => false,
         LogicalPlan::Truncate { .. } => false,

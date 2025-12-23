@@ -368,7 +368,6 @@ fn test_cot() {
 }
 
 #[test]
-#[ignore]
 fn test_coth() {
     let mut session = create_session();
 
@@ -387,7 +386,6 @@ fn test_csc() {
 }
 
 #[test]
-#[ignore]
 fn test_csch() {
     let mut session = create_session();
 
@@ -406,7 +404,6 @@ fn test_sec() {
 }
 
 #[test]
-#[ignore]
 fn test_sech() {
     let mut session = create_session();
 
@@ -587,7 +584,6 @@ fn test_div_negative() {
 }
 
 #[test]
-#[ignore]
 fn test_ieee_divide() {
     let mut session = create_session();
 
@@ -599,7 +595,6 @@ fn test_ieee_divide() {
 }
 
 #[test]
-#[ignore]
 fn test_ieee_divide_by_zero() {
     let mut session = create_session();
 
@@ -613,7 +608,6 @@ fn test_ieee_divide_by_zero() {
 }
 
 #[test]
-#[ignore]
 fn test_ieee_divide_negative_by_zero() {
     let mut session = create_session();
 
@@ -627,7 +621,6 @@ fn test_ieee_divide_negative_by_zero() {
 }
 
 #[test]
-#[ignore]
 fn test_ieee_divide_zero_by_zero() {
     let mut session = create_session();
 
@@ -639,7 +632,6 @@ fn test_ieee_divide_zero_by_zero() {
 }
 
 #[test]
-#[ignore]
 fn test_is_inf_positive() {
     let mut session = create_session();
 
@@ -651,7 +643,6 @@ fn test_is_inf_positive() {
 }
 
 #[test]
-#[ignore]
 fn test_is_inf_negative() {
     let mut session = create_session();
 
@@ -663,7 +654,6 @@ fn test_is_inf_negative() {
 }
 
 #[test]
-#[ignore]
 fn test_is_inf_false() {
     let mut session = create_session();
 
@@ -673,7 +663,6 @@ fn test_is_inf_false() {
 }
 
 #[test]
-#[ignore]
 fn test_is_nan_true() {
     let mut session = create_session();
 
@@ -685,7 +674,6 @@ fn test_is_nan_true() {
 }
 
 #[test]
-#[ignore]
 fn test_is_nan_false() {
     let mut session = create_session();
 
@@ -773,7 +761,6 @@ fn test_safe_negate_negative() {
 }
 
 #[test]
-#[ignore]
 fn test_cosine_distance() {
     let mut session = create_session();
 
@@ -785,7 +772,6 @@ fn test_cosine_distance() {
 }
 
 #[test]
-#[ignore]
 fn test_cosine_distance_identical() {
     let mut session = create_session();
 
@@ -797,7 +783,6 @@ fn test_cosine_distance_identical() {
 }
 
 #[test]
-#[ignore]
 fn test_euclidean_distance() {
     let mut session = create_session();
 
@@ -809,7 +794,6 @@ fn test_euclidean_distance() {
 }
 
 #[test]
-#[ignore]
 fn test_euclidean_distance_identical() {
     let mut session = create_session();
 
@@ -821,7 +805,6 @@ fn test_euclidean_distance_identical() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket() {
     let mut session = create_session();
 
@@ -833,7 +816,6 @@ fn test_range_bucket() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket_between() {
     let mut session = create_session();
 
@@ -845,7 +827,6 @@ fn test_range_bucket_between() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket_smaller_than_first() {
     let mut session = create_session();
 
@@ -857,7 +838,6 @@ fn test_range_bucket_smaller_than_first() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket_greater_than_last() {
     let mut session = create_session();
 
@@ -869,7 +849,6 @@ fn test_range_bucket_greater_than_last() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket_empty_array() {
     let mut session = create_session();
 
@@ -881,7 +860,6 @@ fn test_range_bucket_empty_array() {
 }
 
 #[test]
-#[ignore]
 fn test_range_bucket_null_point() {
     let mut session = create_session();
 
@@ -920,7 +898,6 @@ fn test_round_halfway_negative() {
 }
 
 #[test]
-#[ignore]
 fn test_greatest_with_null() {
     let mut session = create_session();
 
@@ -930,7 +907,6 @@ fn test_greatest_with_null() {
 }
 
 #[test]
-#[ignore]
 fn test_least_with_null() {
     let mut session = create_session();
 

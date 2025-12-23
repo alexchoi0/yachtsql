@@ -7,11 +7,10 @@ fn test_date_bucket_basic() {
     let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 7 DAY)")
         .unwrap();
-    assert_table_eq!(result, [[d(2024, 6, 13)]]);
+    assert_table_eq!(result, [[d(2024, 6, 9)]]);
 }
 
 #[test]
-#[ignore]
 fn test_date_bucket_2_day() {
     let mut session = create_session();
     let result = session
@@ -43,7 +42,6 @@ fn test_date_bucket_2_day() {
 }
 
 #[test]
-#[ignore]
 fn test_date_bucket_with_origin() {
     let mut session = create_session();
     let result = session
@@ -84,13 +82,12 @@ fn test_date_bucket_with_null() {
 }
 
 #[test]
-#[ignore]
 fn test_date_bucket_month_interval() {
     let mut session = create_session();
     let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 1 MONTH)")
         .unwrap();
-    assert_table_eq!(result, [[d(2024, 5, 31)]]);
+    assert_table_eq!(result, [[d(2024, 6, 1)]]);
 }
 
 #[test]
@@ -103,7 +100,6 @@ fn test_datetime_bucket_basic() {
 }
 
 #[test]
-#[ignore]
 fn test_datetime_bucket_12_hour() {
     let mut session = create_session();
     let result = session
@@ -135,7 +131,6 @@ fn test_datetime_bucket_12_hour() {
 }
 
 #[test]
-#[ignore]
 fn test_datetime_bucket_with_origin() {
     let mut session = create_session();
     let result = session
@@ -194,7 +189,6 @@ fn test_timestamp_bucket_basic() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_bucket_12_hour() {
     let mut session = create_session();
     let result = session
@@ -226,7 +220,6 @@ fn test_timestamp_bucket_12_hour() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_bucket_with_origin() {
     let mut session = create_session();
     let result = session
