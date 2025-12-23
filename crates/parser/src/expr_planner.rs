@@ -1355,6 +1355,7 @@ impl ExprPlanner {
             "DATE_SUB" => Ok(ScalarFunction::DateSub),
             "DATE_DIFF" | "DATEDIFF" => Ok(ScalarFunction::DateDiff),
             "DATE_TRUNC" => Ok(ScalarFunction::DateTrunc),
+            "DATE_BUCKET" => Ok(ScalarFunction::DateBucket),
             "DATETIME_TRUNC" => Ok(ScalarFunction::DatetimeTrunc),
             "TIMESTAMP_TRUNC" => Ok(ScalarFunction::TimestampTrunc),
             "TIME_TRUNC" => Ok(ScalarFunction::TimeTrunc),

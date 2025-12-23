@@ -5,7 +5,10 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
-use geo::{BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance, GeodesicLength, Intersects, SimplifyVw};
+use geo::{
+    BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance,
+    GeodesicLength, Intersects, SimplifyVw,
+};
 use geo_types::{Coord, Geometry, LineString, MultiPolygon, Point, Polygon};
 use ordered_float::OrderedFloat;
 use rust_decimal::prelude::ToPrimitive;
@@ -540,6 +543,7 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::DateSub => self.fn_date_sub(&arg_values),
             ScalarFunction::DateDiff => self.fn_date_diff(&arg_values),
             ScalarFunction::DateTrunc => self.fn_date_trunc(&arg_values),
+            ScalarFunction::DateBucket => self.fn_date_bucket(&arg_values),
             ScalarFunction::DatetimeTrunc => self.fn_datetime_trunc(&arg_values),
             ScalarFunction::TimestampTrunc => self.fn_timestamp_trunc(&arg_values),
             ScalarFunction::TimeTrunc => self.fn_time_trunc(&arg_values),
@@ -3048,6 +3052,77 @@ impl<'a> IrEvaluator<'a> {
             _ => Err(Error::InvalidQuery(
                 "DATE_TRUNC requires a date argument".into(),
             )),
+        }
+    }
+
+    fn fn_date_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "DATE_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        let date = match &args[0] {
+            Value::Null => return Ok(Value::Null),
+            Value::Date(d) => *d,
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "DATE_BUCKET requires a date as first argument".into(),
+                ));
+            }
+        };
+        let interval = match &args[1] {
+            Value::Null => return Ok(Value::Null),
+            Value::Interval(i) => i,
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "DATE_BUCKET requires an interval as second argument".into(),
+                ));
+            }
+        };
+        let origin = if args.len() >= 3 {
+            match &args[2] {
+                Value::Null => return Ok(Value::Null),
+                Value::Date(d) => *d,
+                _ => {
+                    return Err(Error::InvalidQuery(
+                        "DATE_BUCKET origin must be a date".into(),
+                    ));
+                }
+            }
+        } else {
+            NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+        };
+        if interval.months != 0 {
+            let date_months = date.year() * 12 + date.month() as i32 - 1;
+            let origin_months = origin.year() * 12 + origin.month() as i32 - 1;
+            let diff_months = date_months - origin_months;
+            let bucket_months = interval.months;
+            let bucket_idx = if diff_months >= 0 {
+                diff_months / bucket_months
+            } else {
+                (diff_months - bucket_months + 1) / bucket_months
+            };
+            let bucket_start_months = origin_months + bucket_idx * bucket_months;
+            let year = bucket_start_months / 12;
+            let month = (bucket_start_months % 12) as u32 + 1;
+            let bucketed = NaiveDate::from_ymd_opt(year, month, 1).ok_or_else(|| {
+                Error::InvalidQuery("Invalid date in DATE_BUCKET calculation".into())
+            })?;
+            Ok(Value::Date(bucketed))
+        } else if interval.days != 0 {
+            let diff_days = date.signed_duration_since(origin).num_days();
+            let bucket_days = interval.days as i64;
+            let bucket_idx = if diff_days >= 0 {
+                diff_days / bucket_days
+            } else {
+                (diff_days - bucket_days + 1) / bucket_days
+            };
+            let bucketed = origin + chrono::Duration::days(bucket_idx * bucket_days);
+            Ok(Value::Date(bucketed))
+        } else {
+            Err(Error::InvalidQuery(
+                "DATE_BUCKET interval must have days or months".into(),
+            ))
         }
     }
 

@@ -143,6 +143,7 @@ pub enum ScalarFunction {
     DateSub,
     DateDiff,
     DateTrunc,
+    DateBucket,
     DatetimeTrunc,
     TimestampTrunc,
     TimeTrunc,
