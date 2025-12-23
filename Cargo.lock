@@ -1177,6 +1177,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "debug_print"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1760,6 +1774,12 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 dependencies = [
  "ahash 0.7.8",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -4135,26 +4155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlparser"
-version = "0.59.0"
-source = "git+https://github.com/alexchoi0/yachtsql-sqlparser.git?branch=main#2a218a89a6075df4da9f520313f2fd64b34f98bb"
-dependencies = [
- "log",
- "recursive",
- "sqlparser_derive",
-]
-
-[[package]]
-name = "sqlparser_derive"
-version = "0.3.0"
-source = "git+https://github.com/alexchoi0/yachtsql-sqlparser.git?branch=main#2a218a89a6075df4da9f520313f2fd64b34f98bb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5391,7 +5391,6 @@ dependencies = [
  "serde_json_path",
  "sha1",
  "sha2",
- "sqlparser",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -5406,6 +5405,7 @@ dependencies = [
  "yachtsql-ir",
  "yachtsql-optimizer",
  "yachtsql-parser",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
  "yachtsql-test-utils",
 ]
@@ -5443,8 +5443,6 @@ dependencies = [
  "thiserror 2.0.17",
  "unicode-normalization",
  "uuid",
- "yachtsql",
- "yachtsql-test-utils",
 ]
 
 [[package]]
@@ -5467,6 +5465,7 @@ dependencies = [
  "crc32c",
  "crc32fast",
  "criterion",
+ "dashmap",
  "debug_print",
  "ecb",
  "farmhash",
@@ -5513,14 +5512,12 @@ dependencies = [
  "v8",
  "wkt",
  "xxhash-rust",
- "yachtsql",
  "yachtsql-common",
  "yachtsql-functions",
  "yachtsql-ir",
  "yachtsql-optimizer",
  "yachtsql-parser",
  "yachtsql-storage",
- "yachtsql-test-utils",
 ]
 
 [[package]]
@@ -5554,16 +5551,14 @@ dependencies = [
  "sha1",
  "sha2",
  "siphasher",
- "sqlparser",
  "url",
  "urlencoding",
  "uuid",
  "xxhash-rust",
- "yachtsql",
  "yachtsql-common",
  "yachtsql-parser",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
- "yachtsql-test-utils",
 ]
 
 [[package]]
@@ -5576,11 +5571,9 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sqlparser",
- "yachtsql",
  "yachtsql-common",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
- "yachtsql-test-utils",
 ]
 
 [[package]]
@@ -5603,10 +5596,32 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sqlparser",
  "yachtsql-common",
  "yachtsql-ir",
+ "yachtsql-sqlparser",
  "yachtsql-storage",
+]
+
+[[package]]
+name = "yachtsql-sqlparser"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d269de611109b9eeafd671837a110dda689cb8615823fe35615bdbd1c11e937"
+dependencies = [
+ "log",
+ "recursive",
+ "yachtsql-sqlparser-derive",
+]
+
+[[package]]
+name = "yachtsql-sqlparser-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e795d3ca85da50f016a24d1f1da73024f840edb5cb2b1bf7898081027872fb2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
 ]
 
 [[package]]

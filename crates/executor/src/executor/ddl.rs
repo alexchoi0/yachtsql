@@ -406,6 +406,7 @@ impl<'a> PlanExecutor<'a> {
             Value::Timestamp(ts) => serde_json::Value::String(ts.to_rfc3339()),
             Value::Time(t) => serde_json::Value::String(t.to_string()),
             Value::Numeric(n) => serde_json::Value::String(n.to_string()),
+            Value::BigNumeric(n) => serde_json::Value::String(n.to_string()),
             Value::Array(arr) => {
                 serde_json::Value::Array(arr.iter().map(Self::value_to_json).collect())
             }
@@ -443,6 +444,7 @@ impl<'a> PlanExecutor<'a> {
             Value::Timestamp(ts) => ts.to_rfc3339(),
             Value::Time(t) => t.to_string(),
             Value::Numeric(n) => n.to_string(),
+            Value::BigNumeric(n) => n.to_string(),
             Value::Bytes(_)
             | Value::Json(_)
             | Value::Array(_)
@@ -513,6 +515,7 @@ impl<'a> PlanExecutor<'a> {
                             Value::Null
                             | Value::Bool(_)
                             | Value::Numeric(_)
+                            | Value::BigNumeric(_)
                             | Value::String(_)
                             | Value::Bytes(_)
                             | Value::Date(_)
@@ -540,6 +543,7 @@ impl<'a> PlanExecutor<'a> {
                             Value::Null
                             | Value::Bool(_)
                             | Value::Numeric(_)
+                            | Value::BigNumeric(_)
                             | Value::String(_)
                             | Value::Bytes(_)
                             | Value::Date(_)
@@ -590,6 +594,7 @@ impl<'a> PlanExecutor<'a> {
                             | Value::Date(_)
                             | Value::Time(_)
                             | Value::Numeric(_)
+                            | Value::BigNumeric(_)
                             | Value::Bytes(_)
                             | Value::Json(_)
                             | Value::Array(_)
@@ -628,11 +633,12 @@ impl<'a> PlanExecutor<'a> {
                             Value::Timestamp(ts) => builder.append_value(ts.to_rfc3339()),
                             Value::Time(t) => builder.append_value(t.to_string()),
                             Value::Numeric(n) => builder.append_value(n.to_string()),
+                            Value::BigNumeric(n) => builder.append_value(n.to_string()),
                             Value::Bytes(b) => builder.append_value(hex::encode(b)),
                             Value::Json(j) => builder.append_value(j.to_string()),
                             Value::Array(a) => builder.append_value(format!("{:?}", a)),
                             Value::Struct(s) => builder.append_value(format!("{:?}", s)),
-                            Value::Geography(g) => builder.append_value(g.to_string()),
+                            Value::Geography(g) => builder.append_value(g),
                             Value::Interval(i) => builder.append_value(format!("{:?}", i)),
                             Value::Range(r) => builder.append_value(format!("{:?}", r)),
                             Value::Default => builder.append_value("DEFAULT"),
@@ -654,23 +660,21 @@ impl<'a> PlanExecutor<'a> {
         temp_table: bool,
         temp_schema: Option<&Vec<ColumnDef>>,
     ) -> Result<Table> {
-        if temp_table {
-            if let Some(schema_def) = temp_schema {
-                let fields: Vec<Field> = schema_def
-                    .iter()
-                    .map(|col| {
-                        let mode = if col.nullable {
-                            FieldMode::Nullable
-                        } else {
-                            FieldMode::Required
-                        };
-                        Field::new(&col.name, col.data_type.clone(), mode)
-                    })
-                    .collect();
-                let schema = Schema::from_fields(fields);
-                let table = Table::empty(schema);
-                self.catalog.insert_table(table_name, table)?;
-            }
+        if temp_table && let Some(schema_def) = temp_schema {
+            let fields: Vec<Field> = schema_def
+                .iter()
+                .map(|col| {
+                    let mode = if col.nullable {
+                        FieldMode::Nullable
+                    } else {
+                        FieldMode::Required
+                    };
+                    Field::new(&col.name, col.data_type.clone(), mode)
+                })
+                .collect();
+            let schema = Schema::from_fields(fields);
+            let table = Table::empty(schema);
+            self.catalog.insert_table(table_name, table)?;
         }
 
         let table = self
@@ -1085,10 +1089,7 @@ impl<'a> PlanExecutor<'a> {
         body: &[PhysicalPlan],
         or_replace: bool,
     ) -> Result<Table> {
-        let body_plans = body
-            .iter()
-            .map(|p| executor_plan_to_logical_plan(p))
-            .collect();
+        let body_plans = body.iter().map(executor_plan_to_logical_plan).collect();
         let proc = UserProcedure {
             name: name.to_string(),
             parameters: args.to_vec(),
@@ -1529,6 +1530,28 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
         PhysicalPlan::Assert { condition, message } => LogicalPlan::Assert {
             condition: condition.clone(),
             message: message.clone(),
+        },
+        PhysicalPlan::Grant {
+            roles,
+            resource_type,
+            resource_name,
+            grantees,
+        } => LogicalPlan::Grant {
+            roles: roles.clone(),
+            resource_type: resource_type.clone(),
+            resource_name: resource_name.clone(),
+            grantees: grantees.clone(),
+        },
+        PhysicalPlan::Revoke {
+            roles,
+            resource_type,
+            resource_name,
+            grantees,
+        } => LogicalPlan::Revoke {
+            roles: roles.clone(),
+            resource_type: resource_type.clone(),
+            resource_name: resource_name.clone(),
+            grantees: grantees.clone(),
         },
     }
 }

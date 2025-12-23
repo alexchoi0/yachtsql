@@ -3,7 +3,7 @@ use yachtsql_common::types::Value;
 use yachtsql_ir::{Expr, JoinType, PlanSchema};
 use yachtsql_storage::{Record, Schema, Table};
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 

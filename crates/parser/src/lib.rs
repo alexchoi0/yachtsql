@@ -361,8 +361,7 @@ fn preprocess_range_types(sql: &str) -> String {
         })
         .to_string();
 
-    let replace_proc_re =
-        Regex::new(r"(?i)CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)").unwrap();
+    let replace_proc_re = Regex::new(r"(?i)CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)").unwrap();
     result = replace_proc_re
         .replace_all(&result, "CREATE PROCEDURE __orp__$1")
         .to_string();

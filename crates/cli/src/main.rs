@@ -95,10 +95,10 @@ fn list_sessions() -> Result<()> {
     for entry in fs::read_dir(&sessions_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "bin") {
-            if let Some(stem) = path.file_stem() {
-                sessions.push(stem.to_string_lossy().to_string());
-            }
+        if path.extension().is_some_and(|ext| ext == "bin")
+            && let Some(stem) = path.file_stem()
+        {
+            sessions.push(stem.to_string_lossy().to_string());
         }
     }
 
@@ -165,8 +165,9 @@ fn execute_query(sql: &str, session_id: Option<&str>) -> Result<()> {
             print_table(&table)?;
         }
         None => {
-            let mut engine = YachtSQLEngine::new();
-            let result = engine.query(sql).context("Failed to execute SQL query")?;
+            let engine = YachtSQLEngine::new();
+            let mut session = engine.create_session();
+            let result = session.query(sql).context("Failed to execute SQL query")?;
             print_query_result(&result)?;
         }
     }

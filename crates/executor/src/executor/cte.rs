@@ -3,7 +3,7 @@ use yachtsql_common::error::Result;
 use yachtsql_ir::{CteDefinition, LogicalPlan, SetOperationType};
 use yachtsql_storage::Table;
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::plan::PhysicalPlan;
 
 const MAX_RECURSION_DEPTH: usize = 500;
@@ -184,7 +184,9 @@ fn collect_union_terms(
         | LogicalPlan::CreateSnapshot { .. }
         | LogicalPlan::DropSnapshot { .. }
         | LogicalPlan::Sample { .. }
-        | LogicalPlan::Assert { .. } => {
+        | LogicalPlan::Assert { .. }
+        | LogicalPlan::Grant { .. }
+        | LogicalPlan::Revoke { .. } => {
             if references_table(plan, cte_name) {
                 recursives.push(plan.clone());
             } else {
@@ -264,5 +266,7 @@ fn references_table(plan: &LogicalPlan, table_name: &str) -> bool {
         LogicalPlan::DropSnapshot { .. } => false,
         LogicalPlan::Sample { input, .. } => references_table(input, table_name),
         LogicalPlan::Assert { .. } => false,
+        LogicalPlan::Grant { .. } => false,
+        LogicalPlan::Revoke { .. } => false,
     }
 }

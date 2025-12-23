@@ -6,7 +6,7 @@ use yachtsql_common::types::Value;
 use yachtsql_ir::{AggregateFunction, Expr, PlanSchema};
 use yachtsql_storage::Table;
 
-use super::{plan_schema_to_schema, PlanExecutor};
+use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 
@@ -711,6 +711,14 @@ fn is_distinct_aggregate(expr: &Expr) -> bool {
     }
 }
 
+fn extract_agg_limit(expr: &Expr) -> Option<usize> {
+    match expr {
+        Expr::Aggregate { limit, .. } => *limit,
+        Expr::Alias { expr, .. } => extract_agg_limit(expr),
+        _ => None,
+    }
+}
+
 fn has_ignore_nulls(expr: &Expr) -> bool {
     match expr {
         Expr::Aggregate { ignore_nulls, .. } => *ignore_nulls,
@@ -760,10 +768,10 @@ fn has_ignore_nulls(expr: &Expr) -> bool {
 fn extract_int_arg(expr: &Expr, index: usize) -> Option<i64> {
     match expr {
         Expr::Aggregate { args, .. } => {
-            if args.len() > index {
-                if let Expr::Literal(yachtsql_ir::Literal::Int64(n)) = &args[index] {
-                    return Some(*n);
-                }
+            if args.len() > index
+                && let Expr::Literal(yachtsql_ir::Literal::Int64(n)) = &args[index]
+            {
+                return Some(*n);
             }
             None
         }
@@ -877,6 +885,7 @@ enum Accumulator {
     ArrayAgg {
         items: Vec<(Value, Vec<(Value, bool)>)>,
         ignore_nulls: bool,
+        limit: Option<usize>,
     },
     StringAgg {
         values: Vec<String>,
@@ -964,6 +973,7 @@ impl Accumulator {
                 AggregateFunction::ArrayAgg => Accumulator::ArrayAgg {
                     items: Vec::new(),
                     ignore_nulls: has_ignore_nulls(expr),
+                    limit: extract_agg_limit(expr),
                 },
                 AggregateFunction::StringAgg => Accumulator::StringAgg {
                     values: Vec::new(),
@@ -1252,6 +1262,7 @@ impl Accumulator {
             Accumulator::ArrayAgg {
                 items,
                 ignore_nulls,
+                ..
             } => {
                 if *ignore_nulls && value.is_null() {
                     return Ok(());
@@ -1398,8 +1409,8 @@ impl Accumulator {
             None
         };
 
-        if let (Some(x), Some(y)) = (x_val, y_val) {
-            if let Accumulator::Covariance {
+        if let (Some(x), Some(y)) = (x_val, y_val)
+            && let Accumulator::Covariance {
                 count,
                 mean_x,
                 mean_y,
@@ -1408,19 +1419,18 @@ impl Accumulator {
                 m2_y,
                 ..
             } = self
-            {
-                *count += 1;
-                let n = *count as f64;
-                let delta_x = x - *mean_x;
-                let delta_y = y - *mean_y;
-                *mean_x += delta_x / n;
-                *mean_y += delta_y / n;
-                let delta_x2 = x - *mean_x;
-                let delta_y2 = y - *mean_y;
-                *c_xy += delta_x * delta_y2;
-                *m2_x += delta_x * delta_x2;
-                *m2_y += delta_y * delta_y2;
-            }
+        {
+            *count += 1;
+            let n = *count as f64;
+            let delta_x = x - *mean_x;
+            let delta_y = y - *mean_y;
+            *mean_x += delta_x / n;
+            *mean_y += delta_y / n;
+            let delta_x2 = x - *mean_x;
+            let delta_y2 = y - *mean_y;
+            *c_xy += delta_x * delta_y2;
+            *m2_x += delta_x * delta_x2;
+            *m2_y += delta_y * delta_y2;
         }
         Ok(())
     }
@@ -1462,7 +1472,7 @@ impl Accumulator {
             }
             Accumulator::Min(min) => min.clone().unwrap_or(Value::Null),
             Accumulator::Max(max) => max.clone().unwrap_or(Value::Null),
-            Accumulator::ArrayAgg { items, .. } => {
+            Accumulator::ArrayAgg { items, limit, .. } => {
                 let mut sorted_items = items.clone();
                 if !sorted_items.is_empty() && !sorted_items[0].1.is_empty() {
                     sorted_items.sort_by(|a, b| {
@@ -1478,7 +1488,16 @@ impl Accumulator {
                         std::cmp::Ordering::Equal
                     });
                 }
-                Value::Array(sorted_items.into_iter().map(|(v, _)| v).collect())
+                let result_items: Vec<Value> = if let Some(lim) = limit {
+                    sorted_items
+                        .into_iter()
+                        .take(*lim)
+                        .map(|(v, _)| v)
+                        .collect()
+                } else {
+                    sorted_items.into_iter().map(|(v, _)| v).collect()
+                };
+                Value::Array(result_items)
             }
             Accumulator::StringAgg { values, separator } => {
                 if values.is_empty() {
