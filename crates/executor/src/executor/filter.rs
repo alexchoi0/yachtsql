@@ -6,17 +6,19 @@ use yachtsql_storage::{Record, Schema, Table};
 
 use super::PlanExecutor;
 use crate::ir_evaluator::IrEvaluator;
-use crate::plan::ExecutorPlan;
+use crate::plan::PhysicalPlan;
 
 impl<'a> PlanExecutor<'a> {
-    pub fn execute_filter(&mut self, input: &ExecutorPlan, predicate: &Expr) -> Result<Table> {
+    pub fn execute_filter(&mut self, input: &PhysicalPlan, predicate: &Expr) -> Result<Table> {
         let input_table = self.execute_plan(input)?;
         let schema = input_table.schema().clone();
 
         if Self::expr_contains_subquery(predicate) {
             self.execute_filter_with_subquery(&input_table, predicate)
         } else {
-            let evaluator = IrEvaluator::new(&schema).with_user_functions(&self.user_function_defs);
+            let evaluator = IrEvaluator::new(&schema)
+                .with_variables(&self.variables)
+                .with_user_functions(&self.user_function_defs);
             let mut result = Table::empty(schema.clone());
 
             for record in input_table.rows()? {
@@ -98,6 +100,7 @@ impl<'a> PlanExecutor<'a> {
                     ))),
                     _ => {
                         let evaluator = IrEvaluator::new(outer_schema)
+                            .with_variables(&self.variables)
                             .with_user_functions(&self.user_function_defs);
                         evaluator.evaluate(expr, outer_record)
                     }
@@ -112,8 +115,9 @@ impl<'a> PlanExecutor<'a> {
             }
             Expr::Subquery(subquery) => self.evaluate_scalar_subquery(subquery),
             _ => {
-                let evaluator =
-                    IrEvaluator::new(outer_schema).with_user_functions(&self.user_function_defs);
+                let evaluator = IrEvaluator::new(outer_schema)
+                    .with_variables(&self.variables)
+                    .with_user_functions(&self.user_function_defs);
                 evaluator.evaluate(expr, outer_record)
             }
         }
@@ -128,7 +132,7 @@ impl<'a> PlanExecutor<'a> {
         let substituted =
             self.substitute_outer_refs_in_plan(subquery, outer_schema, outer_record)?;
         let physical = optimize(&substituted)?;
-        let executor_plan = ExecutorPlan::from_physical(&physical);
+        let executor_plan = PhysicalPlan::from_physical(&physical);
         let result_table = self.execute_plan(&executor_plan)?;
         Ok(!result_table.is_empty())
     }
@@ -140,7 +144,7 @@ impl<'a> PlanExecutor<'a> {
         _outer_record: &Record,
     ) -> Result<Vec<Value>> {
         let physical = optimize(subquery)?;
-        let executor_plan = ExecutorPlan::from_physical(&physical);
+        let executor_plan = PhysicalPlan::from_physical(&physical);
         let result_table = self.execute_plan(&executor_plan)?;
 
         let mut values = Vec::new();
@@ -155,7 +159,7 @@ impl<'a> PlanExecutor<'a> {
 
     fn evaluate_scalar_subquery(&mut self, subquery: &LogicalPlan) -> Result<Value> {
         let physical = optimize(subquery)?;
-        let executor_plan = ExecutorPlan::from_physical(&physical);
+        let executor_plan = PhysicalPlan::from_physical(&physical);
         let result_table = self.execute_plan(&executor_plan)?;
 
         for record in result_table.rows()? {
@@ -228,7 +232,7 @@ impl<'a> PlanExecutor<'a> {
                 Ok(LogicalPlan::Join {
                     left: Box::new(new_left),
                     right: Box::new(new_right),
-                    join_type: join_type.clone(),
+                    join_type: *join_type,
                     condition: new_condition,
                     schema: schema.clone(),
                 })
@@ -298,6 +302,31 @@ impl<'a> PlanExecutor<'a> {
                     sort_exprs: new_sort_exprs,
                 })
             }
+            LogicalPlan::Aggregate {
+                input,
+                group_by,
+                aggregates,
+                schema,
+                grouping_sets,
+            } => {
+                let new_input =
+                    self.substitute_outer_refs_in_plan(input, outer_schema, outer_record)?;
+                let new_group_by = group_by
+                    .iter()
+                    .map(|e| self.substitute_outer_refs_in_expr(e, outer_schema, outer_record))
+                    .collect::<Result<Vec<_>>>()?;
+                let new_aggregates = aggregates
+                    .iter()
+                    .map(|e| self.substitute_outer_refs_in_expr(e, outer_schema, outer_record))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(LogicalPlan::Aggregate {
+                    input: Box::new(new_input),
+                    group_by: new_group_by,
+                    aggregates: new_aggregates,
+                    schema: schema.clone(),
+                    grouping_sets: grouping_sets.clone(),
+                })
+            }
             other => Ok(other.clone()),
         }
     }
@@ -311,23 +340,25 @@ impl<'a> PlanExecutor<'a> {
         match expr {
             Expr::Column { table, name, index } => {
                 let should_substitute = if let Some(tbl) = table {
-                    outer_schema
+                    outer_schema.fields().iter().any(|f| {
+                        f.source_table
+                            .as_ref()
+                            .is_some_and(|src| src.eq_ignore_ascii_case(tbl))
+                    }) || outer_schema
                         .fields()
                         .iter()
-                        .any(|f| f.source_table.as_ref().map_or(false, |t| t == tbl))
+                        .any(|f| f.name.eq_ignore_ascii_case(name) && f.source_table.is_none())
                 } else {
                     outer_schema.field_index(name).is_some()
                 };
 
-                if should_substitute {
-                    if let Some(idx) = outer_schema.field_index(name) {
-                        let value = outer_record
-                            .values()
-                            .get(idx)
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        return Ok(Expr::Literal(Self::value_to_literal(value)));
-                    }
+                if should_substitute && let Some(idx) = outer_schema.field_index(name) {
+                    let value = outer_record
+                        .values()
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    return Ok(Expr::Literal(Self::value_to_literal(value)));
                 }
                 Ok(Expr::Column {
                     table: table.clone(),
@@ -342,7 +373,7 @@ impl<'a> PlanExecutor<'a> {
                     self.substitute_outer_refs_in_expr(right, outer_schema, outer_record)?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(new_left),
-                    op: op.clone(),
+                    op: *op,
                     right: Box::new(new_right),
                 })
             }
@@ -396,7 +427,7 @@ impl<'a> PlanExecutor<'a> {
     }
 
     fn value_to_literal(value: Value) -> Literal {
-        use chrono::{Datelike, NaiveDate, Timelike};
+        use chrono::{NaiveDate, Timelike};
         const UNIX_EPOCH_DATE: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
             Some(d) => d,
             None => panic!("Invalid date"),
@@ -407,6 +438,7 @@ impl<'a> PlanExecutor<'a> {
             Value::Int64(n) => Literal::Int64(n),
             Value::Float64(f) => Literal::Float64(f),
             Value::Numeric(d) => Literal::Numeric(d),
+            Value::BigNumeric(d) => Literal::BigNumeric(d),
             Value::String(s) => Literal::String(s),
             Value::Bytes(b) => Literal::Bytes(b),
             Value::Date(d) => {

@@ -2,11 +2,12 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, Value};
 use yachtsql_ir::{Assignment, Expr, Literal, LogicalPlan, MergeClause};
-use yachtsql_storage::{Schema, Table};
+use yachtsql_optimizer::optimize;
+use yachtsql_storage::{Record, Schema, Table};
 
 use super::PlanExecutor;
 use crate::ir_evaluator::IrEvaluator;
-use crate::plan::ExecutorPlan;
+use crate::plan::PhysicalPlan;
 
 fn coerce_value(value: Value, target_type: &DataType) -> Result<Value> {
     match (&value, target_type) {
@@ -50,16 +51,61 @@ fn coerce_value(value: Value, target_type: &DataType) -> Result<Value> {
             Ok(Value::Float64(ordered_float::OrderedFloat(*n as f64)))
         }
         (Value::Float64(f), DataType::Int64) => Ok(Value::Int64(f.0 as i64)),
+        (Value::Struct(fields), DataType::Struct(target_fields)) => {
+            let mut coerced_fields = Vec::with_capacity(fields.len());
+            for (i, (_, val)) in fields.iter().enumerate() {
+                let (new_name, new_type) = if i < target_fields.len() {
+                    (target_fields[i].name.clone(), &target_fields[i].data_type)
+                } else {
+                    (format!("_field{}", i), &DataType::Unknown)
+                };
+                let coerced_val = coerce_value(val.clone(), new_type)?;
+                coerced_fields.push((new_name, coerced_val));
+            }
+            Ok(Value::Struct(coerced_fields))
+        }
+        (Value::Array(elements), DataType::Array(element_type)) => {
+            let coerced_elements: Result<Vec<_>> = elements
+                .iter()
+                .map(|elem| coerce_value(elem.clone(), element_type))
+                .collect();
+            Ok(Value::Array(coerced_elements?))
+        }
         _ => Ok(value),
     }
 }
 
 impl<'a> PlanExecutor<'a> {
+    fn evaluate_insert_expr(
+        &mut self,
+        expr: &Expr,
+        evaluator: &IrEvaluator,
+        record: &Record,
+    ) -> Result<Value> {
+        match expr {
+            Expr::Subquery(logical_plan) | Expr::ScalarSubquery(logical_plan) => {
+                let physical_plan = optimize(logical_plan)?;
+                let subquery_result = self.execute(&physical_plan)?;
+                let rows = subquery_result.to_records()?;
+                if rows.len() == 1 && rows[0].values().len() == 1 {
+                    Ok(rows[0].values()[0].clone())
+                } else if rows.is_empty() {
+                    Ok(Value::null())
+                } else {
+                    Err(Error::InvalidQuery(
+                        "Scalar subquery returned more than one row".to_string(),
+                    ))
+                }
+            }
+            _ => evaluator.evaluate(expr, record),
+        }
+    }
+
     pub fn execute_insert(
         &mut self,
         table_name: &str,
         columns: &[String],
-        source: &ExecutorPlan,
+        source: &PhysicalPlan,
     ) -> Result<Table> {
         let target_schema = self
             .catalog
@@ -74,25 +120,22 @@ impl<'a> PlanExecutor<'a> {
         let mut default_values: Vec<Option<Value>> = vec![None; target_schema.field_count()];
         if let Some(defaults) = self.catalog.get_table_defaults(table_name) {
             for default in defaults {
-                if let Some(idx) = target_schema.field_index(&default.column_name) {
-                    if let Ok(val) = evaluator.evaluate(&default.default_expr, &empty_record) {
-                        default_values[idx] = Some(val);
-                    }
+                if let Some(idx) = target_schema.field_index(&default.column_name)
+                    && let Ok(val) = evaluator.evaluate(&default.default_expr, &empty_record)
+                {
+                    default_values[idx] = Some(val);
                 }
             }
         }
 
         let fields = target_schema.fields().to_vec();
 
-        if let ExecutorPlan::Values { values, .. } = source {
-            let target = self
-                .catalog
-                .get_table_mut(table_name)
-                .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
-
+        if let PhysicalPlan::Values { values, .. } = source {
             let empty_schema = yachtsql_storage::Schema::new();
             let values_evaluator = IrEvaluator::new(&empty_schema);
             let empty_rec = yachtsql_storage::Record::from_values(vec![]);
+
+            let mut all_rows: Vec<Vec<Value>> = Vec::new();
 
             for row_exprs in values {
                 if columns.is_empty() {
@@ -101,35 +144,52 @@ impl<'a> PlanExecutor<'a> {
                         if i < fields.len() {
                             let final_val = match expr {
                                 Expr::Default => default_values[i].clone().unwrap_or(Value::Null),
-                                _ => values_evaluator.evaluate(expr, &empty_rec)?,
+                                _ => {
+                                    self.evaluate_insert_expr(expr, &values_evaluator, &empty_rec)?
+                                }
                             };
                             coerced_row.push(coerce_value(final_val, &fields[i].data_type)?);
                         } else {
-                            coerced_row.push(values_evaluator.evaluate(expr, &empty_rec)?);
+                            coerced_row.push(self.evaluate_insert_expr(
+                                expr,
+                                &values_evaluator,
+                                &empty_rec,
+                            )?);
                         }
                     }
-                    target.push_row(coerced_row)?;
+                    all_rows.push(coerced_row);
                 } else {
                     let mut row: Vec<Value> = default_values
                         .iter()
                         .map(|opt| opt.clone().unwrap_or(Value::Null))
                         .collect();
                     for (i, col_name) in columns.iter().enumerate() {
-                        if let Some(col_idx) = target_schema.field_index(col_name) {
-                            if i < row_exprs.len() && col_idx < fields.len() {
-                                let expr = &row_exprs[i];
-                                let final_val = match expr {
-                                    Expr::Default => {
-                                        default_values[col_idx].clone().unwrap_or(Value::Null)
-                                    }
-                                    _ => values_evaluator.evaluate(expr, &empty_rec)?,
-                                };
-                                row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
-                            }
+                        if let Some(col_idx) = target_schema.field_index(col_name)
+                            && i < row_exprs.len()
+                            && col_idx < fields.len()
+                        {
+                            let expr = &row_exprs[i];
+                            let final_val = match expr {
+                                Expr::Default => {
+                                    default_values[col_idx].clone().unwrap_or(Value::Null)
+                                }
+                                _ => {
+                                    self.evaluate_insert_expr(expr, &values_evaluator, &empty_rec)?
+                                }
+                            };
+                            row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
                         }
                     }
-                    target.push_row(row)?;
+                    all_rows.push(row);
                 }
+            }
+
+            let target = self
+                .catalog
+                .get_table_mut(table_name)
+                .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+            for row in all_rows {
+                target.push_row(row)?;
             }
 
             return Ok(Table::empty(Schema::new()));
@@ -163,17 +223,18 @@ impl<'a> PlanExecutor<'a> {
                     .map(|opt| opt.clone().unwrap_or(Value::Null))
                     .collect();
                 for (i, col_name) in columns.iter().enumerate() {
-                    if let Some(col_idx) = target_schema.field_index(col_name) {
-                        if i < record.values().len() && col_idx < fields.len() {
-                            let val = &record.values()[i];
-                            let final_val = match val {
-                                Value::Default => {
-                                    default_values[col_idx].clone().unwrap_or(Value::Null)
-                                }
-                                _ => val.clone(),
-                            };
-                            row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
-                        }
+                    if let Some(col_idx) = target_schema.field_index(col_name)
+                        && i < record.values().len()
+                        && col_idx < fields.len()
+                    {
+                        let val = &record.values()[i];
+                        let final_val = match val {
+                            Value::Default => {
+                                default_values[col_idx].clone().unwrap_or(Value::Null)
+                            }
+                            _ => val.clone(),
+                        };
+                        row[col_idx] = coerce_value(final_val, &fields[col_idx].data_type)?;
                     }
                 }
                 target.push_row(row)?;
@@ -310,7 +371,7 @@ impl<'a> PlanExecutor<'a> {
 
     fn execute_logical_plan(&mut self, plan: &LogicalPlan) -> Result<Table> {
         let physical_plan = yachtsql_optimizer::optimize(plan)?;
-        let executor_plan = ExecutorPlan::from_physical(&physical_plan);
+        let executor_plan = PhysicalPlan::from_physical(&physical_plan);
         self.execute_plan(&executor_plan)
     }
 
@@ -336,6 +397,7 @@ impl<'a> PlanExecutor<'a> {
             Value::String(s) => Literal::String(s.clone()),
             Value::Bytes(b) => Literal::Bytes(b.clone()),
             Value::Numeric(n) => Literal::Numeric(*n),
+            Value::BigNumeric(n) => Literal::BigNumeric(*n),
             Value::Json(j) => Literal::Json(j.clone()),
             Value::Date(d) => {
                 let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
@@ -377,7 +439,7 @@ impl<'a> PlanExecutor<'a> {
     pub fn execute_merge(
         &mut self,
         target_table: &str,
-        source: &ExecutorPlan,
+        source: &PhysicalPlan,
         on: &Expr,
         clauses: &[MergeClause],
     ) -> Result<Table> {
@@ -610,12 +672,12 @@ impl<'a> PlanExecutor<'a> {
                                     let mut new_row: Vec<Value> =
                                         vec![Value::Null; target_schema.field_count()];
                                     for (i, col_name) in columns.iter().enumerate() {
-                                        if let Some(col_idx) = target_schema.field_index(col_name) {
-                                            if i < values.len() {
-                                                let val = evaluator
-                                                    .evaluate(&values[i], &combined_record)?;
-                                                new_row[col_idx] = val;
-                                            }
+                                        if let Some(col_idx) = target_schema.field_index(col_name)
+                                            && i < values.len()
+                                        {
+                                            let val =
+                                                evaluator.evaluate(&values[i], &combined_record)?;
+                                            new_row[col_idx] = val;
                                         }
                                     }
                                     new_rows.push(new_row);

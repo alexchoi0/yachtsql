@@ -4,12 +4,12 @@ use yachtsql_ir::{CteDefinition, LogicalPlan, SetOperationType};
 use yachtsql_storage::Table;
 
 use super::{PlanExecutor, plan_schema_to_schema};
-use crate::plan::ExecutorPlan;
+use crate::plan::PhysicalPlan;
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
 impl<'a> PlanExecutor<'a> {
-    pub fn execute_cte(&mut self, ctes: &[CteDefinition], body: &ExecutorPlan) -> Result<Table> {
+    pub fn execute_cte(&mut self, ctes: &[CteDefinition], body: &PhysicalPlan) -> Result<Table> {
         for cte in ctes {
             if cte.recursive {
                 self.execute_recursive_cte(cte)?;
@@ -182,7 +182,11 @@ fn collect_union_terms(
         | LogicalPlan::LoadData { .. }
         | LogicalPlan::Repeat { .. }
         | LogicalPlan::CreateSnapshot { .. }
-        | LogicalPlan::DropSnapshot { .. } => {
+        | LogicalPlan::DropSnapshot { .. }
+        | LogicalPlan::Sample { .. }
+        | LogicalPlan::Assert { .. }
+        | LogicalPlan::Grant { .. }
+        | LogicalPlan::Revoke { .. } => {
             if references_table(plan, cte_name) {
                 recursives.push(plan.clone());
             } else {
@@ -260,5 +264,9 @@ fn references_table(plan: &LogicalPlan, table_name: &str) -> bool {
         LogicalPlan::Repeat { body, .. } => body.iter().any(|p| references_table(p, table_name)),
         LogicalPlan::CreateSnapshot { .. } => false,
         LogicalPlan::DropSnapshot { .. } => false,
+        LogicalPlan::Sample { input, .. } => references_table(input, table_name),
+        LogicalPlan::Assert { .. } => false,
+        LogicalPlan::Grant { .. } => false,
+        LogicalPlan::Revoke { .. } => false,
     }
 }
