@@ -931,7 +931,6 @@ fn test_parse_timestamp_with_am_pm() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_constructor_from_string() {
     let mut session = create_session();
     let result = session
@@ -941,7 +940,6 @@ fn test_timestamp_constructor_from_string() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_constructor_from_string_with_timezone() {
     let mut session = create_session();
     let result = session
@@ -951,7 +949,6 @@ fn test_timestamp_constructor_from_string_with_timezone() {
 }
 
 #[test]
-#[ignore]
 fn test_timestamp_constructor_from_date() {
     let mut session = create_session();
     let result = session
