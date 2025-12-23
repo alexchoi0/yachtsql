@@ -4,8 +4,8 @@ use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
 use yachtsql_ir::{
     AggregateFunction, BinaryOp, DateTimeField, Expr, JsonPathElement, Literal, LogicalPlan,
-    PlanSchema, ScalarFunction, SortExpr, TrimWhere, UnaryOp, WhenClause, WindowFrame,
-    WindowFrameBound, WindowFrameUnit, WindowFunction,
+    PlanSchema, ScalarFunction, SortExpr, TrimWhere, UnaryOp, WeekStartDay, WhenClause,
+    WindowFrame, WindowFrameBound, WindowFrameUnit, WindowFunction,
 };
 
 pub type SubqueryPlannerFn<'a> = &'a dyn Fn(&ast::Query) -> Result<LogicalPlan>;
@@ -819,7 +819,27 @@ impl ExprPlanner {
         match field {
             ast::DateTimeField::Year => Ok(DateTimeField::Year),
             ast::DateTimeField::Month => Ok(DateTimeField::Month),
-            ast::DateTimeField::Week(_) => Ok(DateTimeField::Week),
+            ast::DateTimeField::Week(opt_ident) => {
+                let start_day = match opt_ident {
+                    Some(ident) => match ident.value.to_uppercase().as_str() {
+                        "SUNDAY" => WeekStartDay::Sunday,
+                        "MONDAY" => WeekStartDay::Monday,
+                        "TUESDAY" => WeekStartDay::Tuesday,
+                        "WEDNESDAY" => WeekStartDay::Wednesday,
+                        "THURSDAY" => WeekStartDay::Thursday,
+                        "FRIDAY" => WeekStartDay::Friday,
+                        "SATURDAY" => WeekStartDay::Saturday,
+                        _ => {
+                            return Err(Error::unsupported(format!(
+                                "Unsupported WEEK start day: {}",
+                                ident.value
+                            )));
+                        }
+                    },
+                    None => WeekStartDay::Sunday,
+                };
+                Ok(DateTimeField::Week(start_day))
+            }
             ast::DateTimeField::Day => Ok(DateTimeField::Day),
             ast::DateTimeField::DayOfWeek => Ok(DateTimeField::DayOfWeek),
             ast::DateTimeField::DayOfYear => Ok(DateTimeField::DayOfYear),

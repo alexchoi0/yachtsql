@@ -448,7 +448,43 @@ fn test_extract_week() {
     let result = session
         .execute_sql("SELECT EXTRACT(WEEK FROM DATE '2024-06-15')")
         .unwrap();
+    assert_table_eq!(result, [[23]]);
+}
+
+#[test]
+fn test_extract_week_sunday() {
+    let mut session = create_session();
+    let result = session
+        .execute_sql("SELECT EXTRACT(WEEK(SUNDAY) FROM DATE '2024-06-15')")
+        .unwrap();
+    assert_table_eq!(result, [[23]]);
+}
+
+#[test]
+fn test_extract_week_monday() {
+    let mut session = create_session();
+    let result = session
+        .execute_sql("SELECT EXTRACT(WEEK(MONDAY) FROM DATE '2024-06-15')")
+        .unwrap();
     assert_table_eq!(result, [[24]]);
+}
+
+#[test]
+fn test_extract_isoweek() {
+    let mut session = create_session();
+    let result = session
+        .execute_sql("SELECT EXTRACT(ISOWEEK FROM DATE '2024-06-15')")
+        .unwrap();
+    assert_table_eq!(result, [[24]]);
+}
+
+#[test]
+fn test_extract_week_zero() {
+    let mut session = create_session();
+    let result = session
+        .execute_sql("SELECT EXTRACT(WEEK FROM DATE '2024-01-01')")
+        .unwrap();
+    assert_table_eq!(result, [[0]]);
 }
 
 #[test]
@@ -861,7 +897,7 @@ fn test_extract_week_monday_from_timestamp() {
     let result = session
         .execute_sql("SELECT EXTRACT(WEEK(MONDAY) FROM TIMESTAMP '2017-11-06 00:00:00+00')")
         .unwrap();
-    assert_table_eq!(result, [[44]]);
+    assert_table_eq!(result, [[45]]);
 }
 
 #[test]
