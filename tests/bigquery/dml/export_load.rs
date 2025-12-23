@@ -1354,3 +1354,496 @@ mod local_json {
         assert_eq!(get_string(&result, 1, 0), "Alice");
     }
 }
+
+#[test]
+fn test_export_data_gzip_compression() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_gzip (id INT64, name STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_gzip VALUES (1, 'Alice'), (2, 'Bob')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.csv',
+            format='CSV',
+            compression='GZIP'
+        ) AS SELECT * FROM export_gzip",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_deflate_compression() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_deflate (id INT64, value FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_deflate VALUES (1, 100.5)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.json',
+            format='JSON',
+            compression='DEFLATE'
+        ) AS SELECT * FROM export_deflate",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_snappy_compression_avro() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_snappy (id INT64, data STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_snappy VALUES (1, 'test')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*',
+            format='AVRO',
+            compression='SNAPPY'
+        ) AS SELECT * FROM export_snappy",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_s3() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_s3 (id INT64, name STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_s3 VALUES (1, 'test')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='s3://bucket/folder/*',
+            format='JSON',
+            overwrite=true
+        ) AS SELECT * FROM export_s3",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_csv_all_options() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_full (id INT64, name STRING, value FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_full VALUES (1, 'Alice', 100.5), (2, 'Bob', 200.75)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/folder/*.csv',
+            format='CSV',
+            overwrite=true,
+            header=true,
+            field_delimiter=';'
+        ) AS SELECT * FROM export_full ORDER BY id LIMIT 10",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_order_and_limit() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_ordered (field1 INT64, field2 STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_ordered VALUES (3, 'c'), (1, 'a'), (2, 'b')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/folder/*.csv',
+            format='CSV',
+            overwrite=true,
+            header=true,
+            field_delimiter=';'
+        ) AS SELECT field1, field2 FROM export_ordered ORDER BY field1 LIMIT 10",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_missing_uri_error() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_no_uri (id INT64)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            format='CSV'
+        ) AS SELECT * FROM export_no_uri",
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_export_data_with_connection() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_conn (field1 INT64, field2 STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_conn VALUES (1, 'test')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA
+            WITH CONNECTION myproject.us.myconnection
+            OPTIONS(
+                uri='s3://bucket/folder/*',
+                format='JSON',
+                overwrite=true
+            ) AS SELECT field1, field2 FROM export_conn ORDER BY field1 LIMIT 10",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_backtick_connection() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_conn2 (id INT64, data STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_conn2 VALUES (1, 'value')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA
+            WITH CONNECTION `my-project.us-east1.my-connection`
+            OPTIONS(
+                uri='s3://bucket/path/*',
+                format='PARQUET'
+            ) AS SELECT * FROM export_conn2",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_bigtable() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_bt (field1 STRING, field2 INT64, field3 STRING, field4 FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_bt VALUES ('row1', 100, 'data1', 1.5)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA OPTIONS (
+            uri="https://bigtable.googleapis.com/projects/my-project/instances/my-instance/tables/my-table",
+            format="CLOUD_BIGTABLE",
+            bigtable_options="""{
+                "columnFamilies": [
+                    {
+                        "familyId": "column_family",
+                        "columns": [
+                            {"qualifierString": "cbtField2", "fieldName": "field2"},
+                            {"qualifierString": "cbtField3", "fieldName": "field3"},
+                            {"qualifierString": "cbtField4", "fieldName": "field4"}
+                        ]
+                    }
+                ]
+            }"""
+        ) AS
+        SELECT
+            CAST(field1 AS STRING) AS rowkey,
+            STRUCT(field2, field3, field4) AS column_family
+        FROM export_bt"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_bigtable_with_overwrite() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_bt_ow (id STRING, value INT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_bt_ow VALUES ('key1', 100)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA OPTIONS (
+            uri="https://bigtable.googleapis.com/projects/my-project/instances/my-instance/tables/my-table",
+            format="CLOUD_BIGTABLE",
+            overwrite=true
+        ) AS SELECT id AS rowkey, value FROM export_bt_ow"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_bigtable_with_truncate() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_bt_tr (id STRING, data STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_bt_tr VALUES ('key1', 'value1')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA OPTIONS (
+            uri="https://bigtable.googleapis.com/projects/my-project/instances/my-instance/tables/target-table",
+            format="CLOUD_BIGTABLE",
+            truncate=true
+        ) AS SELECT id AS rowkey, data FROM export_bt_tr"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_bigtable_auto_create_column_families() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_bt_auto (rowkey STRING, col1 INT64, col2 STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_bt_auto VALUES ('row1', 1, 'data')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA OPTIONS (
+            uri="https://bigtable.googleapis.com/projects/my-project/instances/my-instance/appProfiles/my-profile/tables/my-table",
+            format="CLOUD_BIGTABLE",
+            auto_create_column_families=true
+        ) AS SELECT * FROM export_bt_auto"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_pubsub() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE taxi_rides (ride_id STRING, ts DATETIME, latitude FLOAT64, longitude FLOAT64, ride_status STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO taxi_rides VALUES ('ride1', DATETIME '2024-01-15 10:30:00', 40.7128, -74.0060, 'enroute')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA
+            OPTIONS (
+                format = 'CLOUD_PUBSUB',
+                uri = 'https://pubsub.googleapis.com/projects/myproject/topics/taxi-real-time-rides'
+            )
+        AS (
+            SELECT
+                TO_JSON_STRING(
+                    STRUCT(
+                        ride_id,
+                        ts,
+                        latitude,
+                        longitude
+                    )
+                ) AS message
+            FROM taxi_rides
+            WHERE ride_status = 'enroute'
+        )"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_to_spanner() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE bigquery_table (id INT64, name STRING, value FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO bigquery_table VALUES (1, 'Alice', 100.5)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        r#"EXPORT DATA OPTIONS (
+            uri="https://spanner.googleapis.com/projects/my-project/instances/my-instance/databases/my-database",
+            format="CLOUD_SPANNER",
+            spanner_options="""{ "table": "my_table" }"""
+        ) AS SELECT * FROM bigquery_table"#,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_avro_with_logical_types() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_avro_types (id INT64, ts TIMESTAMP, dt DATE, tm TIME)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_avro_types VALUES (1, TIMESTAMP '2024-01-15 10:30:00', DATE '2024-01-15', TIME '10:30:00')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*',
+            format='AVRO',
+            use_avro_logical_types=true
+        ) AS SELECT * FROM export_avro_types",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_case_insensitive_format() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_case (id INT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_case VALUES (1)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.csv',
+            format='csv'
+        ) AS SELECT * FROM export_case",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_parquet_with_overwrite() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE export_par_ow (field1 INT64, field2 STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO export_par_ow VALUES (1, 'test')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/folder/*',
+            format='PARQUET',
+            overwrite=true
+        ) AS SELECT field1, field2 FROM export_par_ow ORDER BY field1 LIMIT 10",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_subquery() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE orders (order_id INT64, customer_id INT64, amount FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO orders VALUES (1, 100, 50.0), (2, 100, 75.0), (3, 200, 100.0)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.parquet',
+            format='PARQUET'
+        ) AS
+        SELECT customer_id, SUM(amount) AS total_amount
+        FROM orders
+        GROUP BY customer_id
+        HAVING SUM(amount) > 100
+        ORDER BY customer_id",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_join() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE customers (id INT64, name STRING)")
+        .unwrap();
+    executor
+        .execute_sql("CREATE TABLE purchases (customer_id INT64, product STRING)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO customers VALUES (1, 'Alice'), (2, 'Bob')")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO purchases VALUES (1, 'Laptop'), (1, 'Phone'), (2, 'Tablet')")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.json',
+            format='JSON'
+        ) AS
+        SELECT c.name, p.product
+        FROM customers c
+        JOIN purchases p ON c.id = p.customer_id
+        ORDER BY c.name, p.product",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_cte() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE sales_data (region STRING, quarter INT64, revenue FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO sales_data VALUES ('North', 1, 1000), ('North', 2, 1500), ('South', 1, 800)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.csv',
+            format='CSV'
+        ) AS
+        WITH quarterly_totals AS (
+            SELECT region, SUM(revenue) AS total_revenue
+            FROM sales_data
+            GROUP BY region
+        )
+        SELECT * FROM quarterly_totals ORDER BY region",
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_export_data_with_window_function() {
+    let mut executor = create_executor();
+    executor
+        .execute_sql("CREATE TABLE employee_sales (employee STRING, month INT64, sales FLOAT64)")
+        .unwrap();
+    executor
+        .execute_sql("INSERT INTO employee_sales VALUES ('Alice', 1, 100), ('Alice', 2, 150), ('Bob', 1, 200)")
+        .unwrap();
+
+    let result = executor.execute_sql(
+        "EXPORT DATA OPTIONS(
+            uri='gs://bucket/export/*.parquet',
+            format='PARQUET'
+        ) AS
+        SELECT
+            employee,
+            month,
+            sales,
+            SUM(sales) OVER (PARTITION BY employee ORDER BY month) AS running_total
+        FROM employee_sales
+        ORDER BY employee, month",
+    );
+    assert!(result.is_ok());
+}

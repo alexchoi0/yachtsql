@@ -362,6 +362,7 @@ impl<'a> IrEvaluator<'a> {
                 Ok(Value::Struct(struct_fields?))
             }
             Literal::Json(json) => Ok(Value::Json(json.clone())),
+            Literal::BigNumeric(d) => Ok(Value::BigNumeric(*d)),
             Literal::Datetime(micros) => {
                 let secs = *micros / 1_000_000;
                 let nanos = ((*micros % 1_000_000) * 1000) as u32;
@@ -566,6 +567,9 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::ParseTimestamp => self.fn_parse_timestamp(&arg_values),
             ScalarFunction::ParseTime => self.fn_parse_time(&arg_values),
             ScalarFunction::LastDay => self.fn_last_day(&arg_values),
+            ScalarFunction::DateBucket => self.fn_date_bucket(&arg_values),
+            ScalarFunction::DatetimeBucket => self.fn_datetime_bucket(&arg_values),
+            ScalarFunction::TimestampBucket => self.fn_timestamp_bucket(&arg_values),
             ScalarFunction::Extract => self.fn_extract_from_args(args, record),
             ScalarFunction::Sin => self.fn_sin(&arg_values),
             ScalarFunction::Cos => self.fn_cos(&arg_values),
@@ -2326,6 +2330,7 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Int64(_)
                     | Value::Float64(_)
                     | Value::Numeric(_)
+                    | Value::BigNumeric(_)
                     | Value::String(_)
                     | Value::Date(_)
                     | Value::Time(_)
@@ -2355,6 +2360,7 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Int64(_)
                     | Value::Float64(_)
                     | Value::Numeric(_)
+                    | Value::BigNumeric(_)
                     | Value::Bytes(_)
                     | Value::Date(_)
                     | Value::Time(_)
@@ -8290,12 +8296,33 @@ fn extract_datetime_field(val: &Value, field: DateTimeField) -> Result<Value> {
     }
 }
 
+fn week_number_sunday_start(date: NaiveDate) -> u32 {
+    let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
+    let jan1_weekday = jan1.weekday().num_days_from_sunday();
+    let day_of_year = date.ordinal() as u32;
+    (day_of_year + jan1_weekday - 1) / 7
+}
+
+fn week_number_with_weekday(date: NaiveDate, week_start: chrono::Weekday) -> u32 {
+    let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
+    let jan1_days_from_start = (jan1.weekday().num_days_from_sunday() + 7
+        - week_start.num_days_from_sunday())
+        % 7;
+    let day_of_year = date.ordinal() as u32;
+    (day_of_year + jan1_days_from_start - 1) / 7
+}
+
 fn extract_from_date(date: &NaiveDate, field: DateTimeField) -> Result<Value> {
     match field {
         DateTimeField::Year => Ok(Value::Int64(date.year() as i64)),
         DateTimeField::Month => Ok(Value::Int64(date.month() as i64)),
         DateTimeField::Day => Ok(Value::Int64(date.day() as i64)),
-        DateTimeField::Week => Ok(Value::Int64(date.iso_week().week() as i64)),
+        DateTimeField::Week => {
+            let week = week_number_sunday_start(*date);
+            Ok(Value::Int64(week as i64))
+        }
+        DateTimeField::IsoWeek => Ok(Value::Int64(date.iso_week().week() as i64)),
+        DateTimeField::IsoYear => Ok(Value::Int64(date.iso_week().year() as i64)),
         DateTimeField::DayOfWeek => Ok(Value::Int64(
             date.weekday().num_days_from_sunday() as i64 + 1,
         )),
@@ -8319,12 +8346,19 @@ fn extract_from_datetime(dt: &chrono::NaiveDateTime, field: DateTimeField) -> Re
         DateTimeField::Millisecond => Ok(Value::Int64((dt.nanosecond() / 1_000_000) as i64)),
         DateTimeField::Microsecond => Ok(Value::Int64((dt.nanosecond() / 1000) as i64)),
         DateTimeField::Nanosecond => Ok(Value::Int64(dt.nanosecond() as i64)),
-        DateTimeField::Week => Ok(Value::Int64(dt.iso_week().week() as i64)),
+        DateTimeField::Week => {
+            let week = week_number_sunday_start(dt.date());
+            Ok(Value::Int64(week as i64))
+        }
+        DateTimeField::IsoWeek => Ok(Value::Int64(dt.iso_week().week() as i64)),
+        DateTimeField::IsoYear => Ok(Value::Int64(dt.iso_week().year() as i64)),
         DateTimeField::DayOfWeek => {
             Ok(Value::Int64(dt.weekday().num_days_from_sunday() as i64 + 1))
         }
         DateTimeField::DayOfYear => Ok(Value::Int64(dt.ordinal() as i64)),
         DateTimeField::Quarter => Ok(Value::Int64(((dt.month() - 1) / 3 + 1) as i64)),
+        DateTimeField::Date => Ok(Value::Date(dt.date())),
+        DateTimeField::Time => Ok(Value::Time(dt.time())),
         _ => Err(Error::InvalidQuery(format!(
             "Cannot extract {:?} from timestamp",
             field

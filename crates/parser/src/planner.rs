@@ -4699,6 +4699,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 Literal::Timestamp(_) => DataType::Timestamp,
                 Literal::Datetime(_) => DataType::DateTime,
                 Literal::Numeric(_) => DataType::Numeric(None),
+                Literal::BigNumeric(_) => DataType::BigNumeric,
                 Literal::Interval { .. } => DataType::Interval,
                 Literal::Array(_) => DataType::Array(Box::new(DataType::String)),
                 Literal::Struct(_) => DataType::Struct(vec![]),

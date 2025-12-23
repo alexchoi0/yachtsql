@@ -373,3 +373,636 @@ fn test_alter_materialized_view_set_options() {
         .execute_sql("ALTER MATERIALIZED VIEW my_mv SET OPTIONS (enable_refresh = true)")
         .unwrap();
 }
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_if_not_exists() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE if_not_exists_test (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE if_not_exists_test ADD COLUMN IF NOT EXISTS name STRING")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE if_not_exists_test ADD COLUMN IF NOT EXISTS age INT64")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO if_not_exists_test VALUES (1, 'Alice', 30)")
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT * FROM if_not_exists_test")
+        .unwrap();
+    assert_table_eq!(result, [[1, "Alice", 30]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_drop_column_if_exists() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE drop_if_exists (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE drop_if_exists DROP COLUMN IF EXISTS nonexistent")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE drop_if_exists DROP COLUMN IF EXISTS name")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO drop_if_exists VALUES (1)")
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT * FROM drop_if_exists")
+        .unwrap();
+    assert_table_eq!(result, [[1]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_rename_multiple_columns() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE rename_multi (a INT64, b STRING, c FLOAT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE rename_multi RENAME COLUMN a TO x, RENAME COLUMN b TO y")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO rename_multi VALUES (1, 'test', 3.14)")
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT x, y, c FROM rename_multi")
+        .unwrap();
+    assert_table_eq!(result, [[1, "test", 3.14]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_struct() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE struct_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE struct_add ADD COLUMN address STRUCT<street STRING, city STRING, zip STRING>")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO struct_add VALUES (1, STRUCT('123 Main St', 'NYC', '10001'))")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT id, address.city FROM struct_add").unwrap();
+    assert_table_eq!(result, [[1, "NYC"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_array() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE array_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE array_add ADD COLUMN tags ARRAY<STRING>")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO array_add VALUES (1, ['rust', 'sql', 'bigquery'])")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT id, tags[OFFSET(0)] FROM array_add").unwrap();
+    assert_table_eq!(result, [[1, "rust"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_foreign_key() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE parent_fk (id INT64 PRIMARY KEY NOT ENFORCED)")
+        .unwrap();
+
+    executor
+        .execute_sql("CREATE TABLE child_fk (id INT64, parent_id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE child_fk ADD CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parent_fk(id) NOT ENFORCED")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO parent_fk VALUES (1)")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO child_fk VALUES (1, 1)")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM child_fk").unwrap();
+    assert_table_eq!(result, [[1, 1]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_drop_foreign_key() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE parent_drop_fk (id INT64 PRIMARY KEY NOT ENFORCED)")
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "CREATE TABLE child_drop_fk (
+                id INT64,
+                parent_id INT64,
+                CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parent_drop_fk(id) NOT ENFORCED
+            )",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE child_drop_fk DROP CONSTRAINT fk_parent")
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_set_default_collate() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE collate_test (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE collate_test SET DEFAULT COLLATE 'und:ci'")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE collate_test ADD COLUMN description STRING")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO collate_test VALUES (1, 'Test', 'Description')")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM collate_test").unwrap();
+    assert_table_eq!(result, [[1, "Test", "Description"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_column_set_options() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE col_options (id INT64, amount NUMERIC)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE col_options ALTER COLUMN amount SET OPTIONS (rounding_mode = 'ROUND_HALF_EVEN')")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO col_options VALUES (1, 123.456)")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM col_options").unwrap();
+    assert_table_eq!(result, [[1, crate::common::numeric("123.456")]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_set_options_multiple() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE multi_options (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "ALTER TABLE multi_options SET OPTIONS (
+                description = 'Test table',
+                labels = [('env', 'test'), ('team', 'data')],
+                expiration_timestamp = TIMESTAMP '2030-01-01 00:00:00 UTC'
+            )",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO multi_options VALUES (1)")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM multi_options").unwrap();
+    assert_table_eq!(result, [[1]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_geography() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE geo_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE geo_add ADD COLUMN location GEOGRAPHY")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO geo_add VALUES (1, ST_GEOGPOINT(-122.4194, 37.7749))")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT id FROM geo_add").unwrap();
+    assert_table_eq!(result, [[1]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_json() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE json_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE json_add ADD COLUMN metadata JSON")
+        .unwrap();
+
+    executor
+        .execute_sql(r#"INSERT INTO json_add VALUES (1, JSON '{"key": "value"}')"#)
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT id, JSON_VALUE(metadata, '$.key') FROM json_add")
+        .unwrap();
+    assert_table_eq!(result, [[1, "value"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_position() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE position_test (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE position_test ADD COLUMN age INT64 AFTER id")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO position_test VALUES (1, 30, 'Alice')")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM position_test").unwrap();
+    assert_table_eq!(result, [[1, 30, "Alice"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_alter_column_set_data_type_widening() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE type_widen (id INT64, value INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO type_widen VALUES (1, 100)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE type_widen ALTER COLUMN value SET DATA TYPE NUMERIC")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM type_widen").unwrap();
+    assert_table_eq!(result, [[1, crate::common::numeric("100")]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_with_qualified_name() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE SCHEMA test_schema")
+        .unwrap();
+
+    executor
+        .execute_sql("CREATE TABLE test_schema.qualified_alter (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE test_schema.qualified_alter ADD COLUMN name STRING")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO test_schema.qualified_alter VALUES (1, 'Test')")
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT * FROM test_schema.qualified_alter")
+        .unwrap();
+    assert_table_eq!(result, [[1, "Test"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_check_constraint() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE check_add (id INT64, age INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE check_add ADD CONSTRAINT age_positive CHECK (age > 0)")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO check_add VALUES (1, 25)")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM check_add").unwrap();
+    assert_table_eq!(result, [[1, 25]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_alter_column_collate() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE col_collate (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE col_collate ALTER COLUMN name SET OPTIONS (collate = 'und:ci')")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO col_collate VALUES (1, 'Test')")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM col_collate WHERE name = 'TEST'").unwrap();
+    assert_table_eq!(result, [[1, "Test"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_nested_struct_column() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE nested_struct_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "ALTER TABLE nested_struct_add ADD COLUMN profile STRUCT<
+                personal STRUCT<first_name STRING, last_name STRING>,
+                contact STRUCT<email STRING, phone STRING>
+            >",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "INSERT INTO nested_struct_add VALUES (
+                1,
+                STRUCT(STRUCT('John', 'Doe'), STRUCT('john@example.com', '555-1234'))
+            )",
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT id, profile.personal.first_name FROM nested_struct_add")
+        .unwrap();
+    assert_table_eq!(result, [[1, "John"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_array_of_struct_column() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE array_struct_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "ALTER TABLE array_struct_add ADD COLUMN orders ARRAY<STRUCT<product STRING, quantity INT64, price NUMERIC>>",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "INSERT INTO array_struct_add VALUES (
+                1,
+                [STRUCT('Widget', 5, 19.99), STRUCT('Gadget', 2, 49.99)]
+            )",
+        )
+        .unwrap();
+
+    let result = executor
+        .execute_sql("SELECT id, orders[OFFSET(0)].product FROM array_struct_add")
+        .unwrap();
+    assert_table_eq!(result, [[1, "Widget"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_set_partition_expiration() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            "CREATE TABLE partition_exp (id INT64, created DATE)
+            PARTITION BY created",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE partition_exp SET OPTIONS (partition_expiration_days = 30)")
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_set_require_partition_filter() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            "CREATE TABLE require_filter (id INT64, created DATE)
+            PARTITION BY created",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE require_filter SET OPTIONS (require_partition_filter = true)")
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_composite_primary_key() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE composite_pk_add (tenant_id INT64, user_id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE composite_pk_add ADD PRIMARY KEY (tenant_id, user_id) NOT ENFORCED")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO composite_pk_add VALUES (1, 1, 'Alice')")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT * FROM composite_pk_add").unwrap();
+    assert_table_eq!(result, [[1, 1, "Alice"]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_composite_foreign_key() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql(
+            "CREATE TABLE composite_parent (
+                tenant_id INT64,
+                user_id INT64,
+                PRIMARY KEY (tenant_id, user_id) NOT ENFORCED
+            )",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "CREATE TABLE composite_child (
+                id INT64,
+                tenant_id INT64,
+                user_id INT64
+            )",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "ALTER TABLE composite_child ADD CONSTRAINT fk_composite
+            FOREIGN KEY (tenant_id, user_id) REFERENCES composite_parent(tenant_id, user_id) NOT ENFORCED",
+        )
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_view_alter_column() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE view_base (id INT64, name STRING)")
+        .unwrap();
+
+    executor
+        .execute_sql("CREATE VIEW alter_view AS SELECT id, name FROM view_base")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER VIEW alter_view ALTER COLUMN name SET OPTIONS (description = 'User name')")
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_materialized_view_enable_refresh() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE mv_refresh_base (id INT64, value INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql(
+            "CREATE MATERIALIZED VIEW mv_refresh
+            OPTIONS (enable_refresh = false)
+            AS SELECT id, SUM(value) as total FROM mv_refresh_base GROUP BY id",
+        )
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER MATERIALIZED VIEW mv_refresh SET OPTIONS (enable_refresh = true, refresh_interval_minutes = 60)")
+        .unwrap();
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_range() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE range_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE range_add ADD COLUMN date_range RANGE<DATE>")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO range_add VALUES (1, RANGE(DATE '2024-01-01', DATE '2024-12-31'))")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT id FROM range_add").unwrap();
+    assert_table_eq!(result, [[1]]);
+}
+
+#[test]
+#[ignore]
+fn test_alter_table_add_column_with_interval() {
+    let mut executor = create_executor();
+
+    executor
+        .execute_sql("CREATE TABLE interval_add (id INT64)")
+        .unwrap();
+
+    executor
+        .execute_sql("ALTER TABLE interval_add ADD COLUMN duration INTERVAL")
+        .unwrap();
+
+    executor
+        .execute_sql("INSERT INTO interval_add VALUES (1, INTERVAL 1 DAY)")
+        .unwrap();
+
+    let result = executor.execute_sql("SELECT id FROM interval_add").unwrap();
+    assert_table_eq!(result, [[1]]);
+}
