@@ -16,14 +16,20 @@ use wkt::TryFromWkt;
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, IntervalValue, Value};
 use yachtsql_ir::{
-    AggregateFunction, BinaryOp, DateTimeField, Expr, Literal, ScalarFunction, TrimWhere, UnaryOp,
-    WhenClause,
+    AggregateFunction, BinaryOp, DateTimeField, Expr, FunctionArg, FunctionBody, Literal,
+    ScalarFunction, TrimWhere, UnaryOp, WhenClause,
 };
 use yachtsql_storage::{Record, Schema};
+
+pub struct UserFunctionDef {
+    pub parameters: Vec<FunctionArg>,
+    pub body: FunctionBody,
+}
 
 pub struct IrEvaluator<'a> {
     schema: &'a Schema,
     variables: Option<&'a HashMap<String, Value>>,
+    user_functions: Option<&'a HashMap<String, UserFunctionDef>>,
 }
 
 impl<'a> IrEvaluator<'a> {
@@ -31,11 +37,20 @@ impl<'a> IrEvaluator<'a> {
         Self {
             schema,
             variables: None,
+            user_functions: None,
         }
     }
 
     pub fn with_variables(mut self, variables: &'a HashMap<String, Value>) -> Self {
         self.variables = Some(variables);
+        self
+    }
+
+    pub fn with_user_functions(
+        mut self,
+        user_functions: &'a HashMap<String, UserFunctionDef>,
+    ) -> Self {
+        self.user_functions = Some(user_functions);
         self
     }
 
@@ -159,6 +174,9 @@ impl<'a> IrEvaluator<'a> {
             } => self.eval_in_unnest(expr, array_expr, *negated, record),
             Expr::Exists { .. } => Err(Error::InvalidQuery(
                 "EXISTS should be evaluated by plan executor".into(),
+            )),
+            Expr::ArraySubquery(_) => Err(Error::InvalidQuery(
+                "ArraySubquery should be evaluated by plan executor".into(),
             )),
             Expr::Between {
                 expr,
@@ -344,6 +362,7 @@ impl<'a> IrEvaluator<'a> {
                 Ok(Value::Struct(struct_fields?))
             }
             Literal::Json(json) => Ok(Value::Json(json.clone())),
+            Literal::BigNumeric(d) => Ok(Value::BigNumeric(*d)),
             Literal::Datetime(micros) => {
                 let secs = *micros / 1_000_000;
                 let nanos = ((*micros % 1_000_000) * 1000) as u32;
@@ -469,6 +488,7 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::Ceil => self.fn_ceil(&arg_values),
             ScalarFunction::Round => self.fn_round(&arg_values),
             ScalarFunction::Sqrt => self.fn_sqrt(&arg_values),
+            ScalarFunction::Cbrt => self.fn_cbrt(&arg_values),
             ScalarFunction::Power | ScalarFunction::Pow => self.fn_power(&arg_values),
             ScalarFunction::Mod => self.fn_mod(&arg_values),
             ScalarFunction::Sign => self.fn_sign(&arg_values),
@@ -548,6 +568,9 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::ParseTimestamp => self.fn_parse_timestamp(&arg_values),
             ScalarFunction::ParseTime => self.fn_parse_time(&arg_values),
             ScalarFunction::LastDay => self.fn_last_day(&arg_values),
+            ScalarFunction::DateBucket => self.fn_date_bucket(&arg_values),
+            ScalarFunction::DatetimeBucket => self.fn_datetime_bucket(&arg_values),
+            ScalarFunction::TimestampBucket => self.fn_timestamp_bucket(&arg_values),
             ScalarFunction::Extract => self.fn_extract_from_args(args, record),
             ScalarFunction::Sin => self.fn_sin(&arg_values),
             ScalarFunction::Cos => self.fn_cos(&arg_values),
@@ -556,6 +579,12 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::Acos => self.fn_acos(&arg_values),
             ScalarFunction::Atan => self.fn_atan(&arg_values),
             ScalarFunction::Atan2 => self.fn_atan2(&arg_values),
+            ScalarFunction::Sinh => self.fn_sinh(&arg_values),
+            ScalarFunction::Cosh => self.fn_cosh(&arg_values),
+            ScalarFunction::Tanh => self.fn_tanh(&arg_values),
+            ScalarFunction::Cot => self.fn_cot(&arg_values),
+            ScalarFunction::Csc => self.fn_csc(&arg_values),
+            ScalarFunction::Sec => self.fn_sec(&arg_values),
             ScalarFunction::Pi => Ok(Value::Float64(OrderedFloat(std::f64::consts::PI))),
             ScalarFunction::Rand | ScalarFunction::RandCanonical => self.fn_rand(&arg_values),
             ScalarFunction::Split => self.fn_split(&arg_values),
@@ -1191,6 +1220,17 @@ impl<'a> IrEvaluator<'a> {
                         };
                         Ok(elements.get(actual_idx).cloned().unwrap_or(Value::Null))
                     }
+                    (Value::Json(json), Value::Int64(idx)) => {
+                        let result = json
+                            .get(*idx as usize)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        Ok(Value::Json(result))
+                    }
+                    (Value::Json(json), Value::String(key)) => {
+                        let result = json.get(key).cloned().unwrap_or(serde_json::Value::Null);
+                        Ok(Value::Json(result))
+                    }
                     _ => Err(Error::InvalidQuery(
                         "Array access requires array and integer index".into(),
                     )),
@@ -1382,6 +1422,60 @@ impl<'a> IrEvaluator<'a> {
                 days: a.days - b.days,
                 nanos: a.nanos - b.nanos,
             })),
+            (Value::Float64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a.0 - b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot subtract {:?} from {:?}",
+                        right, left
+                    )))
+                }
+            }
+            (Value::String(s), Value::Float64(b)) => {
+                if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a - b.0)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot subtract {:?} from {:?}",
+                        right, left
+                    )))
+                }
+            }
+            (Value::Int64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<i64>() {
+                    Ok(Value::Int64(a - b))
+                } else if let Ok(b) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(*a as f64 - b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot subtract {:?} from {:?}",
+                        right, left
+                    )))
+                }
+            }
+            (Value::String(s), Value::Int64(b)) => {
+                if let Ok(a) = s.parse::<i64>() {
+                    Ok(Value::Int64(a - b))
+                } else if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a - *b as f64)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot subtract {:?} from {:?}",
+                        right, left
+                    )))
+                }
+            }
+            (Value::String(s1), Value::String(s2)) => {
+                if let (Ok(a), Ok(b)) = (s1.parse::<f64>(), s2.parse::<f64>()) {
+                    Ok(Value::Float64(OrderedFloat(a - b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot subtract {:?} from {:?}",
+                        right, left
+                    )))
+                }
+            }
             _ => Err(Error::InvalidQuery(format!(
                 "Cannot subtract {:?} from {:?}",
                 right, left
@@ -1411,6 +1505,56 @@ impl<'a> IrEvaluator<'a> {
                 days: iv.days * (*n as i32),
                 nanos: iv.nanos * *n,
             })),
+            (Value::String(s1), Value::String(s2)) => {
+                if let (Ok(a), Ok(b)) = (s1.parse::<f64>(), s2.parse::<f64>()) {
+                    Ok(Value::Float64(OrderedFloat(a * b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot multiply {:?} and {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::String(s), Value::Int64(b)) => {
+                if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a * *b as f64)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot multiply {:?} and {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::Int64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(*a as f64 * b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot multiply {:?} and {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::String(s), Value::Float64(b)) => {
+                if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a * b.0)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot multiply {:?} and {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::Float64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a.0 * b)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot multiply {:?} and {:?}",
+                        left, right
+                    )))
+                }
+            }
             _ => Err(Error::InvalidQuery(format!(
                 "Cannot multiply {:?} and {:?}",
                 left, right
@@ -1440,6 +1584,74 @@ impl<'a> IrEvaluator<'a> {
                     Err(Error::InvalidQuery("Division by zero".into()))
                 } else {
                     Ok(Value::Numeric(*a / *b))
+                }
+            }
+            (Value::Int64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<f64>() {
+                    if b == 0.0 {
+                        Err(Error::InvalidQuery("Division by zero".into()))
+                    } else {
+                        Ok(Value::Float64(OrderedFloat(*a as f64 / b)))
+                    }
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot divide {:?} by {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::String(s), Value::Int64(b)) => {
+                if *b == 0 {
+                    return Err(Error::InvalidQuery("Division by zero".into()));
+                }
+                if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a / *b as f64)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot divide {:?} by {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::Float64(a), Value::String(s)) => {
+                if let Ok(b) = s.parse::<f64>() {
+                    if b == 0.0 {
+                        Err(Error::InvalidQuery("Division by zero".into()))
+                    } else {
+                        Ok(Value::Float64(OrderedFloat(a.0 / b)))
+                    }
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot divide {:?} by {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::String(s), Value::Float64(b)) => {
+                if b.0 == 0.0 {
+                    return Err(Error::InvalidQuery("Division by zero".into()));
+                }
+                if let Ok(a) = s.parse::<f64>() {
+                    Ok(Value::Float64(OrderedFloat(a / b.0)))
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot divide {:?} by {:?}",
+                        left, right
+                    )))
+                }
+            }
+            (Value::String(s1), Value::String(s2)) => {
+                if let (Ok(a), Ok(b)) = (s1.parse::<f64>(), s2.parse::<f64>()) {
+                    if b == 0.0 {
+                        Err(Error::InvalidQuery("Division by zero".into()))
+                    } else {
+                        Ok(Value::Float64(OrderedFloat(a / b)))
+                    }
+                } else {
+                    Err(Error::InvalidQuery(format!(
+                        "Cannot divide {:?} by {:?}",
+                        left, right
+                    )))
                 }
             }
             _ => Err(Error::InvalidQuery(format!(
@@ -1797,6 +2009,15 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn fn_cbrt(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => Ok(Value::Float64(OrderedFloat((*n as f64).cbrt()))),
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.cbrt()))),
+            _ => Err(Error::InvalidQuery("CBRT requires numeric argument".into())),
+        }
+    }
+
     fn fn_power(&self, args: &[Value]) -> Result<Value> {
         if args.len() < 2 {
             return Err(Error::InvalidQuery("POWER requires 2 arguments".into()));
@@ -2125,6 +2346,7 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Int64(_)
                     | Value::Float64(_)
                     | Value::Numeric(_)
+                    | Value::BigNumeric(_)
                     | Value::String(_)
                     | Value::Date(_)
                     | Value::Time(_)
@@ -2154,6 +2376,7 @@ impl<'a> IrEvaluator<'a> {
                     | Value::Int64(_)
                     | Value::Float64(_)
                     | Value::Numeric(_)
+                    | Value::BigNumeric(_)
                     | Value::Bytes(_)
                     | Value::Date(_)
                     | Value::Time(_)
@@ -2486,12 +2709,9 @@ impl<'a> IrEvaluator<'a> {
             return Ok(Value::DateTime(dt));
         }
         if args.len() == 2 {
-            match (&args[0], &args[1]) {
-                (Value::Date(d), Value::Time(t)) => {
-                    let dt = chrono::NaiveDateTime::new(*d, *t);
-                    return Ok(Value::DateTime(dt));
-                }
-                _ => {}
+            if let (Value::Date(d), Value::Time(t)) = (&args[0], &args[1]) {
+                let dt = chrono::NaiveDateTime::new(*d, *t);
+                return Ok(Value::DateTime(dt));
             }
         }
         match args.first() {
@@ -2528,6 +2748,23 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_time(&self, args: &[Value]) -> Result<Value> {
+        if args.len() == 3 {
+            if args.iter().any(|a| a.is_null()) {
+                return Ok(Value::Null);
+            }
+            let hour = args[0]
+                .as_i64()
+                .ok_or_else(|| Error::InvalidQuery("TIME hour must be int".into()))?;
+            let minute = args[1]
+                .as_i64()
+                .ok_or_else(|| Error::InvalidQuery("TIME minute must be int".into()))?;
+            let second = args[2]
+                .as_i64()
+                .ok_or_else(|| Error::InvalidQuery("TIME second must be int".into()))?;
+            let time = NaiveTime::from_hms_opt(hour as u32, minute as u32, second as u32)
+                .ok_or_else(|| Error::InvalidQuery("Invalid time components".into()))?;
+            return Ok(Value::Time(time));
+        }
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::String(s)) => {
@@ -2746,12 +2983,12 @@ impl<'a> IrEvaluator<'a> {
         if step_nanos > 0 {
             while current <= end_ts {
                 result.push(Value::Timestamp(current));
-                current = current + chrono::Duration::nanoseconds(step_nanos);
+                current += chrono::Duration::nanoseconds(step_nanos);
             }
         } else {
             while current >= end_ts {
                 result.push(Value::Timestamp(current));
-                current = current + chrono::Duration::nanoseconds(step_nanos);
+                current += chrono::Duration::nanoseconds(step_nanos);
             }
         }
         Ok(Value::Array(result))
@@ -2986,22 +3223,27 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_date_diff(&self, args: &[Value]) -> Result<Value> {
-        if args.len() < 2 {
-            return Err(Error::InvalidQuery("DATE_DIFF requires 2 arguments".into()));
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery("DATE_DIFF requires 3 arguments".into()));
         }
+        let part = args[2].as_str().unwrap_or("DAY").to_uppercase();
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::Date(d1), Value::Date(d2)) => {
-                let diff = d1.signed_duration_since(*d2);
-                Ok(Value::Int64(diff.num_days()))
+                let result = date_diff_by_part(d1, d2, &part)?;
+                Ok(Value::Int64(result))
             }
             (Value::DateTime(dt1), Value::DateTime(dt2)) => {
-                let diff = dt1.signed_duration_since(*dt2);
-                Ok(Value::Int64(diff.num_days()))
+                let d1 = dt1.date();
+                let d2 = dt2.date();
+                let result = date_diff_by_part(&d1, &d2, &part)?;
+                Ok(Value::Int64(result))
             }
             (Value::Timestamp(ts1), Value::Timestamp(ts2)) => {
-                let diff = ts1.signed_duration_since(*ts2);
-                Ok(Value::Int64(diff.num_days()))
+                let d1 = ts1.naive_utc().date();
+                let d2 = ts2.naive_utc().date();
+                let result = date_diff_by_part(&d1, &d2, &part)?;
+                Ok(Value::Int64(result))
             }
             _ => Err(Error::InvalidQuery(
                 "DATE_DIFF requires date/datetime/timestamp arguments".into(),
@@ -3365,6 +3607,96 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn fn_date_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "DATE_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Date(d), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::Date(o) => *o,
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+                };
+                let bucket = bucket_date(d, interval, &origin)?;
+                Ok(Value::Date(bucket))
+            }
+            _ => Err(Error::InvalidQuery(
+                "DATE_BUCKET requires date and interval arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_datetime_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "DATETIME_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::DateTime(dt), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::DateTime(o) => *o,
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                };
+                let bucket = bucket_datetime(dt, interval, &origin)?;
+                Ok(Value::DateTime(bucket))
+            }
+            _ => Err(Error::InvalidQuery(
+                "DATETIME_BUCKET requires datetime and interval arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_timestamp_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "TIMESTAMP_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Timestamp(ts), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::Timestamp(o) => o.naive_utc(),
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                };
+                let bucket = bucket_datetime(&ts.naive_utc(), interval, &origin)?;
+                Ok(Value::Timestamp(bucket.and_utc()))
+            }
+            _ => Err(Error::InvalidQuery(
+                "TIMESTAMP_BUCKET requires timestamp and interval arguments".into(),
+            )),
+        }
+    }
+
     fn fn_extract_from_args(&self, args: &[Expr], record: &Record) -> Result<Value> {
         if args.len() < 2 {
             return Err(Error::InvalidQuery(
@@ -3476,6 +3808,69 @@ impl<'a> IrEvaluator<'a> {
             }
         };
         Ok(Value::Float64(OrderedFloat(y.atan2(x))))
+    }
+
+    fn fn_sinh(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => Ok(Value::Float64(OrderedFloat((*n as f64).sinh()))),
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.sinh()))),
+            _ => Err(Error::InvalidQuery("SINH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_cosh(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => Ok(Value::Float64(OrderedFloat((*n as f64).cosh()))),
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.cosh()))),
+            _ => Err(Error::InvalidQuery("COSH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_tanh(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => Ok(Value::Float64(OrderedFloat((*n as f64).tanh()))),
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.tanh()))),
+            _ => Err(Error::InvalidQuery("TANH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_cot(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(x.cos() / x.sin())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(f.0.cos() / f.0.sin()))),
+            _ => Err(Error::InvalidQuery("COT requires numeric argument".into())),
+        }
+    }
+
+    fn fn_csc(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(1.0 / x.sin())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(1.0 / f.0.sin()))),
+            _ => Err(Error::InvalidQuery("CSC requires numeric argument".into())),
+        }
+    }
+
+    fn fn_sec(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(1.0 / x.cos())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(1.0 / f.0.cos()))),
+            _ => Err(Error::InvalidQuery("SEC requires numeric argument".into())),
+        }
     }
 
     fn fn_rand(&self, _args: &[Value]) -> Result<Value> {
@@ -3644,6 +4039,7 @@ impl<'a> IrEvaluator<'a> {
             | Value::Int64(_)
             | Value::Float64(_)
             | Value::Numeric(_)
+            | Value::BigNumeric(_)
             | Value::Bytes(_)
             | Value::Date(_)
             | Value::Time(_)
@@ -3668,6 +4064,7 @@ impl<'a> IrEvaluator<'a> {
             Value::Int64(n) => n.to_string(),
             Value::Float64(f) => f.0.to_string(),
             Value::Numeric(n) => n.to_string(),
+            Value::BigNumeric(n) => n.to_string(),
             Value::String(s) => s.clone(),
             Value::Bytes(b) => format!("{:?}", b),
             Value::Date(d) => d.to_string(),
@@ -3849,6 +4246,7 @@ impl<'a> IrEvaluator<'a> {
             | Value::Int64(_)
             | Value::Float64(_)
             | Value::Numeric(_)
+            | Value::BigNumeric(_)
             | Value::String(_)
             | Value::Date(_)
             | Value::Time(_)
@@ -3883,6 +4281,7 @@ impl<'a> IrEvaluator<'a> {
             | Value::Int64(_)
             | Value::Float64(_)
             | Value::Numeric(_)
+            | Value::BigNumeric(_)
             | Value::String(_)
             | Value::Date(_)
             | Value::Time(_)
@@ -4093,6 +4492,7 @@ impl<'a> IrEvaluator<'a> {
             Some(Value::Struct(_)) => Ok(Value::String("STRUCT".to_string())),
             Some(Value::Json(_)) => Ok(Value::String("JSON".to_string())),
             Some(Value::Numeric(_)) => Ok(Value::String("NUMERIC".to_string())),
+            Some(Value::BigNumeric(_)) => Ok(Value::String("BIGNUMERIC".to_string())),
             Some(Value::Interval(_)) => Ok(Value::String("INTERVAL".to_string())),
             Some(Value::Geography(_)) => Ok(Value::String("GEOGRAPHY".to_string())),
             Some(Value::Range(_)) => Ok(Value::String("RANGE".to_string())),
@@ -4428,6 +4828,9 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn eval_custom_function(&self, name: &str, args: &[Value]) -> Result<Value> {
+        if let Some(result) = self.try_eval_user_function(name, args)? {
+            return Ok(result);
+        }
         match name.to_uppercase().as_str() {
             "ST_GEOGFROMTEXT" | "ST_GEOGRAPHYFROMTEXT" => self.fn_st_geogfromtext(args),
             "ST_GEOGPOINT" | "ST_GEOGRAPHYPOINT" => self.fn_st_geogpoint(args),
@@ -4528,11 +4931,111 @@ impl<'a> IrEvaluator<'a> {
             "REGEXP_SUBSTR" => self.fn_regexp_substr(args),
             "ARRAY_SLICE" => self.fn_array_slice(args),
             "ARRAYENUMERATE" => self.fn_array_enumerate(args),
+            "HLL_COUNT_EXTRACT" => self.fn_hll_count_extract(args),
+            "MAP" => self.fn_map(args),
+            "MAPKEYS" => self.fn_map_keys(args),
+            "MAPVALUES" => self.fn_map_values(args),
+            "KEYS.NEW_KEYSET" => self.fn_keys_new_keyset(args),
+            "KEYS.ADD_KEY_FROM_RAW_BYTES" => self.fn_keys_add_key_from_raw_bytes(args),
+            "KEYS.KEYSET_CHAIN" => self.fn_keys_keyset_chain(args),
+            "KEYS.KEYSET_FROM_JSON" => self.fn_keys_keyset_from_json(args),
+            "KEYS.KEYSET_TO_JSON" => self.fn_keys_keyset_to_json(args),
+            "KEYS.KEYSET_LENGTH" => self.fn_keys_keyset_length(args),
+            "KEYS.ROTATE_KEYSET" => self.fn_keys_rotate_keyset(args),
+            "AEAD.ENCRYPT" => self.fn_aead_encrypt(args),
+            "AEAD.DECRYPT_STRING" => self.fn_aead_decrypt_string(args),
+            "AEAD.DECRYPT_BYTES" => self.fn_aead_decrypt_bytes(args),
+            "DETERMINISTIC_ENCRYPT" => self.fn_deterministic_encrypt(args),
+            "DETERMINISTIC_DECRYPT_STRING" => self.fn_deterministic_decrypt_string(args),
+            "DETERMINISTIC_DECRYPT_BYTES" => self.fn_deterministic_decrypt_bytes(args),
             _ => Err(Error::UnsupportedFeature(format!(
                 "Scalar function Custom(\"{}\") not yet implemented in IR evaluator",
                 name
             ))),
         }
+    }
+
+    fn fn_map(&self, args: &[Value]) -> Result<Value> {
+        if !args.len().is_multiple_of(2) {
+            return Err(Error::InvalidQuery(
+                "MAP requires an even number of arguments (alternating key, value pairs)".into(),
+            ));
+        }
+        if args.is_empty() {
+            return Ok(Value::Array(vec![]));
+        }
+        let map_entries: Vec<Value> = args
+            .chunks(2)
+            .map(|pair| {
+                Value::Struct(vec![
+                    ("key".to_string(), pair[0].clone()),
+                    ("value".to_string(), pair[1].clone()),
+                ])
+            })
+            .collect();
+        Ok(Value::Array(map_entries))
+    }
+
+    fn fn_map_keys(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "MAPKEYS requires exactly 1 argument".into(),
+            ));
+        }
+        let map_array = match &args[0] {
+            Value::Array(arr) => arr,
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "MAPKEYS argument must be a MAP (array of key-value structs)".into(),
+                ));
+            }
+        };
+        let keys: Vec<Value> = map_array
+            .iter()
+            .filter_map(|entry| {
+                if let Value::Struct(fields) = entry {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == "key")
+                        .map(|(_, v)| v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(Value::Array(keys))
+    }
+
+    fn fn_map_values(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "MAPVALUES requires exactly 1 argument".into(),
+            ));
+        }
+        let map_array = match &args[0] {
+            Value::Array(arr) => arr,
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "MAPVALUES argument must be a MAP (array of key-value structs)".into(),
+                ));
+            }
+        };
+        let values: Vec<Value> = map_array
+            .iter()
+            .filter_map(|entry| {
+                if let Value::Struct(fields) = entry {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == "value")
+                        .map(|(_, v)| v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(Value::Array(values))
     }
 
     fn fn_st_geogfromtext(&self, args: &[Value]) -> Result<Value> {
@@ -5248,30 +5751,41 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_st_makeline(&self, args: &[Value]) -> Result<Value> {
-        if args.len() < 2 {
-            return Err(Error::InvalidQuery(
-                "ST_MAKELINE requires at least two geography arguments".into(),
-            ));
-        }
         let mut points = Vec::new();
-        for arg in args {
-            match arg {
-                Value::Null => continue,
-                Value::Geography(wkt) if wkt.starts_with("POINT(") => {
-                    let inner = &wkt[6..wkt.len() - 1];
-                    points.push(inner.to_string());
+
+        if args.len() == 1 {
+            if let Value::Array(arr) = &args[0] {
+                for elem in arr {
+                    if let Value::Geography(wkt) = elem {
+                        if wkt.starts_with("POINT(") {
+                            let inner = &wkt[6..wkt.len() - 1];
+                            points.push(inner.to_string());
+                        }
+                    }
                 }
-                _ => {}
+            }
+        } else {
+            for arg in args {
+                match arg {
+                    Value::Null => continue,
+                    Value::Geography(wkt) if wkt.starts_with("POINT(") => {
+                        let inner = &wkt[6..wkt.len() - 1];
+                        points.push(inner.to_string());
+                    }
+                    _ => {}
+                }
             }
         }
-        if points.is_empty() {
-            Ok(Value::Null)
-        } else {
-            Ok(Value::Geography(format!(
-                "LINESTRING({})",
-                points.join(", ")
-            )))
+
+        if points.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "ST_MAKELINE requires at least two geography points".into(),
+            ));
         }
+        Ok(Value::Geography(format!(
+            "LINESTRING({})",
+            points.join(", ")
+        )))
     }
 
     fn fn_st_makepolygon(&self, args: &[Value]) -> Result<Value> {
@@ -7111,7 +7625,7 @@ impl<'a> IrEvaluator<'a> {
                         while current < *end_date {
                             let mut next = current;
                             if interval.days != 0 {
-                                next = next + chrono::Duration::days(interval.days as i64);
+                                next += chrono::Duration::days(interval.days as i64);
                             }
                             if interval.months != 0 {
                                 let year = next.year();
@@ -7373,6 +7887,571 @@ impl<'a> IrEvaluator<'a> {
             )),
         }
     }
+
+    fn try_eval_user_function(&self, name: &str, args: &[Value]) -> Result<Option<Value>> {
+        let user_functions = match self.user_functions {
+            Some(funcs) => funcs,
+            None => return Ok(None),
+        };
+
+        let upper_name = name.to_uppercase();
+        let udf = match user_functions.get(&upper_name) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+
+        if args.len() != udf.parameters.len() {
+            return Err(Error::InvalidQuery(format!(
+                "Function {} expects {} arguments, got {}",
+                name,
+                udf.parameters.len(),
+                args.len()
+            )));
+        }
+
+        match &udf.body {
+            FunctionBody::Sql(body_expr) => {
+                let substituted_body = self.substitute_udf_params(body_expr, &udf.parameters, args);
+                Ok(Some(self.evaluate(&substituted_body, &Record::new())?))
+            }
+            FunctionBody::JavaScript(js_code) => {
+                let param_names: Vec<String> =
+                    udf.parameters.iter().map(|p| p.name.clone()).collect();
+                let result = crate::js_udf::evaluate_js_function(js_code, &param_names, args)
+                    .map_err(|e| Error::InvalidQuery(format!("JavaScript UDF error: {}", e)))?;
+                Ok(Some(result))
+            }
+            FunctionBody::Language { name: lang, .. } => Err(Error::UnsupportedFeature(format!(
+                "Language {} is not supported for UDFs",
+                lang
+            ))),
+        }
+    }
+
+    fn substitute_udf_params(&self, expr: &Expr, params: &[FunctionArg], args: &[Value]) -> Expr {
+        match expr {
+            Expr::Column { name, .. } => {
+                let col_upper = name.to_uppercase();
+                for (i, param) in params.iter().enumerate() {
+                    if param.name.to_uppercase() == col_upper {
+                        return self.value_to_literal_expr(&args[i]);
+                    }
+                }
+                expr.clone()
+            }
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(self.substitute_udf_params(left, params, args)),
+                op: *op,
+                right: Box::new(self.substitute_udf_params(right, params, args)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(self.substitute_udf_params(inner, params, args)),
+            },
+            Expr::ScalarFunction {
+                name,
+                args: fn_args,
+            } => Expr::ScalarFunction {
+                name: name.clone(),
+                args: fn_args
+                    .iter()
+                    .map(|a| self.substitute_udf_params(a, params, args))
+                    .collect(),
+            },
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_result,
+            } => Expr::Case {
+                operand: operand
+                    .as_ref()
+                    .map(|o| Box::new(self.substitute_udf_params(o, params, args))),
+                when_clauses: when_clauses
+                    .iter()
+                    .map(|wc| WhenClause {
+                        condition: self.substitute_udf_params(&wc.condition, params, args),
+                        result: self.substitute_udf_params(&wc.result, params, args),
+                    })
+                    .collect(),
+                else_result: else_result
+                    .as_ref()
+                    .map(|e| Box::new(self.substitute_udf_params(e, params, args))),
+            },
+            Expr::Cast {
+                expr: inner,
+                data_type,
+                safe,
+            } => Expr::Cast {
+                expr: Box::new(self.substitute_udf_params(inner, params, args)),
+                data_type: data_type.clone(),
+                safe: *safe,
+            },
+            Expr::InList {
+                expr,
+                list,
+                negated,
+            } => Expr::InList {
+                expr: Box::new(self.substitute_udf_params(expr, params, args)),
+                list: list
+                    .iter()
+                    .map(|l| self.substitute_udf_params(l, params, args))
+                    .collect(),
+                negated: *negated,
+            },
+            Expr::Between {
+                expr,
+                low,
+                high,
+                negated,
+            } => Expr::Between {
+                expr: Box::new(self.substitute_udf_params(expr, params, args)),
+                low: Box::new(self.substitute_udf_params(low, params, args)),
+                high: Box::new(self.substitute_udf_params(high, params, args)),
+                negated: *negated,
+            },
+            _ => expr.clone(),
+        }
+    }
+
+    fn value_to_literal_expr(&self, value: &Value) -> Expr {
+        match value {
+            Value::Null => Expr::Literal(Literal::Null),
+            Value::Bool(b) => Expr::Literal(Literal::Bool(*b)),
+            Value::Int64(n) => Expr::Literal(Literal::Int64(*n)),
+            Value::Float64(f) => Expr::Literal(Literal::Float64(OrderedFloat(f.0))),
+            Value::String(s) => Expr::Literal(Literal::String(s.clone())),
+            Value::Numeric(d) => Expr::Literal(Literal::Numeric(*d)),
+            Value::Date(d) => {
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let days = d.signed_duration_since(epoch).num_days() as i32;
+                Expr::Literal(Literal::Date(days))
+            }
+            Value::Time(t) => {
+                let nanos =
+                    t.num_seconds_from_midnight() as i64 * 1_000_000_000 + t.nanosecond() as i64;
+                Expr::Literal(Literal::Time(nanos))
+            }
+            Value::Timestamp(ts) => {
+                let micros = ts.timestamp_micros();
+                Expr::Literal(Literal::Timestamp(micros))
+            }
+            Value::DateTime(dt) => {
+                let micros = dt.and_utc().timestamp_micros();
+                Expr::Literal(Literal::Datetime(micros))
+            }
+            _ => Expr::Literal(Literal::Null),
+        }
+    }
+
+    fn fn_hll_count_extract(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(Error::InvalidQuery(
+                "HLL_COUNT_EXTRACT requires 1 argument".to_string(),
+            ));
+        }
+        if args[0].is_null() {
+            return Ok(Value::Null);
+        }
+        let sketch_str = args[0].as_str().ok_or_else(|| Error::TypeMismatch {
+            expected: "STRING".to_string(),
+            actual: args[0].data_type().to_string(),
+        })?;
+        if let Some(encoded) = sketch_str.strip_prefix("HLL_SKETCH:p14:") {
+            if let Ok(registers) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)
+            {
+                let m = registers.len() as f64;
+                let mut sum: f64 = 0.0;
+                let mut zeros = 0i32;
+                for &r in &registers {
+                    sum += 2.0_f64.powf(-(r as f64));
+                    if r == 0 {
+                        zeros += 1;
+                    }
+                }
+                let alpha_m = 0.7213 / (1.0 + 1.079 / m);
+                let raw_est = alpha_m * m * m / sum;
+                let estimate = if raw_est <= 2.5 * m && zeros > 0 {
+                    m * (m / zeros as f64).ln()
+                } else {
+                    raw_est
+                };
+                return Ok(Value::Int64(estimate.round() as i64));
+            }
+        } else if let Some(rest) = sketch_str.strip_prefix("HLL_SKETCH:p15:n") {
+            if let Ok(count) = rest.parse::<i64>() {
+                return Ok(Value::Int64(count));
+            }
+        }
+        Ok(Value::Int64(0))
+    }
+
+    fn fn_keys_new_keyset(&self, args: &[Value]) -> Result<Value> {
+        use aes_gcm::aead::OsRng;
+        use aes_gcm::aead::rand_core::RngCore;
+
+        if args.is_empty() {
+            return Err(Error::InvalidQuery(
+                "KEYS.NEW_KEYSET requires key type argument".into(),
+            ));
+        }
+
+        match &args[0] {
+            Value::Null => Ok(Value::Null),
+            Value::String(key_type) => {
+                let key_size = match key_type.to_uppercase().as_str() {
+                    "AEAD_AES_GCM_256" => 32,
+                    "AEAD_AES_GCM_128" => 16,
+                    "DETERMINISTIC_AEAD_AES_SIV_CMAC_256" => 64,
+                    _ => 32,
+                };
+
+                let mut key = vec![0u8; key_size];
+                OsRng.fill_bytes(&mut key);
+
+                let keyset = serde_json::json!({
+                    "primaryKeyId": OsRng.next_u32(),
+                    "keyType": key_type,
+                    "key": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &key)
+                });
+
+                let keyset_bytes = serde_json::to_vec(&keyset).map_err(|e| {
+                    Error::InvalidQuery(format!("Failed to serialize keyset: {}", e))
+                })?;
+
+                Ok(Value::Bytes(keyset_bytes))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.NEW_KEYSET expects a string key type argument".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_add_key_from_raw_bytes(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery(
+                "KEYS.ADD_KEY_FROM_RAW_BYTES requires keyset, key_type, and raw_bytes arguments"
+                    .into(),
+            ));
+        }
+
+        match (&args[0], &args[1], &args[2]) {
+            (Value::Null, _, _) | (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
+            (Value::Bytes(keyset), Value::String(_key_type), Value::Bytes(raw_bytes)) => {
+                let mut keyset_json: serde_json::Value = serde_json::from_slice(keyset)
+                    .map_err(|e| Error::InvalidQuery(format!("Invalid keyset: {}", e)))?;
+
+                if let Some(obj) = keyset_json.as_object_mut() {
+                    obj.insert(
+                        "additionalKey".to_string(),
+                        serde_json::json!(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            raw_bytes
+                        )),
+                    );
+                }
+
+                let new_keyset = serde_json::to_vec(&keyset_json).map_err(|e| {
+                    Error::InvalidQuery(format!("Failed to serialize keyset: {}", e))
+                })?;
+
+                Ok(Value::Bytes(new_keyset))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.ADD_KEY_FROM_RAW_BYTES expects bytes arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_keyset_chain(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "KEYS.KEYSET_CHAIN requires kms_resource and keyset arguments".into(),
+            ));
+        }
+
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::String(_kms_resource), Value::Bytes(keyset)) => {
+                Ok(Value::Bytes(keyset.clone()))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.KEYSET_CHAIN expects string and bytes arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_keyset_from_json(&self, args: &[Value]) -> Result<Value> {
+        if args.is_empty() {
+            return Err(Error::InvalidQuery(
+                "KEYS.KEYSET_FROM_JSON requires json_string argument".into(),
+            ));
+        }
+
+        match &args[0] {
+            Value::Null => Ok(Value::Null),
+            Value::String(json_str) => {
+                let keyset_bytes = json_str.as_bytes().to_vec();
+                Ok(Value::Bytes(keyset_bytes))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.KEYSET_FROM_JSON expects a string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_keyset_to_json(&self, args: &[Value]) -> Result<Value> {
+        if args.is_empty() {
+            return Err(Error::InvalidQuery(
+                "KEYS.KEYSET_TO_JSON requires keyset argument".into(),
+            ));
+        }
+
+        match &args[0] {
+            Value::Null => Ok(Value::Null),
+            Value::Bytes(keyset) => {
+                let json_str = String::from_utf8_lossy(keyset).to_string();
+                Ok(Value::String(json_str))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.KEYSET_TO_JSON expects a bytes argument".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_keyset_length(&self, args: &[Value]) -> Result<Value> {
+        if args.is_empty() {
+            return Err(Error::InvalidQuery(
+                "KEYS.KEYSET_LENGTH requires keyset argument".into(),
+            ));
+        }
+
+        match &args[0] {
+            Value::Null => Ok(Value::Null),
+            Value::Bytes(keyset) => {
+                let keyset_json: serde_json::Value =
+                    serde_json::from_slice(keyset).unwrap_or(serde_json::json!({"keys": []}));
+
+                let count = keyset_json
+                    .get("keys")
+                    .and_then(|k| k.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(1);
+
+                Ok(Value::Int64(count as i64))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.KEYSET_LENGTH expects a bytes argument".into(),
+            )),
+        }
+    }
+
+    fn fn_keys_rotate_keyset(&self, args: &[Value]) -> Result<Value> {
+        use aes_gcm::aead::OsRng;
+        use aes_gcm::aead::rand_core::RngCore;
+
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "KEYS.ROTATE_KEYSET requires keyset and key_type arguments".into(),
+            ));
+        }
+
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Bytes(keyset), Value::String(key_type)) => {
+                let mut keyset_json: serde_json::Value = serde_json::from_slice(keyset)
+                    .map_err(|e| Error::InvalidQuery(format!("Invalid keyset: {}", e)))?;
+
+                let key_size = match key_type.to_uppercase().as_str() {
+                    "AEAD_AES_GCM_256" => 32,
+                    "AEAD_AES_GCM_128" => 16,
+                    "DETERMINISTIC_AEAD_AES_SIV_CMAC_256" => 64,
+                    _ => 32,
+                };
+
+                let mut new_key = vec![0u8; key_size];
+                OsRng.fill_bytes(&mut new_key);
+
+                if let Some(obj) = keyset_json.as_object_mut() {
+                    obj.insert(
+                        "primaryKeyId".to_string(),
+                        serde_json::json!(OsRng.next_u32()),
+                    );
+                    obj.insert(
+                        "key".to_string(),
+                        serde_json::json!(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &new_key
+                        )),
+                    );
+                }
+
+                let new_keyset = serde_json::to_vec(&keyset_json).map_err(|e| {
+                    Error::InvalidQuery(format!("Failed to serialize keyset: {}", e))
+                })?;
+
+                Ok(Value::Bytes(new_keyset))
+            }
+            _ => Err(Error::InvalidQuery(
+                "KEYS.ROTATE_KEYSET expects bytes and string arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_aead_encrypt(&self, args: &[Value]) -> Result<Value> {
+        use aes_gcm::aead::rand_core::RngCore;
+        use aes_gcm::aead::{Aead, KeyInit, OsRng};
+        use aes_gcm::{Aes256Gcm, Nonce};
+
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery(
+                "AEAD.ENCRYPT requires keyset, plaintext, and additional_data arguments".into(),
+            ));
+        }
+
+        match (&args[0], &args[1], &args[2]) {
+            (Value::Null, _, _) | (_, Value::Null, _) => Ok(Value::Null),
+            (Value::Bytes(keyset), Value::Bytes(plaintext), aad) => {
+                let keyset_json: serde_json::Value = serde_json::from_slice(keyset)
+                    .map_err(|e| Error::InvalidQuery(format!("Invalid keyset: {}", e)))?;
+
+                let key_b64 = keyset_json
+                    .get("key")
+                    .and_then(|k| k.as_str())
+                    .ok_or_else(|| Error::InvalidQuery("Keyset missing key".into()))?;
+
+                let key_bytes =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
+                        .map_err(|e| Error::InvalidQuery(format!("Invalid key encoding: {}", e)))?;
+
+                let key: [u8; 32] = key_bytes.try_into().map_err(|_| {
+                    Error::InvalidQuery("Key must be 32 bytes for AES-256-GCM".into())
+                })?;
+
+                let cipher = Aes256Gcm::new_from_slice(&key)
+                    .map_err(|e| Error::InvalidQuery(format!("Failed to create cipher: {}", e)))?;
+
+                let mut nonce_bytes = [0u8; 12];
+                OsRng.fill_bytes(&mut nonce_bytes);
+                let nonce = Nonce::from_slice(&nonce_bytes);
+
+                let aad_bytes = match aad {
+                    Value::Bytes(b) => b.clone(),
+                    Value::String(s) => s.as_bytes().to_vec(),
+                    Value::Null => vec![],
+                    _ => vec![],
+                };
+
+                let ciphertext = cipher
+                    .encrypt(
+                        nonce,
+                        aes_gcm::aead::Payload {
+                            msg: plaintext,
+                            aad: &aad_bytes,
+                        },
+                    )
+                    .map_err(|e| Error::InvalidQuery(format!("Encryption failed: {}", e)))?;
+
+                let mut result = nonce_bytes.to_vec();
+                result.extend(ciphertext);
+
+                Ok(Value::Bytes(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "AEAD.ENCRYPT expects bytes arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_aead_decrypt_string(&self, args: &[Value]) -> Result<Value> {
+        let decrypted = self.fn_aead_decrypt_bytes(args)?;
+        match decrypted {
+            Value::Null => Ok(Value::Null),
+            Value::Bytes(b) => {
+                let s = String::from_utf8(b).map_err(|e| {
+                    Error::InvalidQuery(format!("Decrypted data is not valid UTF-8: {}", e))
+                })?;
+                Ok(Value::String(s))
+            }
+            _ => Ok(decrypted),
+        }
+    }
+
+    fn fn_aead_decrypt_bytes(&self, args: &[Value]) -> Result<Value> {
+        use aes_gcm::aead::{Aead, KeyInit};
+        use aes_gcm::{Aes256Gcm, Nonce};
+
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery(
+                "AEAD.DECRYPT requires keyset, ciphertext, and additional_data arguments".into(),
+            ));
+        }
+
+        match (&args[0], &args[1], &args[2]) {
+            (Value::Null, _, _) | (_, Value::Null, _) => Ok(Value::Null),
+            (Value::Bytes(keyset), Value::Bytes(ciphertext), aad) => {
+                if ciphertext.len() < 12 {
+                    return Err(Error::InvalidQuery("Ciphertext too short".into()));
+                }
+
+                let keyset_json: serde_json::Value = serde_json::from_slice(keyset)
+                    .map_err(|e| Error::InvalidQuery(format!("Invalid keyset: {}", e)))?;
+
+                let key_b64 = keyset_json
+                    .get("key")
+                    .and_then(|k| k.as_str())
+                    .ok_or_else(|| Error::InvalidQuery("Keyset missing key".into()))?;
+
+                let key_bytes =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
+                        .map_err(|e| Error::InvalidQuery(format!("Invalid key encoding: {}", e)))?;
+
+                let key: [u8; 32] = key_bytes.try_into().map_err(|_| {
+                    Error::InvalidQuery("Key must be 32 bytes for AES-256-GCM".into())
+                })?;
+
+                let cipher = Aes256Gcm::new_from_slice(&key)
+                    .map_err(|e| Error::InvalidQuery(format!("Failed to create cipher: {}", e)))?;
+
+                let nonce = Nonce::from_slice(&ciphertext[..12]);
+                let encrypted_data = &ciphertext[12..];
+
+                let aad_bytes = match aad {
+                    Value::Bytes(b) => b.clone(),
+                    Value::String(s) => s.as_bytes().to_vec(),
+                    Value::Null => vec![],
+                    _ => vec![],
+                };
+
+                let plaintext = cipher
+                    .decrypt(
+                        nonce,
+                        aes_gcm::aead::Payload {
+                            msg: encrypted_data,
+                            aad: &aad_bytes,
+                        },
+                    )
+                    .map_err(|e| Error::InvalidQuery(format!("Decryption failed: {}", e)))?;
+
+                Ok(Value::Bytes(plaintext))
+            }
+            _ => Err(Error::InvalidQuery(
+                "AEAD.DECRYPT expects bytes arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_deterministic_encrypt(&self, args: &[Value]) -> Result<Value> {
+        self.fn_aead_encrypt(args)
+    }
+
+    fn fn_deterministic_decrypt_string(&self, args: &[Value]) -> Result<Value> {
+        self.fn_aead_decrypt_string(args)
+    }
+
+    fn fn_deterministic_decrypt_bytes(&self, args: &[Value]) -> Result<Value> {
+        self.fn_aead_decrypt_bytes(args)
+    }
 }
 
 fn like_pattern_to_regex(pattern: &str) -> String {
@@ -7408,12 +8487,32 @@ fn extract_datetime_field(val: &Value, field: DateTimeField) -> Result<Value> {
     }
 }
 
+fn week_number_sunday_start(date: NaiveDate) -> u32 {
+    let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
+    let jan1_weekday = jan1.weekday().num_days_from_sunday();
+    let day_of_year = date.ordinal();
+    (day_of_year + jan1_weekday - 1) / 7
+}
+
+fn week_number_with_weekday(date: NaiveDate, week_start: chrono::Weekday) -> u32 {
+    let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
+    let jan1_days_from_start =
+        (jan1.weekday().num_days_from_sunday() + 7 - week_start.num_days_from_sunday()) % 7;
+    let day_of_year = date.ordinal();
+    (day_of_year + jan1_days_from_start - 1) / 7
+}
+
 fn extract_from_date(date: &NaiveDate, field: DateTimeField) -> Result<Value> {
     match field {
         DateTimeField::Year => Ok(Value::Int64(date.year() as i64)),
         DateTimeField::Month => Ok(Value::Int64(date.month() as i64)),
         DateTimeField::Day => Ok(Value::Int64(date.day() as i64)),
-        DateTimeField::Week => Ok(Value::Int64(date.iso_week().week() as i64)),
+        DateTimeField::Week => {
+            let week = week_number_sunday_start(*date);
+            Ok(Value::Int64(week as i64))
+        }
+        DateTimeField::IsoWeek => Ok(Value::Int64(date.iso_week().week() as i64)),
+        DateTimeField::IsoYear => Ok(Value::Int64(date.iso_week().year() as i64)),
         DateTimeField::DayOfWeek => Ok(Value::Int64(
             date.weekday().num_days_from_sunday() as i64 + 1,
         )),
@@ -7437,12 +8536,19 @@ fn extract_from_datetime(dt: &chrono::NaiveDateTime, field: DateTimeField) -> Re
         DateTimeField::Millisecond => Ok(Value::Int64((dt.nanosecond() / 1_000_000) as i64)),
         DateTimeField::Microsecond => Ok(Value::Int64((dt.nanosecond() / 1000) as i64)),
         DateTimeField::Nanosecond => Ok(Value::Int64(dt.nanosecond() as i64)),
-        DateTimeField::Week => Ok(Value::Int64(dt.iso_week().week() as i64)),
+        DateTimeField::Week => {
+            let week = week_number_sunday_start(dt.date());
+            Ok(Value::Int64(week as i64))
+        }
+        DateTimeField::IsoWeek => Ok(Value::Int64(dt.iso_week().week() as i64)),
+        DateTimeField::IsoYear => Ok(Value::Int64(dt.iso_week().year() as i64)),
         DateTimeField::DayOfWeek => {
             Ok(Value::Int64(dt.weekday().num_days_from_sunday() as i64 + 1))
         }
         DateTimeField::DayOfYear => Ok(Value::Int64(dt.ordinal() as i64)),
         DateTimeField::Quarter => Ok(Value::Int64(((dt.month() - 1) / 3 + 1) as i64)),
+        DateTimeField::Date => Ok(Value::Date(dt.date())),
+        DateTimeField::Time => Ok(Value::Time(dt.time())),
         _ => Err(Error::InvalidQuery(format!(
             "Cannot extract {:?} from timestamp",
             field
@@ -7620,7 +8726,7 @@ fn add_interval_to_date(date: &NaiveDate, interval: &IntervalValue) -> Result<Na
         };
     }
     if interval.days != 0 {
-        result = result + chrono::Duration::days(interval.days as i64);
+        result += chrono::Duration::days(interval.days as i64);
     }
     Ok(result)
 }
@@ -7640,10 +8746,10 @@ fn add_interval_to_datetime(dt: &NaiveDateTime, interval: &IntervalValue) -> Res
         };
     }
     if interval.days != 0 {
-        result = result + chrono::Duration::days(interval.days as i64);
+        result += chrono::Duration::days(interval.days as i64);
     }
     if interval.nanos != 0 {
-        result = result + chrono::Duration::nanoseconds(interval.nanos);
+        result += chrono::Duration::nanoseconds(interval.nanos);
     }
     Ok(result)
 }
@@ -7653,6 +8759,25 @@ fn negate_interval(interval: &IntervalValue) -> IntervalValue {
         months: -interval.months,
         days: -interval.days,
         nanos: -interval.nanos,
+    }
+}
+
+fn date_diff_by_part(d1: &NaiveDate, d2: &NaiveDate, part: &str) -> Result<i64> {
+    match part {
+        "DAY" => Ok(d1.signed_duration_since(*d2).num_days()),
+        "WEEK" => Ok(d1.signed_duration_since(*d2).num_weeks()),
+        "MONTH" => {
+            let months1 = d1.year() as i64 * 12 + d1.month() as i64;
+            let months2 = d2.year() as i64 * 12 + d2.month() as i64;
+            Ok(months1 - months2)
+        }
+        "QUARTER" => {
+            let q1 = d1.year() as i64 * 4 + ((d1.month() - 1) / 3) as i64;
+            let q2 = d2.year() as i64 * 4 + ((d2.month() - 1) / 3) as i64;
+            Ok(q1 - q2)
+        }
+        "YEAR" => Ok((d1.year() - d2.year()) as i64),
+        _ => Ok(d1.signed_duration_since(*d2).num_days()),
     }
 }
 
@@ -7717,6 +8842,59 @@ fn trunc_time(time: &NaiveTime, part: &str) -> Result<NaiveTime> {
             .ok_or_else(|| Error::InvalidQuery("Invalid time".into())),
         _ => Ok(*time),
     }
+}
+
+fn bucket_date(
+    date: &NaiveDate,
+    interval: &IntervalValue,
+    origin: &NaiveDate,
+) -> Result<NaiveDate> {
+    let days_since_origin = (*date - *origin).num_days();
+    let bucket_days = if interval.days > 0 {
+        interval.days as i64
+    } else if interval.months > 0 {
+        let months_since =
+            (date.year() - origin.year()) * 12 + (date.month() as i32 - origin.month() as i32);
+        let bucket_count = months_since / interval.months;
+        let bucket_start_month = origin.month() as i32 + (bucket_count * interval.months);
+        let years_to_add = (bucket_start_month - 1) / 12;
+        let month = ((bucket_start_month - 1) % 12) + 1;
+        return NaiveDate::from_ymd_opt(origin.year() + years_to_add, month as u32, origin.day())
+            .ok_or_else(|| Error::InvalidQuery("Invalid bucket date".into()));
+    } else {
+        1
+    };
+    let bucket_count = days_since_origin / bucket_days;
+    let bucket_start_days = bucket_count * bucket_days;
+    Ok(*origin + chrono::Duration::days(bucket_start_days))
+}
+
+fn bucket_datetime(
+    dt: &NaiveDateTime,
+    interval: &IntervalValue,
+    origin: &NaiveDateTime,
+) -> Result<NaiveDateTime> {
+    if interval.months > 0 {
+        let months_since =
+            (dt.year() - origin.year()) * 12 + (dt.month() as i32 - origin.month() as i32);
+        let bucket_count = months_since / interval.months;
+        let bucket_start_month = origin.month() as i32 + (bucket_count * interval.months);
+        let years_to_add = (bucket_start_month - 1) / 12;
+        let month = ((bucket_start_month - 1) % 12) + 1;
+        return NaiveDate::from_ymd_opt(origin.year() + years_to_add, month as u32, origin.day())
+            .and_then(|d| d.and_hms_opt(origin.hour(), origin.minute(), origin.second()))
+            .ok_or_else(|| Error::InvalidQuery("Invalid bucket datetime".into()));
+    }
+    let total_nanos_in_interval =
+        interval.days as i64 * 24 * 60 * 60 * 1_000_000_000 + interval.nanos;
+    if total_nanos_in_interval == 0 {
+        return Ok(*dt);
+    }
+    let diff = *dt - *origin;
+    let diff_nanos = diff.num_nanoseconds().unwrap_or(0);
+    let bucket_count = diff_nanos / total_nanos_in_interval;
+    let bucket_start_nanos = bucket_count * total_nanos_in_interval;
+    Ok(*origin + chrono::Duration::nanoseconds(bucket_start_nanos))
 }
 
 fn format_date_with_pattern(date: &NaiveDate, pattern: &str) -> Result<String> {
@@ -7804,6 +8982,16 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
             if let Some(f) = n.to_f64() {
                 let num = serde_json::Number::from_f64(f)
                     .ok_or_else(|| Error::InvalidQuery("Cannot convert numeric to JSON".into()))?;
+                Ok(serde_json::Value::Number(num))
+            } else {
+                Ok(serde_json::Value::String(n.to_string()))
+            }
+        }
+        Value::BigNumeric(n) => {
+            if let Some(f) = n.to_f64() {
+                let num = serde_json::Number::from_f64(f).ok_or_else(|| {
+                    Error::InvalidQuery("Cannot convert bignumeric to JSON".into())
+                })?;
                 Ok(serde_json::Value::Number(num))
             } else {
                 Ok(serde_json::Value::String(n.to_string()))

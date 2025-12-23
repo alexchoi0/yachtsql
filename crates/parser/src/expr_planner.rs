@@ -1,10 +1,11 @@
 use rust_decimal::Decimal;
 use sqlparser::ast;
 use yachtsql_common::error::{Error, Result};
+use yachtsql_common::types::DataType;
 use yachtsql_ir::{
-    AggregateFunction, BinaryOp, DateTimeField, Expr, Literal, LogicalPlan, PlanSchema,
-    ScalarFunction, SortExpr, TrimWhere, UnaryOp, WhenClause, WindowFrame, WindowFrameBound,
-    WindowFrameUnit, WindowFunction,
+    AggregateFunction, BinaryOp, DateTimeField, Expr, JsonPathElement, Literal, LogicalPlan,
+    PlanSchema, ScalarFunction, SortExpr, TrimWhere, UnaryOp, WhenClause, WindowFrame,
+    WindowFrameBound, WindowFrameUnit, WindowFunction,
 };
 
 pub type SubqueryPlannerFn<'a> = &'a dyn Fn(&ast::Query) -> Result<LogicalPlan>;
@@ -85,7 +86,9 @@ impl ExprPlanner {
                 })
             }
 
-            ast::Expr::Function(func) => Self::plan_function(func, schema, named_windows),
+            ast::Expr::Function(func) => {
+                Self::plan_function(func, schema, subquery_planner, named_windows)
+            }
 
             ast::Expr::IsNull(inner) => {
                 let expr = Self::plan_expr_full(inner, schema, subquery_planner, named_windows)?;
@@ -608,6 +611,65 @@ impl ExprPlanner {
         })
     }
 
+    fn resolve_compound_identifier(parts: &[ast::Ident], schema: &PlanSchema) -> Result<Expr> {
+        if parts.is_empty() {
+            return Err(Error::InvalidQuery("Empty compound identifier".into()));
+        }
+
+        if parts.len() == 1 {
+            let name = &parts[0].value;
+            return Self::resolve_column(name, None, schema);
+        }
+
+        let first_part = &parts[0].value;
+        if let Some((idx, field)) = schema.field_by_name(first_part) {
+            match &field.data_type {
+                DataType::Struct(_) => {
+                    let mut expr = Expr::Column {
+                        table: None,
+                        name: first_part.clone(),
+                        index: Some(idx),
+                    };
+                    for part in &parts[1..] {
+                        expr = Expr::StructAccess {
+                            expr: Box::new(expr),
+                            field: part.value.clone(),
+                        };
+                    }
+                    return Ok(expr);
+                }
+                DataType::Json => {
+                    let base = Expr::Column {
+                        table: None,
+                        name: first_part.clone(),
+                        index: Some(idx),
+                    };
+                    let path: Vec<JsonPathElement> = parts[1..]
+                        .iter()
+                        .map(|p| JsonPathElement::Key(p.value.clone()))
+                        .collect();
+                    return Ok(Expr::JsonAccess {
+                        expr: Box::new(base),
+                        path,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let (table, name) = (
+            Some(
+                parts[..parts.len() - 1]
+                    .iter()
+                    .map(|p| p.value.clone())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            ),
+            parts.last().map(|p| p.value.clone()).unwrap_or_default(),
+        );
+        Self::resolve_column(&name, table.as_deref(), schema)
+    }
+
     fn plan_all_any_op(
         left: &ast::Expr,
         compare_op: &ast::BinaryOperator,
@@ -913,9 +975,20 @@ impl ExprPlanner {
     fn plan_function(
         func: &ast::Function,
         schema: &PlanSchema,
+        subquery_planner: Option<SubqueryPlannerFn>,
         named_windows: &[ast::NamedWindowDefinition],
     ) -> Result<Expr> {
         let name = func.name.to_string().to_uppercase();
+
+        if name == "ARRAY"
+            && let ast::FunctionArguments::Subquery(subquery) = &func.args
+        {
+            let planner = subquery_planner.ok_or_else(|| {
+                Error::unsupported("ARRAY subquery requires subquery planner context")
+            })?;
+            let plan = planner(subquery)?;
+            return Ok(Expr::ArraySubquery(Box::new(plan)));
+        }
 
         if let Some(over) = &func.over {
             if let Some(window_func) = Self::try_window_function(&name) {
@@ -1222,6 +1295,7 @@ impl ExprPlanner {
             "MINIF" | "MIN_IF" => Some(AggregateFunction::MinIf),
             "MAXIF" | "MAX_IF" => Some(AggregateFunction::MaxIf),
             "GROUPING" => Some(AggregateFunction::Grouping),
+            "GROUPING_ID" => Some(AggregateFunction::GroupingId),
             "LOGICAL_AND" | "BOOL_AND" => Some(AggregateFunction::LogicalAnd),
             "LOGICAL_OR" | "BOOL_OR" => Some(AggregateFunction::LogicalOr),
             "BIT_AND" => Some(AggregateFunction::BitAnd),
@@ -1289,6 +1363,7 @@ impl ExprPlanner {
             "FLOOR" => Ok(ScalarFunction::Floor),
             "CEIL" | "CEILING" => Ok(ScalarFunction::Ceil),
             "SQRT" => Ok(ScalarFunction::Sqrt),
+            "CBRT" => Ok(ScalarFunction::Cbrt),
             "POWER" | "POW" => Ok(ScalarFunction::Power),
             "MOD" => Ok(ScalarFunction::Mod),
             "SIGN" => Ok(ScalarFunction::Sign),
@@ -1310,6 +1385,9 @@ impl ExprPlanner {
             "SINH" => Ok(ScalarFunction::Sinh),
             "COSH" => Ok(ScalarFunction::Cosh),
             "TANH" => Ok(ScalarFunction::Tanh),
+            "COT" => Ok(ScalarFunction::Cot),
+            "CSC" => Ok(ScalarFunction::Csc),
+            "SEC" => Ok(ScalarFunction::Sec),
             "SAFE_DIVIDE" => Ok(ScalarFunction::SafeDivide),
             "SAFE_MULTIPLY" => Ok(ScalarFunction::SafeMultiply),
             "SAFE_ADD" => Ok(ScalarFunction::SafeAdd),
@@ -1319,6 +1397,7 @@ impl ExprPlanner {
             "IS_NAN" => Ok(ScalarFunction::IsNan),
             "IS_INF" => Ok(ScalarFunction::IsInf),
             "RAND" => Ok(ScalarFunction::Rand),
+            "PI" => Ok(ScalarFunction::Pi),
             "COALESCE" => Ok(ScalarFunction::Coalesce),
             "IFNULL" => Ok(ScalarFunction::IfNull),
             "NULLIF" => Ok(ScalarFunction::NullIf),
@@ -1359,6 +1438,9 @@ impl ExprPlanner {
             "UNIX_SECONDS" => Ok(ScalarFunction::UnixSeconds),
             "DATE_FROM_UNIX_DATE" => Ok(ScalarFunction::DateFromUnixDate),
             "LAST_DAY" => Ok(ScalarFunction::LastDay),
+            "DATE_BUCKET" => Ok(ScalarFunction::DateBucket),
+            "DATETIME_BUCKET" => Ok(ScalarFunction::DatetimeBucket),
+            "TIMESTAMP_BUCKET" => Ok(ScalarFunction::TimestampBucket),
             "MAKE_INTERVAL" => Ok(ScalarFunction::MakeInterval),
             "JUSTIFY_DAYS" => Ok(ScalarFunction::JustifyDays),
             "JUSTIFY_HOURS" => Ok(ScalarFunction::JustifyHours),
