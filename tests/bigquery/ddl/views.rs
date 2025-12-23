@@ -298,9 +298,7 @@ fn test_create_materialized_view_with_partition() {
     let mut executor = create_executor();
 
     executor
-        .execute_sql(
-            "CREATE TABLE time_data (id INT64, created DATE, value INT64)",
-        )
+        .execute_sql("CREATE TABLE time_data (id INT64, created DATE, value INT64)")
         .unwrap();
 
     executor
@@ -497,7 +495,9 @@ fn test_alter_view_set_options() {
         .unwrap();
 
     executor
-        .execute_sql("ALTER VIEW alter_opts_view SET OPTIONS (description = 'Updated view description')")
+        .execute_sql(
+            "ALTER VIEW alter_opts_view SET OPTIONS (description = 'Updated view description')",
+        )
         .unwrap();
 }
 
@@ -561,7 +561,9 @@ fn test_view_with_qualified_name() {
         .unwrap();
 
     executor
-        .execute_sql("CREATE VIEW view_schema.qualified_view AS SELECT * FROM view_schema.base_table")
+        .execute_sql(
+            "CREATE VIEW view_schema.qualified_view AS SELECT * FROM view_schema.base_table",
+        )
         .unwrap();
 
     let result = executor
@@ -643,11 +645,10 @@ fn test_view_with_order_by() {
         )
         .unwrap();
 
-    let result = executor.execute_sql("SELECT name FROM ordered_view").unwrap();
-    assert_table_eq!(
-        result,
-        [["Alice"], ["Bob"], ["Diana"], ["Charlie"]]
-    );
+    let result = executor
+        .execute_sql("SELECT name FROM ordered_view")
+        .unwrap();
+    assert_table_eq!(result, [["Alice"], ["Bob"], ["Diana"], ["Charlie"]]);
 }
 
 #[test]
@@ -659,7 +660,9 @@ fn test_view_with_limit() {
         .execute_sql("CREATE VIEW limited_view AS SELECT name, salary FROM employees ORDER BY salary DESC LIMIT 2")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT name FROM limited_view").unwrap();
+    let result = executor
+        .execute_sql("SELECT name FROM limited_view")
+        .unwrap();
     assert_table_eq!(result, [["Alice"], ["Bob"]]);
 }
 
@@ -669,7 +672,9 @@ fn test_view_with_union() {
     setup_base_table(&mut executor);
 
     executor
-        .execute_sql("CREATE TABLE contractors (id INT64, name STRING, department STRING, rate INT64)")
+        .execute_sql(
+            "CREATE TABLE contractors (id INT64, name STRING, department STRING, rate INT64)",
+        )
         .unwrap();
 
     executor
@@ -769,7 +774,9 @@ fn test_view_update_underlying_table() {
     setup_base_table(&mut executor);
 
     executor
-        .execute_sql("CREATE VIEW dynamic_view AS SELECT * FROM employees WHERE department = 'Engineering'")
+        .execute_sql(
+            "CREATE VIEW dynamic_view AS SELECT * FROM employees WHERE department = 'Engineering'",
+        )
         .unwrap();
 
     executor
@@ -807,7 +814,10 @@ fn test_materialized_view_with_complex_aggregation() {
         .unwrap();
     assert_table_eq!(
         result,
-        [["Engineering", 2, 90000, 100000], ["Sales", 2, 80000, 85000]]
+        [
+            ["Engineering", 2, 90000, 100000],
+            ["Sales", 2, 80000, 85000]
+        ]
     );
 }
 
@@ -844,7 +854,9 @@ fn test_view_with_struct_column() {
         .unwrap();
 
     executor
-        .execute_sql("INSERT INTO struct_base VALUES (1, STRUCT('Alice', 30)), (2, STRUCT('Bob', 25))")
+        .execute_sql(
+            "INSERT INTO struct_base VALUES (1, STRUCT('Alice', 30)), (2, STRUCT('Bob', 25))",
+        )
         .unwrap();
 
     executor

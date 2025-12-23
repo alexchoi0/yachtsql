@@ -1,5 +1,5 @@
 use crate::assert_table_eq;
-use crate::common::create_executor;
+use crate::common::{create_executor, numeric};
 
 #[test]
 fn test_alter_table_add_column() {
@@ -468,7 +468,9 @@ fn test_alter_table_add_column_with_struct() {
         .execute_sql("INSERT INTO struct_add VALUES (1, STRUCT('123 Main St', 'NYC', '10001'))")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT id, address.city FROM struct_add").unwrap();
+    let result = executor
+        .execute_sql("SELECT id, address.city FROM struct_add")
+        .unwrap();
     assert_table_eq!(result, [[1, "NYC"]]);
 }
 
@@ -489,7 +491,9 @@ fn test_alter_table_add_column_with_array() {
         .execute_sql("INSERT INTO array_add VALUES (1, ['rust', 'sql', 'bigquery'])")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT id, tags[OFFSET(0)] FROM array_add").unwrap();
+    let result = executor
+        .execute_sql("SELECT id, tags[OFFSET(0)] FROM array_add")
+        .unwrap();
     assert_table_eq!(result, [[1, "rust"]]);
 }
 
@@ -589,7 +593,7 @@ fn test_alter_column_set_options() {
         .unwrap();
 
     let result = executor.execute_sql("SELECT * FROM col_options").unwrap();
-    assert_table_eq!(result, [[1, crate::common::numeric("123.456")]]);
+    assert_table_eq!(result, [[1, numeric("123.456")]]);
 }
 
 #[test]
@@ -702,7 +706,7 @@ fn test_alter_table_alter_column_set_data_type_widening() {
         .unwrap();
 
     let result = executor.execute_sql("SELECT * FROM type_widen").unwrap();
-    assert_table_eq!(result, [[1, crate::common::numeric("100")]]);
+    assert_table_eq!(result, [[1, numeric("100")]]);
 }
 
 #[test]
@@ -710,9 +714,7 @@ fn test_alter_table_alter_column_set_data_type_widening() {
 fn test_alter_table_with_qualified_name() {
     let mut executor = create_executor();
 
-    executor
-        .execute_sql("CREATE SCHEMA test_schema")
-        .unwrap();
+    executor.execute_sql("CREATE SCHEMA test_schema").unwrap();
 
     executor
         .execute_sql("CREATE TABLE test_schema.qualified_alter (id INT64)")
@@ -770,7 +772,9 @@ fn test_alter_table_alter_column_collate() {
         .execute_sql("INSERT INTO col_collate VALUES (1, 'Test')")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT * FROM col_collate WHERE name = 'TEST'").unwrap();
+    let result = executor
+        .execute_sql("SELECT * FROM col_collate WHERE name = 'TEST'")
+        .unwrap();
     assert_table_eq!(result, [[1, "Test"]]);
 }
 
@@ -881,14 +885,18 @@ fn test_alter_table_add_composite_primary_key() {
         .unwrap();
 
     executor
-        .execute_sql("ALTER TABLE composite_pk_add ADD PRIMARY KEY (tenant_id, user_id) NOT ENFORCED")
+        .execute_sql(
+            "ALTER TABLE composite_pk_add ADD PRIMARY KEY (tenant_id, user_id) NOT ENFORCED",
+        )
         .unwrap();
 
     executor
         .execute_sql("INSERT INTO composite_pk_add VALUES (1, 1, 'Alice')")
         .unwrap();
 
-    let result = executor.execute_sql("SELECT * FROM composite_pk_add").unwrap();
+    let result = executor
+        .execute_sql("SELECT * FROM composite_pk_add")
+        .unwrap();
     assert_table_eq!(result, [[1, 1, "Alice"]]);
 }
 
@@ -939,7 +947,9 @@ fn test_alter_view_alter_column() {
         .unwrap();
 
     executor
-        .execute_sql("ALTER VIEW alter_view ALTER COLUMN name SET OPTIONS (description = 'User name')")
+        .execute_sql(
+            "ALTER VIEW alter_view ALTER COLUMN name SET OPTIONS (description = 'User name')",
+        )
         .unwrap();
 }
 
@@ -979,7 +989,9 @@ fn test_alter_table_add_column_with_range() {
         .unwrap();
 
     executor
-        .execute_sql("INSERT INTO range_add VALUES (1, RANGE(DATE '2024-01-01', DATE '2024-12-31'))")
+        .execute_sql(
+            "INSERT INTO range_add VALUES (1, RANGE(DATE '2024-01-01', DATE '2024-12-31'))",
+        )
         .unwrap();
 
     let result = executor.execute_sql("SELECT id FROM range_add").unwrap();

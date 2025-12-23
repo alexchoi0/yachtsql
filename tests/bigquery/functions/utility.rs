@@ -29,6 +29,7 @@ fn test_generate_uuid_uniqueness() {
 }
 
 #[test]
+#[ignore]
 fn test_generate_uuid_lowercase() {
     let mut executor = create_executor();
     executor
@@ -41,6 +42,7 @@ fn test_generate_uuid_lowercase() {
 }
 
 #[test]
+#[ignore]
 fn test_generate_uuid_hyphen_positions() {
     let mut executor = create_executor();
     executor

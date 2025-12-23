@@ -3574,6 +3574,96 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn fn_date_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "DATE_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Date(d), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::Date(o) => *o,
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+                };
+                let bucket = bucket_date(d, interval, &origin)?;
+                Ok(Value::Date(bucket))
+            }
+            _ => Err(Error::InvalidQuery(
+                "DATE_BUCKET requires date and interval arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_datetime_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "DATETIME_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::DateTime(dt), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::DateTime(o) => *o,
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                };
+                let bucket = bucket_datetime(dt, interval, &origin)?;
+                Ok(Value::DateTime(bucket))
+            }
+            _ => Err(Error::InvalidQuery(
+                "DATETIME_BUCKET requires datetime and interval arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_timestamp_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "TIMESTAMP_BUCKET requires at least 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Timestamp(ts), Value::Interval(interval)) => {
+                let origin = if args.len() > 2 {
+                    match &args[2] {
+                        Value::Timestamp(o) => o.naive_utc(),
+                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap(),
+                    }
+                } else {
+                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                };
+                let bucket = bucket_datetime(&ts.naive_utc(), interval, &origin)?;
+                Ok(Value::Timestamp(bucket.and_utc()))
+            }
+            _ => Err(Error::InvalidQuery(
+                "TIMESTAMP_BUCKET requires timestamp and interval arguments".into(),
+            )),
+        }
+    }
+
     fn fn_extract_from_args(&self, args: &[Expr], record: &Record) -> Result<Value> {
         if args.len() < 2 {
             return Err(Error::InvalidQuery(
@@ -8304,16 +8394,15 @@ fn extract_datetime_field(val: &Value, field: DateTimeField) -> Result<Value> {
 fn week_number_sunday_start(date: NaiveDate) -> u32 {
     let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
     let jan1_weekday = jan1.weekday().num_days_from_sunday();
-    let day_of_year = date.ordinal() as u32;
+    let day_of_year = date.ordinal();
     (day_of_year + jan1_weekday - 1) / 7
 }
 
 fn week_number_with_weekday(date: NaiveDate, week_start: chrono::Weekday) -> u32 {
     let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
-    let jan1_days_from_start = (jan1.weekday().num_days_from_sunday() + 7
-        - week_start.num_days_from_sunday())
-        % 7;
-    let day_of_year = date.ordinal() as u32;
+    let jan1_days_from_start =
+        (jan1.weekday().num_days_from_sunday() + 7 - week_start.num_days_from_sunday()) % 7;
+    let day_of_year = date.ordinal();
     (day_of_year + jan1_days_from_start - 1) / 7
 }
 
@@ -8659,6 +8748,59 @@ fn trunc_time(time: &NaiveTime, part: &str) -> Result<NaiveTime> {
     }
 }
 
+fn bucket_date(
+    date: &NaiveDate,
+    interval: &IntervalValue,
+    origin: &NaiveDate,
+) -> Result<NaiveDate> {
+    let days_since_origin = (*date - *origin).num_days();
+    let bucket_days = if interval.days > 0 {
+        interval.days as i64
+    } else if interval.months > 0 {
+        let months_since =
+            (date.year() - origin.year()) * 12 + (date.month() as i32 - origin.month() as i32);
+        let bucket_count = months_since / interval.months;
+        let bucket_start_month = origin.month() as i32 + (bucket_count * interval.months);
+        let years_to_add = (bucket_start_month - 1) / 12;
+        let month = ((bucket_start_month - 1) % 12) + 1;
+        return NaiveDate::from_ymd_opt(origin.year() + years_to_add, month as u32, origin.day())
+            .ok_or_else(|| Error::InvalidQuery("Invalid bucket date".into()));
+    } else {
+        1
+    };
+    let bucket_count = days_since_origin / bucket_days;
+    let bucket_start_days = bucket_count * bucket_days;
+    Ok(*origin + chrono::Duration::days(bucket_start_days))
+}
+
+fn bucket_datetime(
+    dt: &NaiveDateTime,
+    interval: &IntervalValue,
+    origin: &NaiveDateTime,
+) -> Result<NaiveDateTime> {
+    if interval.months > 0 {
+        let months_since =
+            (dt.year() - origin.year()) * 12 + (dt.month() as i32 - origin.month() as i32);
+        let bucket_count = months_since / interval.months;
+        let bucket_start_month = origin.month() as i32 + (bucket_count * interval.months);
+        let years_to_add = (bucket_start_month - 1) / 12;
+        let month = ((bucket_start_month - 1) % 12) + 1;
+        return NaiveDate::from_ymd_opt(origin.year() + years_to_add, month as u32, origin.day())
+            .and_then(|d| d.and_hms_opt(origin.hour(), origin.minute(), origin.second()))
+            .ok_or_else(|| Error::InvalidQuery("Invalid bucket datetime".into()));
+    }
+    let total_nanos_in_interval =
+        interval.days as i64 * 24 * 60 * 60 * 1_000_000_000 + interval.nanos;
+    if total_nanos_in_interval == 0 {
+        return Ok(*dt);
+    }
+    let diff = *dt - *origin;
+    let diff_nanos = diff.num_nanoseconds().unwrap_or(0);
+    let bucket_count = diff_nanos / total_nanos_in_interval;
+    let bucket_start_nanos = bucket_count * total_nanos_in_interval;
+    Ok(*origin + chrono::Duration::nanoseconds(bucket_start_nanos))
+}
+
 fn format_date_with_pattern(date: &NaiveDate, pattern: &str) -> Result<String> {
     let chrono_pattern = bq_format_to_chrono(pattern);
     Ok(date.format(&chrono_pattern).to_string())
@@ -8744,6 +8886,16 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
             if let Some(f) = n.to_f64() {
                 let num = serde_json::Number::from_f64(f)
                     .ok_or_else(|| Error::InvalidQuery("Cannot convert numeric to JSON".into()))?;
+                Ok(serde_json::Value::Number(num))
+            } else {
+                Ok(serde_json::Value::String(n.to_string()))
+            }
+        }
+        Value::BigNumeric(n) => {
+            if let Some(f) = n.to_f64() {
+                let num = serde_json::Number::from_f64(f).ok_or_else(|| {
+                    Error::InvalidQuery("Cannot convert bignumeric to JSON".into())
+                })?;
                 Ok(serde_json::Value::Number(num))
             } else {
                 Ok(serde_json::Value::String(n.to_string()))

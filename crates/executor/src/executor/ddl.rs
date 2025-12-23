@@ -1531,5 +1531,27 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             condition: condition.clone(),
             message: message.clone(),
         },
+        PhysicalPlan::Grant {
+            roles,
+            resource_type,
+            resource_name,
+            grantees,
+        } => LogicalPlan::Grant {
+            roles: roles.clone(),
+            resource_type: resource_type.clone(),
+            resource_name: resource_name.clone(),
+            grantees: grantees.clone(),
+        },
+        PhysicalPlan::Revoke {
+            roles,
+            resource_type,
+            resource_name,
+            grantees,
+        } => LogicalPlan::Revoke {
+            roles: roles.clone(),
+            resource_type: resource_type.clone(),
+            resource_name: resource_name.clone(),
+            grantees: grantees.clone(),
+        },
     }
 }

@@ -360,6 +360,7 @@ mod tests {
             | Value::Int64(_)
             | Value::Float64(_)
             | Value::Numeric(_)
+            | Value::BigNumeric(_)
             | Value::String(_)
             | Value::Bytes(_)
             | Value::Date(_)
