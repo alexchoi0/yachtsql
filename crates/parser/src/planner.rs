@@ -6,8 +6,8 @@ use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, StructField};
 use yachtsql_ir::{
     AlterColumnAction, AlterTableOp, Assignment, BinaryOp, ColumnDef, ConstraintType,
-    CteDefinition, ExportFormat, ExportOptions, Expr, FunctionArg, FunctionBody, JoinType,
-    Literal, LogicalPlan, MergeClause, PlanField, PlanSchema, ProcedureArg, ProcedureArgMode,
+    CteDefinition, ExportFormat, ExportOptions, Expr, FunctionArg, FunctionBody, JoinType, Literal,
+    LogicalPlan, MergeClause, PlanField, PlanSchema, ProcedureArg, ProcedureArgMode,
     SetOperationType, SortExpr, TableConstraint,
 };
 use yachtsql_storage::Schema;

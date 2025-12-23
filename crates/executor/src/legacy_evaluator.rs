@@ -3304,6 +3304,38 @@ impl<'a> Evaluator<'a> {
                     _ => Ok(Value::null()),
                 }
             }
+            "IEEE_DIVIDE" => {
+                if args.len() != 2 {
+                    return Err(Error::InvalidQuery(
+                        "IEEE_DIVIDE requires 2 arguments".to_string(),
+                    ));
+                }
+                if args[0].is_null() || args[1].is_null() {
+                    return Ok(Value::null());
+                }
+                let dividend = args[0]
+                    .as_f64()
+                    .or_else(|| args[0].as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        args[0].as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
+                let divisor = args[1]
+                    .as_f64()
+                    .or_else(|| args[1].as_i64().map(|i| i as f64))
+                    .or_else(|| {
+                        args[1].as_numeric().and_then(|d| {
+                            use rust_decimal::prelude::ToPrimitive;
+                            d.to_f64()
+                        })
+                    });
+                match (dividend, divisor) {
+                    (Some(a), Some(b)) => Ok(Value::float64(a / b)),
+                    _ => Ok(Value::null()),
+                }
+            }
             "SAFE_ADD" | "SAFE_SUBTRACT" | "SAFE_MULTIPLY" | "SAFE_NEGATE" => match name {
                 "SAFE_ADD" => {
                     if args.len() != 2 || args[0].is_null() || args[1].is_null() {

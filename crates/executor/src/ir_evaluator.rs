@@ -5,7 +5,10 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
-use geo::{BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance, GeodesicLength, Intersects, SimplifyVw};
+use geo::{
+    BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance,
+    GeodesicLength, Intersects, SimplifyVw,
+};
 use geo_types::{Coord, Geometry, LineString, MultiPolygon, Point, Polygon};
 use ordered_float::OrderedFloat;
 use rust_decimal::prelude::ToPrimitive;
@@ -496,6 +499,7 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::Trunc => self.fn_trunc(&arg_values),
             ScalarFunction::Div => self.fn_div(&arg_values),
             ScalarFunction::SafeDivide => self.fn_safe_divide(&arg_values),
+            ScalarFunction::IeeeDivide => self.fn_ieee_divide(&arg_values),
             ScalarFunction::SafeMultiply => self.fn_safe_multiply(&arg_values),
             ScalarFunction::SafeAdd => self.fn_safe_add(&arg_values),
             ScalarFunction::SafeSubtract => self.fn_safe_subtract(&arg_values),
@@ -2046,6 +2050,32 @@ impl<'a> IrEvaluator<'a> {
             }
             _ => Err(Error::InvalidQuery(
                 "SAFE_DIVIDE requires numeric arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_ieee_divide(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 2 {
+            return Err(Error::InvalidQuery(
+                "IEEE_DIVIDE requires 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Int64(a), Value::Int64(b)) => {
+                let a = *a as f64;
+                let b = *b as f64;
+                Ok(Value::Float64(OrderedFloat(a / b)))
+            }
+            (Value::Float64(a), Value::Float64(b)) => Ok(Value::Float64(OrderedFloat(a.0 / b.0))),
+            (Value::Int64(a), Value::Float64(b)) => {
+                Ok(Value::Float64(OrderedFloat(*a as f64 / b.0)))
+            }
+            (Value::Float64(a), Value::Int64(b)) => {
+                Ok(Value::Float64(OrderedFloat(a.0 / *b as f64)))
+            }
+            _ => Err(Error::InvalidQuery(
+                "IEEE_DIVIDE requires numeric arguments".into(),
             )),
         }
     }
@@ -4601,7 +4631,7 @@ impl<'a> IrEvaluator<'a> {
             _ => {
                 return Err(Error::InvalidQuery(
                     "MAPKEYS argument must be a MAP (array of key-value structs)".into(),
-                ))
+                ));
             }
         };
         let keys: Vec<Value> = map_array
@@ -4632,7 +4662,7 @@ impl<'a> IrEvaluator<'a> {
             _ => {
                 return Err(Error::InvalidQuery(
                     "MAPVALUES argument must be a MAP (array of key-value structs)".into(),
-                ))
+                ));
             }
         };
         let values: Vec<Value> = map_array

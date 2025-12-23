@@ -173,3 +173,23 @@ fn test_least() {
 
     assert_table_eq!(result, [[1]]);
 }
+
+#[test]
+fn test_ieee_divide() {
+    let mut executor = create_executor();
+
+    let result = executor.execute_sql("SELECT IEEE_DIVIDE(10, 4)").unwrap();
+
+    assert_table_eq!(result, [[2.5]]);
+}
+
+#[test]
+fn test_ieee_divide_by_zero() {
+    let mut executor = create_executor();
+
+    let result = executor
+        .execute_sql("SELECT IEEE_DIVIDE(10, 0), IEEE_DIVIDE(-10, 0), IEEE_DIVIDE(0, 0)")
+        .unwrap();
+
+    assert_table_eq!(result, [[f64::INFINITY, f64::NEG_INFINITY, f64::NAN]]);
+}
