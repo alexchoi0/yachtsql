@@ -282,6 +282,24 @@ fn test_timestamp_trunc() {
 }
 
 #[test]
+fn test_timestamp_trunc_second() {
+    let mut executor = create_executor();
+    let result = executor
+        .execute_sql("SELECT TIMESTAMP_TRUNC(TIMESTAMP '2024-06-15 14:30:45.123456', SECOND)")
+        .unwrap();
+    assert_table_eq!(result, [[ts(2024, 6, 15, 14, 30, 45)]]);
+}
+
+#[test]
+fn test_timestamp_trunc_week() {
+    let mut executor = create_executor();
+    let result = executor
+        .execute_sql("SELECT TIMESTAMP_TRUNC(TIMESTAMP '2024-06-15 14:30:45', WEEK)")
+        .unwrap();
+    assert_table_eq!(result, [[ts(2024, 6, 9, 0, 0, 0)]]);
+}
+
+#[test]
 fn test_parse_timestamp() {
     let mut executor = create_executor();
     let result = executor

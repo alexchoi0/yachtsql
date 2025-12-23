@@ -5,7 +5,10 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
-use geo::{BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance, GeodesicLength, Intersects, SimplifyVw};
+use geo::{
+    BooleanOps, BoundingRect, Centroid, Contains, ConvexHull, GeodesicArea, GeodesicDistance,
+    GeodesicLength, Intersects, SimplifyVw,
+};
 use geo_types::{Coord, Geometry, LineString, MultiPolygon, Point, Polygon};
 use ordered_float::OrderedFloat;
 use rust_decimal::prelude::ToPrimitive;
@@ -7915,8 +7918,8 @@ fn trunc_datetime(dt: &NaiveDateTime, part: &str) -> Result<NaiveDateTime> {
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into())),
         "WEEK" => {
-            let days_from_monday = dt.weekday().num_days_from_monday();
-            let date = dt.date() - chrono::Duration::days(days_from_monday as i64);
+            let days_from_sunday = dt.weekday().num_days_from_sunday();
+            let date = dt.date() - chrono::Duration::days(days_from_sunday as i64);
             date.and_hms_opt(0, 0, 0)
                 .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
         }
@@ -7929,6 +7932,9 @@ fn trunc_datetime(dt: &NaiveDateTime, part: &str) -> Result<NaiveDateTime> {
             .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into())),
         "MINUTE" => NaiveDate::from_ymd_opt(dt.year(), dt.month(), dt.day())
             .and_then(|d| d.and_hms_opt(dt.hour(), dt.minute(), 0))
+            .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into())),
+        "SECOND" => NaiveDate::from_ymd_opt(dt.year(), dt.month(), dt.day())
+            .and_then(|d| d.and_hms_opt(dt.hour(), dt.minute(), dt.second()))
             .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into())),
         _ => Ok(*dt),
     }
