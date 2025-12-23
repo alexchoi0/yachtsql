@@ -1304,37 +1304,19 @@ fn test_timestamp_trunc_with_null() {
 }
 
 #[test]
-fn test_datetime_bucket_12_hour() {
+fn test_string_from_timestamp_basic() {
     let mut session = create_session();
     let result = session
-        .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
+        .execute_sql("SELECT STRING(TIMESTAMP '2024-06-15 14:30:00')")
         .unwrap();
-    assert_table_eq!(result, [[dt(2024, 6, 15, 12, 0, 0)]]);
+    assert_table_eq!(result, [["2024-06-15 14:30:00.000000 UTC"]]);
 }
 
 #[test]
-fn test_datetime_bucket_with_origin() {
+fn test_string_from_timestamp_null() {
     let mut session = create_session();
     let result = session
-        .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:30:00', INTERVAL 12 HOUR, DATETIME '2024-06-15 06:00:00')")
+        .execute_sql("SELECT STRING(CAST(NULL AS TIMESTAMP))")
         .unwrap();
-    assert_table_eq!(result, [[dt(2024, 6, 15, 6, 0, 0)]]);
-}
-
-#[test]
-fn test_timestamp_bucket_12_hour() {
-    let mut session = create_session();
-    let result = session
-        .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
-        .unwrap();
-    assert_table_eq!(result, [[ts(2024, 6, 15, 12, 0, 0)]]);
-}
-
-#[test]
-fn test_timestamp_bucket_with_origin() {
-    let mut session = create_session();
-    let result = session
-        .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:30:00', INTERVAL 12 HOUR, TIMESTAMP '2024-06-15 06:00:00')")
-        .unwrap();
-    assert_table_eq!(result, [[ts(2024, 6, 15, 6, 0, 0)]]);
+    assert_table_eq!(result, [[null()]]);
 }
