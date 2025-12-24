@@ -14,6 +14,7 @@ pub struct UserFunction {
     pub return_type: DataType,
     pub body: FunctionBody,
     pub is_temporary: bool,
+    pub is_aggregate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,6 +440,7 @@ impl CatalogProvider for Catalog {
                 parameters: f.parameters.clone(),
                 return_type: f.return_type.clone(),
                 body: f.body.clone(),
+                is_aggregate: f.is_aggregate,
             })
     }
 }

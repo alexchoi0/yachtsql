@@ -135,6 +135,9 @@ impl<'a> IrEvaluator<'a> {
             Expr::Aggregate { .. } => Err(Error::InvalidQuery(
                 "Aggregates should be evaluated by aggregate executor".into(),
             )),
+            Expr::UserDefinedAggregate { .. } => Err(Error::InvalidQuery(
+                "User-defined aggregates should be evaluated by aggregate executor".into(),
+            )),
             Expr::Window { .. } => Err(Error::InvalidQuery(
                 "Window functions should be evaluated by window executor".into(),
             )),
@@ -8915,10 +8918,20 @@ impl<'a> IrEvaluator<'a> {
                     .map_err(|e| Error::InvalidQuery(format!("JavaScript UDF error: {}", e)))?;
                 Ok(Some(result))
             }
-            FunctionBody::Language { name: lang, .. } => Err(Error::UnsupportedFeature(format!(
-                "Language {} is not supported for UDFs",
-                lang
-            ))),
+            FunctionBody::Language { name: lang, code } => {
+                if lang.to_uppercase() == "PYTHON" {
+                    let param_names: Vec<String> =
+                        udf.parameters.iter().map(|p| p.name.clone()).collect();
+                    let result = crate::py_udf::evaluate_py_function(code, &param_names, args)
+                        .map_err(|e| Error::InvalidQuery(format!("Python UDF error: {}", e)))?;
+                    Ok(Some(result))
+                } else {
+                    Err(Error::UnsupportedFeature(format!(
+                        "Language {} is not supported for UDFs",
+                        lang
+                    )))
+                }
+            }
         }
     }
 

@@ -2,13 +2,17 @@ use rust_decimal::Decimal;
 use sqlparser::ast;
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
+use yachtsql_ir::plan::{FunctionArg, FunctionBody};
 use yachtsql_ir::{
     AggregateFunction, BinaryOp, DateTimeField, Expr, JsonPathElement, Literal, LogicalPlan,
     PlanSchema, ScalarFunction, SortExpr, TrimWhere, UnaryOp, WeekStartDay, WhenClause,
     WindowFrame, WindowFrameBound, WindowFrameUnit, WindowFunction,
 };
 
+use crate::FunctionDefinition;
+
 pub type SubqueryPlannerFn<'a> = &'a dyn Fn(&ast::Query) -> Result<LogicalPlan>;
+pub type UdfResolverFn<'a> = &'a dyn Fn(&str) -> Option<FunctionDefinition>;
 
 pub struct ExprPlanner;
 
@@ -22,7 +26,7 @@ impl ExprPlanner {
         schema: &PlanSchema,
         subquery_planner: Option<SubqueryPlannerFn>,
     ) -> Result<Expr> {
-        Self::plan_expr_full(sql_expr, schema, subquery_planner, &[])
+        Self::plan_expr_full(sql_expr, schema, subquery_planner, &[], None)
     }
 
     pub fn plan_expr_with_named_windows(
@@ -31,7 +35,23 @@ impl ExprPlanner {
         subquery_planner: Option<SubqueryPlannerFn>,
         named_windows: &[ast::NamedWindowDefinition],
     ) -> Result<Expr> {
-        Self::plan_expr_full(sql_expr, schema, subquery_planner, named_windows)
+        Self::plan_expr_full(sql_expr, schema, subquery_planner, named_windows, None)
+    }
+
+    pub fn plan_expr_with_udf_resolver(
+        sql_expr: &ast::Expr,
+        schema: &PlanSchema,
+        subquery_planner: Option<SubqueryPlannerFn>,
+        named_windows: &[ast::NamedWindowDefinition],
+        udf_resolver: Option<UdfResolverFn>,
+    ) -> Result<Expr> {
+        Self::plan_expr_full(
+            sql_expr,
+            schema,
+            subquery_planner,
+            named_windows,
+            udf_resolver,
+        )
     }
 
     fn plan_expr_full(
@@ -39,6 +59,7 @@ impl ExprPlanner {
         schema: &PlanSchema,
         subquery_planner: Option<SubqueryPlannerFn>,
         named_windows: &[ast::NamedWindowDefinition],
+        udf_resolver: Option<UdfResolverFn>,
     ) -> Result<Expr> {
         match sql_expr {
             ast::Expr::Identifier(ident) => {
@@ -55,8 +76,20 @@ impl ExprPlanner {
             ast::Expr::Value(val) => Ok(Expr::Literal(Self::plan_literal(&val.value)?)),
 
             ast::Expr::BinaryOp { left, op, right } => {
-                let left = Self::plan_expr_full(left, schema, subquery_planner, named_windows)?;
-                let right = Self::plan_expr_full(right, schema, subquery_planner, named_windows)?;
+                let left = Self::plan_expr_full(
+                    left,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let right = Self::plan_expr_full(
+                    right,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let op = Self::plan_binary_op(op)?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(left),
@@ -78,7 +111,13 @@ impl ExprPlanner {
                 ) {
                     return Ok(Expr::Literal(Literal::Int64(i64::MIN)));
                 }
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let op = Self::plan_unary_op(op)?;
                 Ok(Expr::UnaryOp {
                     op,
@@ -87,11 +126,17 @@ impl ExprPlanner {
             }
 
             ast::Expr::Function(func) => {
-                Self::plan_function(func, schema, subquery_planner, named_windows)
+                Self::plan_function(func, schema, subquery_planner, named_windows, udf_resolver)
             }
 
             ast::Expr::IsNull(inner) => {
-                let expr = Self::plan_expr_full(inner, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    inner,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::IsNull {
                     expr: Box::new(expr),
                     negated: false,
@@ -99,7 +144,13 @@ impl ExprPlanner {
             }
 
             ast::Expr::IsNotNull(inner) => {
-                let expr = Self::plan_expr_full(inner, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    inner,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::IsNull {
                     expr: Box::new(expr),
                     negated: true,
@@ -107,7 +158,7 @@ impl ExprPlanner {
             }
 
             ast::Expr::Nested(inner) => {
-                Self::plan_expr_full(inner, schema, subquery_planner, named_windows)
+                Self::plan_expr_full(inner, schema, subquery_planner, named_windows, udf_resolver)
             }
 
             ast::Expr::Case {
@@ -129,7 +180,13 @@ impl ExprPlanner {
                 ..
             } => {
                 use sqlparser::ast::CastKind;
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let data_type = Self::plan_data_type(data_type)?;
                 let safe = matches!(kind, CastKind::SafeCast | CastKind::TryCast);
                 Ok(Expr::Cast {
@@ -144,10 +201,24 @@ impl ExprPlanner {
                 list,
                 negated,
             } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let list = list
                     .iter()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
+                    .map(|e| {
+                        Self::plan_expr_full(
+                            e,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                            udf_resolver,
+                        )
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Expr::InList {
                     expr: Box::new(expr),
@@ -161,9 +232,20 @@ impl ExprPlanner {
                 array_expr,
                 negated,
             } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
-                let array_expr =
-                    Self::plan_expr_full(array_expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let array_expr = Self::plan_expr_full(
+                    array_expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::InUnnest {
                     expr: Box::new(expr),
                     array_expr: Box::new(array_expr),
@@ -177,9 +259,27 @@ impl ExprPlanner {
                 high,
                 negated,
             } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
-                let low = Self::plan_expr_full(low, schema, subquery_planner, named_windows)?;
-                let high = Self::plan_expr_full(high, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let low = Self::plan_expr_full(
+                    low,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let high = Self::plan_expr_full(
+                    high,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::Between {
                     expr: Box::new(expr),
                     low: Box::new(low),
@@ -217,9 +317,20 @@ impl ExprPlanner {
                         subquery_planner,
                     );
                 }
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
-                let pattern =
-                    Self::plan_expr_full(pattern, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let pattern = Self::plan_expr_full(
+                    pattern,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::Like {
                     expr: Box::new(expr),
                     pattern: Box::new(pattern),
@@ -257,9 +368,20 @@ impl ExprPlanner {
                         subquery_planner,
                     );
                 }
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
-                let pattern =
-                    Self::plan_expr_full(pattern, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let pattern = Self::plan_expr_full(
+                    pattern,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::Like {
                     expr: Box::new(expr),
                     pattern: Box::new(pattern),
@@ -282,7 +404,13 @@ impl ExprPlanner {
             } => Self::plan_all_any_op(left, compare_op, right, false, schema, subquery_planner),
 
             ast::Expr::IsTrue(inner) => {
-                let expr = Self::plan_expr_full(inner, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    inner,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(expr),
                     op: BinaryOp::Eq,
@@ -291,7 +419,13 @@ impl ExprPlanner {
             }
 
             ast::Expr::IsFalse(inner) => {
-                let expr = Self::plan_expr_full(inner, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    inner,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(expr),
                     op: BinaryOp::Eq,
@@ -303,7 +437,15 @@ impl ExprPlanner {
                 let elements = arr
                     .elem
                     .iter()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
+                    .map(|e| {
+                        Self::plan_expr_full(
+                            e,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                            udf_resolver,
+                        )
+                    })
                     .collect::<Result<Vec<_>>>()?;
 
                 let all_literals = elements.iter().all(|e| matches!(e, Expr::Literal(_)));
@@ -327,8 +469,13 @@ impl ExprPlanner {
             ast::Expr::Interval(interval) => Self::plan_interval(interval, schema),
 
             ast::Expr::CompoundFieldAccess { root, access_chain } => {
-                let mut result =
-                    Self::plan_expr_full(root, schema, subquery_planner, named_windows)?;
+                let mut result = Self::plan_expr_full(
+                    root,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 for accessor in access_chain {
                     match accessor {
                         ast::AccessExpr::Subscript(sub) => match sub {
@@ -338,6 +485,7 @@ impl ExprPlanner {
                                     schema,
                                     subquery_planner,
                                     named_windows,
+                                    udf_resolver,
                                 )?;
                                 result = Expr::ArrayAccess {
                                     array: Box::new(result),
@@ -387,15 +535,37 @@ impl ExprPlanner {
                 substring_for,
                 ..
             } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let start = substring_from
                     .as_ref()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
+                    .map(|e| {
+                        Self::plan_expr_full(
+                            e,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                            udf_resolver,
+                        )
+                    })
                     .transpose()?
                     .map(Box::new);
                 let length = substring_for
                     .as_ref()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
+                    .map(|e| {
+                        Self::plan_expr_full(
+                            e,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                            udf_resolver,
+                        )
+                    })
                     .transpose()?
                     .map(Box::new);
                 Ok(Expr::Substring {
@@ -411,13 +581,20 @@ impl ExprPlanner {
                 trim_what,
                 trim_characters,
             } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let trim_what = if let Some(e) = trim_what {
                     Some(Box::new(Self::plan_expr_full(
                         e,
                         schema,
                         subquery_planner,
                         named_windows,
+                        udf_resolver,
                     )?))
                 } else if let Some(chars) = trim_characters {
                     if let Some(first_char) = chars.first() {
@@ -426,6 +603,7 @@ impl ExprPlanner {
                             schema,
                             subquery_planner,
                             named_windows,
+                            udf_resolver,
                         )?))
                     } else {
                         None
@@ -446,8 +624,20 @@ impl ExprPlanner {
             }
 
             ast::Expr::IsDistinctFrom(left, right) => {
-                let left = Self::plan_expr_full(left, schema, subquery_planner, named_windows)?;
-                let right = Self::plan_expr_full(right, schema, subquery_planner, named_windows)?;
+                let left = Self::plan_expr_full(
+                    left,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let right = Self::plan_expr_full(
+                    right,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::IsDistinctFrom {
                     left: Box::new(left),
                     right: Box::new(right),
@@ -456,8 +646,20 @@ impl ExprPlanner {
             }
 
             ast::Expr::IsNotDistinctFrom(left, right) => {
-                let left = Self::plan_expr_full(left, schema, subquery_planner, named_windows)?;
-                let right = Self::plan_expr_full(right, schema, subquery_planner, named_windows)?;
+                let left = Self::plan_expr_full(
+                    left,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
+                let right = Self::plan_expr_full(
+                    right,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::IsDistinctFrom {
                     left: Box::new(left),
                     right: Box::new(right),
@@ -466,7 +668,13 @@ impl ExprPlanner {
             }
 
             ast::Expr::Floor { expr, .. } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::ScalarFunction {
                     name: ScalarFunction::Floor,
                     args: vec![expr],
@@ -474,7 +682,13 @@ impl ExprPlanner {
             }
 
             ast::Expr::Ceil { expr, .. } => {
-                let expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::ScalarFunction {
                     name: ScalarFunction::Ceil,
                     args: vec![expr],
@@ -491,6 +705,7 @@ impl ExprPlanner {
                                 schema,
                                 subquery_planner,
                                 named_windows,
+                                udf_resolver,
                             )?;
                             fields.push((Some(name.value.clone()), ir_expr));
                         }
@@ -500,6 +715,7 @@ impl ExprPlanner {
                                 schema,
                                 subquery_planner,
                                 named_windows,
+                                udf_resolver,
                             )?;
                             fields.push((None, ir_expr));
                         }
@@ -511,7 +727,15 @@ impl ExprPlanner {
             ast::Expr::Tuple(exprs) => {
                 let elements: Vec<Expr> = exprs
                     .iter()
-                    .map(|e| Self::plan_expr_full(e, schema, subquery_planner, named_windows))
+                    .map(|e| {
+                        Self::plan_expr_full(
+                            e,
+                            schema,
+                            subquery_planner,
+                            named_windows,
+                            udf_resolver,
+                        )
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Expr::Array {
                     elements,
@@ -521,7 +745,13 @@ impl ExprPlanner {
 
             ast::Expr::Extract { field, expr, .. } => {
                 let ir_field = Self::plan_datetime_field(field)?;
-                let ir_expr = Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let ir_expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 Ok(Expr::Extract {
                     field: ir_field,
                     expr: Box::new(ir_expr),
@@ -544,8 +774,13 @@ impl ExprPlanner {
                 subquery,
                 negated,
             } => {
-                let planned_expr =
-                    Self::plan_expr_full(expr, schema, subquery_planner, named_windows)?;
+                let planned_expr = Self::plan_expr_full(
+                    expr,
+                    schema,
+                    subquery_planner,
+                    named_windows,
+                    udf_resolver,
+                )?;
                 let planner = subquery_planner.ok_or_else(|| {
                     Error::unsupported("IN subquery requires subquery planner context")
                 })?;
@@ -972,6 +1207,7 @@ impl ExprPlanner {
         schema: &PlanSchema,
         subquery_planner: Option<SubqueryPlannerFn>,
         named_windows: &[ast::NamedWindowDefinition],
+        udf_resolver: Option<UdfResolverFn>,
     ) -> Result<Expr> {
         let name = func.name.to_string().to_uppercase();
 
@@ -1095,6 +1331,23 @@ impl ExprPlanner {
                 name: ScalarFunction::Normalize,
                 args,
             });
+        }
+
+        if let Some(resolver) = udf_resolver
+            && let Some(udf) = resolver(&name)
+            && udf.is_aggregate
+        {
+            let call_args = Self::extract_function_args(func, schema)?;
+            return match &udf.body {
+                FunctionBody::Sql(body_expr) => {
+                    let substituted =
+                        Self::substitute_parameters(body_expr, &udf.parameters, &call_args);
+                    Ok(substituted)
+                }
+                _ => Err(Error::UnsupportedFeature(
+                    "Non-SQL aggregate functions are not supported".to_string(),
+                )),
+            };
         }
 
         let args = Self::extract_function_args(func, schema)?;
@@ -1839,6 +2092,142 @@ impl ExprPlanner {
             days,
             nanos,
         }))
+    }
+
+    fn substitute_parameters(expr: &Expr, params: &[FunctionArg], args: &[Expr]) -> Expr {
+        let param_map: std::collections::HashMap<String, &Expr> = params
+            .iter()
+            .zip(args.iter())
+            .map(|(p, a)| (p.name.to_uppercase(), a))
+            .collect();
+
+        Self::substitute_expr(expr, &param_map)
+    }
+
+    fn substitute_expr(expr: &Expr, param_map: &std::collections::HashMap<String, &Expr>) -> Expr {
+        match expr {
+            Expr::Column { name, table, index } => {
+                let upper_name = name.to_uppercase();
+                if table.is_none()
+                    && let Some(replacement) = param_map.get(&upper_name)
+                {
+                    return (*replacement).clone();
+                }
+                Expr::Column {
+                    name: name.clone(),
+                    table: table.clone(),
+                    index: *index,
+                }
+            }
+            Expr::Aggregate {
+                func,
+                args,
+                distinct,
+                filter,
+                order_by,
+                limit,
+                ignore_nulls,
+            } => Expr::Aggregate {
+                func: *func,
+                args: args
+                    .iter()
+                    .map(|a| Self::substitute_expr(a, param_map))
+                    .collect(),
+                distinct: *distinct,
+                filter: filter
+                    .as_ref()
+                    .map(|f| Box::new(Self::substitute_expr(f, param_map))),
+                order_by: order_by
+                    .iter()
+                    .map(|o| SortExpr {
+                        expr: Self::substitute_expr(&o.expr, param_map),
+                        asc: o.asc,
+                        nulls_first: o.nulls_first,
+                    })
+                    .collect(),
+                limit: *limit,
+                ignore_nulls: *ignore_nulls,
+            },
+            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: Box::new(Self::substitute_expr(left, param_map)),
+                op: *op,
+                right: Box::new(Self::substitute_expr(right, param_map)),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+            },
+            Expr::ScalarFunction { name, args } => Expr::ScalarFunction {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|a| Self::substitute_expr(a, param_map))
+                    .collect(),
+            },
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_result,
+            } => Expr::Case {
+                operand: operand
+                    .as_ref()
+                    .map(|o| Box::new(Self::substitute_expr(o, param_map))),
+                when_clauses: when_clauses
+                    .iter()
+                    .map(|wc| WhenClause {
+                        condition: Self::substitute_expr(&wc.condition, param_map),
+                        result: Self::substitute_expr(&wc.result, param_map),
+                    })
+                    .collect(),
+                else_result: else_result
+                    .as_ref()
+                    .map(|e| Box::new(Self::substitute_expr(e, param_map))),
+            },
+            Expr::Cast {
+                expr: inner,
+                data_type,
+                safe,
+            } => Expr::Cast {
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+                data_type: data_type.clone(),
+                safe: *safe,
+            },
+            Expr::Alias { expr: inner, name } => Expr::Alias {
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+                name: name.clone(),
+            },
+            Expr::IsNull {
+                expr: inner,
+                negated,
+            } => Expr::IsNull {
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+                negated: *negated,
+            },
+            Expr::Between {
+                expr: inner,
+                low,
+                high,
+                negated,
+            } => Expr::Between {
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+                low: Box::new(Self::substitute_expr(low, param_map)),
+                high: Box::new(Self::substitute_expr(high, param_map)),
+                negated: *negated,
+            },
+            Expr::InList {
+                expr: inner,
+                list,
+                negated,
+            } => Expr::InList {
+                expr: Box::new(Self::substitute_expr(inner, param_map)),
+                list: list
+                    .iter()
+                    .map(|e| Self::substitute_expr(e, param_map))
+                    .collect(),
+                negated: *negated,
+            },
+            other => other.clone(),
+        }
     }
 }
 

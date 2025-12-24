@@ -223,6 +223,7 @@ pub enum OptimizedLogicalPlan {
         or_replace: bool,
         if_not_exists: bool,
         is_temp: bool,
+        is_aggregate: bool,
     },
 
     DropFunction {

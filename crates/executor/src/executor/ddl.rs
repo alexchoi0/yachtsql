@@ -319,6 +319,7 @@ impl<'a> PlanExecutor<'a> {
         or_replace: bool,
         if_not_exists: bool,
         is_temp: bool,
+        is_aggregate: bool,
     ) -> Result<Table> {
         if if_not_exists && self.catalog.function_exists(name) {
             return Ok(Table::empty(Schema::new()));
@@ -329,6 +330,7 @@ impl<'a> PlanExecutor<'a> {
             return_type: return_type.clone(),
             body: body.clone(),
             is_temporary: is_temp,
+            is_aggregate,
         };
         self.catalog.create_function(func, or_replace)?;
         self.refresh_user_functions();
@@ -1476,6 +1478,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             or_replace,
             if_not_exists,
             is_temp,
+            is_aggregate,
         } => LogicalPlan::CreateFunction {
             name: name.clone(),
             args: args.clone(),
@@ -1484,6 +1487,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
             is_temp: *is_temp,
+            is_aggregate: *is_aggregate,
         },
         PhysicalPlan::DropFunction { name, if_exists } => LogicalPlan::DropFunction {
             name: name.clone(),

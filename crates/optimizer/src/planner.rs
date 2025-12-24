@@ -386,6 +386,7 @@ impl PhysicalPlanner {
                 or_replace,
                 if_not_exists,
                 is_temp,
+                is_aggregate,
             } => Ok(OptimizedLogicalPlan::CreateFunction {
                 name: name.clone(),
                 args: args.clone(),
@@ -394,6 +395,7 @@ impl PhysicalPlanner {
                 or_replace: *or_replace,
                 if_not_exists: *if_not_exists,
                 is_temp: *is_temp,
+                is_aggregate: *is_aggregate,
             }),
 
             LogicalPlan::DropFunction { name, if_exists } => {
@@ -914,6 +916,7 @@ impl OptimizedLogicalPlan {
                 or_replace,
                 if_not_exists,
                 is_temp,
+                is_aggregate,
             } => LogicalPlan::CreateFunction {
                 name,
                 args,
@@ -922,6 +925,7 @@ impl OptimizedLogicalPlan {
                 or_replace,
                 if_not_exists,
                 is_temp,
+                is_aggregate,
             },
             OptimizedLogicalPlan::DropFunction { name, if_exists } => {
                 LogicalPlan::DropFunction { name, if_exists }

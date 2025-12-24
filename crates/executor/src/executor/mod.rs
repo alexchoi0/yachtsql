@@ -273,6 +273,7 @@ impl<'a> PlanExecutor<'a> {
                 or_replace,
                 if_not_exists,
                 is_temp,
+                is_aggregate,
             } => self.execute_create_function(
                 name,
                 args,
@@ -281,6 +282,7 @@ impl<'a> PlanExecutor<'a> {
                 *or_replace,
                 *if_not_exists,
                 *is_temp,
+                *is_aggregate,
             ),
             PhysicalPlan::DropFunction { name, if_exists } => {
                 self.execute_drop_function(name, *if_exists)

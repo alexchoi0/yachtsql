@@ -29,6 +29,7 @@ pub struct FunctionDefinition {
     pub parameters: Vec<FunctionArg>,
     pub return_type: DataType,
     pub body: FunctionBody,
+    pub is_aggregate: bool,
 }
 
 pub fn parse_sql(sql: &str) -> Result<Vec<sqlparser::ast::Statement>> {

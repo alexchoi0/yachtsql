@@ -1035,7 +1035,18 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     },
                 };
 
-                let mut fields = vec![PlanField::new(element_alias, element_type)];
+                let mut fields = if let DataType::Struct(struct_fields) = &element_type {
+                    struct_fields
+                        .iter()
+                        .map(|sf| {
+                            let mut field = PlanField::new(sf.name.clone(), sf.data_type.clone());
+                            field.table = Some(element_alias.clone());
+                            field
+                        })
+                        .collect()
+                } else {
+                    vec![PlanField::new(element_alias.clone(), element_type)]
+                };
                 if *with_offset {
                     fields.push(PlanField::new(offset_alias_str, DataType::Int64));
                 }
@@ -1131,15 +1142,17 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         let mut expressions = Vec::new();
         let mut fields = Vec::new();
         let subquery_planner = |query: &ast::Query| self.plan_query(query);
+        let udf_resolver = |name: &str| self.catalog.get_function(name);
 
         for item in items {
             match item {
                 ast::SelectItem::UnnamedExpr(expr) => {
-                    let planned_expr = ExprPlanner::plan_expr_with_named_windows(
+                    let planned_expr = ExprPlanner::plan_expr_with_udf_resolver(
                         expr,
                         input.schema(),
                         Some(&subquery_planner),
                         named_windows,
+                        Some(&udf_resolver),
                     )?;
                     let name = self.expr_name(expr);
                     let data_type = self.infer_expr_type(&planned_expr, input.schema());
@@ -1147,11 +1160,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     expressions.push(planned_expr);
                 }
                 ast::SelectItem::ExprWithAlias { expr, alias } => {
-                    let planned_expr = ExprPlanner::plan_expr_with_named_windows(
+                    let planned_expr = ExprPlanner::plan_expr_with_udf_resolver(
                         expr,
                         input.schema(),
                         Some(&subquery_planner),
                         named_windows,
+                        Some(&udf_resolver),
                     )?;
                     let data_type = self.infer_expr_type(&planned_expr, input.schema());
                     fields.push(PlanField::new(alias.value.clone(), data_type));
@@ -1440,6 +1454,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         let mut agg_fields = Vec::new();
         let mut agg_canonical_names: Vec<String> = Vec::new();
         let subquery_planner = |query: &ast::Query| self.plan_query(query);
+        let udf_resolver = |name: &str| self.catalog.get_function(name);
         let mut grouping_sets: Option<Vec<Vec<usize>>> = None;
 
         let select_aliases: Vec<(String, &ast::Expr)> = select
@@ -1536,10 +1551,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 }
 
                 for expr in &all_exprs {
-                    let planned = ExprPlanner::plan_expr_with_subquery(
+                    let planned = ExprPlanner::plan_expr_with_udf_resolver(
                         expr,
                         input.schema(),
                         Some(&subquery_planner),
+                        &select.named_window,
+                        Some(&udf_resolver),
                     )?;
                     let name = self.expr_name(expr);
                     let data_type = self.infer_expr_type(&planned, input.schema());
@@ -1577,10 +1594,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
                     if self.is_aggregate_expr(expr) {
                         if Self::is_pure_aggregate_expr(expr) {
-                            let planned = ExprPlanner::plan_expr_with_subquery(
+                            let planned = ExprPlanner::plan_expr_with_udf_resolver(
                                 expr,
                                 input.schema(),
                                 Some(&subquery_planner),
+                                &select.named_window,
+                                Some(&udf_resolver),
                             )?;
                             let canonical = Self::canonical_agg_name(expr);
                             let data_type = self.infer_expr_type(&planned, input.schema());
@@ -1596,10 +1615,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                             });
                             final_projection_fields.push(PlanField::new(output_name, data_type));
                         } else {
-                            let planned = ExprPlanner::plan_expr_with_subquery(
+                            let planned = ExprPlanner::plan_expr_with_udf_resolver(
                                 expr,
                                 input.schema(),
                                 Some(&subquery_planner),
+                                &select.named_window,
+                                Some(&udf_resolver),
                             )?;
                             let (replaced_expr, _extracted_aggs) = self
                                 .extract_aggregates_from_expr(
@@ -1615,10 +1636,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                             final_projection_fields.push(PlanField::new(output_name, data_type));
                         }
                     } else if Self::ast_has_window_expr(expr) {
-                        let planned = ExprPlanner::plan_expr_with_subquery(
+                        let planned = ExprPlanner::plan_expr_with_udf_resolver(
                             expr,
                             input.schema(),
                             Some(&subquery_planner),
+                            &select.named_window,
+                            Some(&udf_resolver),
                         )?;
                         let (replaced_window_expr, _) = self.extract_aggregates_from_expr(
                             &planned,
@@ -1665,10 +1688,12 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                             });
                             final_projection_fields.push(PlanField::new(output_name, data_type));
                         } else {
-                            let planned = ExprPlanner::plan_expr_with_subquery(
+                            let planned = ExprPlanner::plan_expr_with_udf_resolver(
                                 expr,
                                 input.schema(),
                                 Some(&subquery_planner),
+                                &select.named_window,
+                                Some(&udf_resolver),
                             )?;
                             if Self::is_constant_expr(&planned)
                                 || Self::only_references_fields(
@@ -3598,12 +3623,25 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         }
                     };
 
-                    let expr = if create.table_function {
+                    let is_table_function = create.table_function
+                        || matches!(&create.return_type, Some(ast::DataType::Table(_)));
+                    let expr = if is_table_function {
                         match body_expr {
                             ast::Expr::Subquery(query) => {
                                 let plan = self.plan_query(query)?;
                                 Expr::Subquery(Box::new(plan))
                             }
+                            ast::Expr::Nested(inner) => match inner.as_ref() {
+                                ast::Expr::Subquery(query) => {
+                                    let plan = self.plan_query(query)?;
+                                    Expr::Subquery(Box::new(plan))
+                                }
+                                _ => {
+                                    return Err(Error::InvalidQuery(
+                                        "TABLE FUNCTION body must be a subquery".to_string(),
+                                    ));
+                                }
+                            },
                             _ => {
                                 return Err(Error::InvalidQuery(
                                     "TABLE FUNCTION body must be a subquery".to_string(),
@@ -3644,6 +3682,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             or_replace: create.or_replace,
             if_not_exists: create.if_not_exists,
             is_temp: create.temporary,
+            is_aggregate: create.aggregate,
         })
     }
 
@@ -4297,7 +4336,32 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
     }
 
     fn is_aggregate_expr(&self, expr: &ast::Expr) -> bool {
-        Self::check_aggregate_expr(expr)
+        self.check_aggregate_expr_with_catalog(expr)
+    }
+
+    fn check_aggregate_expr_with_catalog(&self, expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Function(func) => {
+                if func.over.is_some() {
+                    return false;
+                }
+                let name = func.name.to_string().to_uppercase();
+                if let Some(udf) = self.catalog.get_function(&name)
+                    && udf.is_aggregate
+                {
+                    return true;
+                }
+                Self::check_aggregate_expr(expr)
+            }
+            ast::Expr::BinaryOp { left, right, .. } => {
+                self.check_aggregate_expr_with_catalog(left)
+                    || self.check_aggregate_expr_with_catalog(right)
+            }
+            ast::Expr::UnaryOp { expr: inner, .. } => self.check_aggregate_expr_with_catalog(inner),
+            ast::Expr::Nested(inner) => self.check_aggregate_expr_with_catalog(inner),
+            ast::Expr::Cast { expr: inner, .. } => self.check_aggregate_expr_with_catalog(inner),
+            _ => Self::check_aggregate_expr(expr),
+        }
     }
 
     fn ast_has_window_expr(expr: &ast::Expr) -> bool {

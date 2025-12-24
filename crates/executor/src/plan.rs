@@ -250,6 +250,7 @@ pub enum PhysicalPlan {
         or_replace: bool,
         if_not_exists: bool,
         is_temp: bool,
+        is_aggregate: bool,
     },
 
     DropFunction {
@@ -684,6 +685,7 @@ impl PhysicalPlan {
                 or_replace,
                 if_not_exists,
                 is_temp,
+                is_aggregate,
             } => PhysicalPlan::CreateFunction {
                 name: name.clone(),
                 args: args.clone(),
@@ -692,6 +694,7 @@ impl PhysicalPlan {
                 or_replace: *or_replace,
                 if_not_exists: *if_not_exists,
                 is_temp: *is_temp,
+                is_aggregate: *is_aggregate,
             },
 
             OptimizedLogicalPlan::DropFunction { name, if_exists } => PhysicalPlan::DropFunction {

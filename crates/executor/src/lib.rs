@@ -14,6 +14,7 @@ mod executor;
 mod ir_evaluator;
 mod js_udf;
 mod plan;
+mod py_udf;
 mod session;
 
 #[cfg(feature = "concurrent")]
