@@ -216,7 +216,14 @@ impl<'a> PlanExecutor<'a> {
                 columns,
                 if_not_exists,
                 or_replace,
-            } => self.execute_create_table(table_name, columns, *if_not_exists, *or_replace),
+                query,
+            } => self.execute_create_table(
+                table_name,
+                columns,
+                *if_not_exists,
+                *or_replace,
+                query.as_deref(),
+            ),
             PhysicalPlan::DropTable {
                 table_names,
                 if_exists,
@@ -224,7 +231,8 @@ impl<'a> PlanExecutor<'a> {
             PhysicalPlan::AlterTable {
                 table_name,
                 operation,
-            } => self.execute_alter_table(table_name, operation),
+                if_exists,
+            } => self.execute_alter_table(table_name, operation, *if_exists),
             PhysicalPlan::Truncate { table_name } => self.execute_truncate(table_name),
             PhysicalPlan::CreateView {
                 name,

@@ -187,6 +187,7 @@ pub enum PhysicalPlan {
         columns: Vec<ColumnDef>,
         if_not_exists: bool,
         or_replace: bool,
+        query: Option<Box<PhysicalPlan>>,
     },
 
     DropTable {
@@ -197,6 +198,7 @@ pub enum PhysicalPlan {
     AlterTable {
         table_name: String,
         operation: AlterTableOp,
+        if_exists: bool,
     },
 
     Truncate {
@@ -579,11 +581,13 @@ impl PhysicalPlan {
                 columns,
                 if_not_exists,
                 or_replace,
+                query,
             } => PhysicalPlan::CreateTable {
                 table_name: table_name.clone(),
                 columns: columns.clone(),
                 if_not_exists: *if_not_exists,
                 or_replace: *or_replace,
+                query: query.as_ref().map(|q| Box::new(Self::from_physical(q))),
             },
 
             OptimizedLogicalPlan::DropTable {
@@ -597,9 +601,11 @@ impl PhysicalPlan {
             OptimizedLogicalPlan::AlterTable {
                 table_name,
                 operation,
+                if_exists,
             } => PhysicalPlan::AlterTable {
                 table_name: table_name.clone(),
                 operation: operation.clone(),
+                if_exists: *if_exists,
             },
 
             OptimizedLogicalPlan::Truncate { table_name } => PhysicalPlan::Truncate {

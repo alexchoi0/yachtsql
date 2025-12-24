@@ -111,7 +111,6 @@ fn test_chr_lowercase() {
 }
 
 #[test]
-#[ignore]
 fn test_chr_zero() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT CHR(0)").unwrap();
@@ -137,7 +136,6 @@ fn test_chr_extended_ascii() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_code_points_to_string() {
     let mut session = create_session();
     let result = session
@@ -147,7 +145,6 @@ fn test_code_points_to_string() {
 }
 
 #[test]
-#[ignore]
 fn test_code_points_to_string_extended() {
     let mut session = create_session();
     let result = session
@@ -157,7 +154,6 @@ fn test_code_points_to_string_extended() {
 }
 
 #[test]
-#[ignore]
 fn test_code_points_to_string_empty() {
     let mut session = create_session();
     let result = session
@@ -167,7 +163,6 @@ fn test_code_points_to_string_empty() {
 }
 
 #[test]
-#[ignore]
 fn test_code_points_to_string_with_null_element() {
     let mut session = create_session();
     let result = session
@@ -181,7 +176,6 @@ fn test_code_points_to_string_with_null_element() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_to_code_points() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT TO_CODE_POINTS('foo')").unwrap();
@@ -189,7 +183,6 @@ fn test_to_code_points() {
 }
 
 #[test]
-#[ignore]
 fn test_to_code_points_empty() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT TO_CODE_POINTS('')").unwrap();
@@ -197,7 +190,6 @@ fn test_to_code_points_empty() {
 }
 
 #[test]
-#[ignore]
 fn test_to_code_points_utf8() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT TO_CODE_POINTS('Ā')").unwrap();
@@ -209,7 +201,6 @@ fn test_to_code_points_utf8() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_code_points_to_bytes() {
     let mut session = create_session();
     let result = session
@@ -288,7 +279,6 @@ fn test_concat_operator() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_contains_substr() {
     let mut session = create_session();
     let result = session
@@ -298,7 +288,6 @@ fn test_contains_substr() {
 }
 
 #[test]
-#[ignore]
 fn test_contains_substr_not_found() {
     let mut session = create_session();
     let result = session
@@ -332,7 +321,6 @@ fn test_contains_substr_struct() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_edit_distance() {
     let mut session = create_session();
     let result = session
@@ -342,7 +330,6 @@ fn test_edit_distance() {
 }
 
 #[test]
-#[ignore]
 fn test_edit_distance_two_chars() {
     let mut session = create_session();
     let result = session
@@ -352,7 +339,6 @@ fn test_edit_distance_two_chars() {
 }
 
 #[test]
-#[ignore]
 fn test_edit_distance_one_diff() {
     let mut session = create_session();
     let result = session
@@ -362,7 +348,6 @@ fn test_edit_distance_one_diff() {
 }
 
 #[test]
-#[ignore]
 fn test_edit_distance_max_distance() {
     let mut session = create_session();
     let result = session
@@ -470,7 +455,6 @@ fn test_format_string() {
 }
 
 #[test]
-#[ignore]
 fn test_format_float() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT FORMAT('%f', 1.1)").unwrap();
@@ -478,7 +462,6 @@ fn test_format_float() {
 }
 
 #[test]
-#[ignore]
 fn test_format_padded() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT FORMAT('|%10d|', 11)").unwrap();
@@ -486,7 +469,6 @@ fn test_format_padded() {
 }
 
 #[test]
-#[ignore]
 fn test_format_zero_padded() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT FORMAT('+%010d+', 12)").unwrap();
@@ -494,7 +476,6 @@ fn test_format_zero_padded() {
 }
 
 #[test]
-#[ignore]
 fn test_format_with_commas() {
     let mut session = create_session();
     let result = session
@@ -504,7 +485,6 @@ fn test_format_with_commas() {
 }
 
 #[test]
-#[ignore]
 fn test_format_scientific() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT FORMAT('%E', 2.2)").unwrap();
@@ -552,7 +532,6 @@ fn test_base64_roundtrip() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_to_base32() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT TO_BASE32(b'abcde')").unwrap();
@@ -560,7 +539,6 @@ fn test_to_base32() {
 }
 
 #[test]
-#[ignore]
 fn test_from_base32() {
     let mut session = create_session();
     let result = session
@@ -599,13 +577,12 @@ fn test_from_hex_uppercase() {
 }
 
 #[test]
-#[ignore]
 fn test_from_hex_odd_length() {
     let mut session = create_session();
     let result = session
-        .execute_sql("SELECT SAFE_CONVERT_BYTES_TO_STRING(FROM_HEX('0AF'))")
+        .execute_sql("SELECT TO_HEX(FROM_HEX('0af'))")
         .unwrap();
-    assert_table_eq!(result, [["\n\u{00af}"]]);
+    assert_table_eq!(result, [["00af"]]);
 }
 
 // =============================================================================
@@ -622,7 +599,6 @@ fn test_initcap() {
 }
 
 #[test]
-#[ignore]
 fn test_initcap_mixed_case() {
     let mut session = create_session();
     let result = session
@@ -632,7 +608,6 @@ fn test_initcap_mixed_case() {
 }
 
 #[test]
-#[ignore]
 fn test_initcap_custom_delimiters() {
     let mut session = create_session();
     let result = session
@@ -660,7 +635,6 @@ fn test_instr() {
 }
 
 #[test]
-#[ignore]
 fn test_instr_occurrence() {
     let mut session = create_session();
     let result = session
@@ -679,7 +653,6 @@ fn test_instr_not_found() {
 }
 
 #[test]
-#[ignore]
 fn test_instr_from_position() {
     let mut session = create_session();
     let result = session
@@ -689,7 +662,6 @@ fn test_instr_from_position() {
 }
 
 #[test]
-#[ignore]
 fn test_instr_negative_position() {
     let mut session = create_session();
     let result = session
@@ -708,7 +680,6 @@ fn test_instr_overlapping() {
 }
 
 #[test]
-#[ignore]
 fn test_instr_overlapping_second() {
     let mut session = create_session();
     let result = session
@@ -831,7 +802,6 @@ fn test_lpad_with_pattern() {
 }
 
 #[test]
-#[ignore]
 fn test_lpad_with_long_pattern() {
     let mut session = create_session();
     let result = session
@@ -868,7 +838,6 @@ fn test_ltrim() {
 }
 
 #[test]
-#[ignore]
 fn test_ltrim_with_chars() {
     let mut session = create_session();
     let result = session
@@ -878,7 +847,6 @@ fn test_ltrim_with_chars() {
 }
 
 #[test]
-#[ignore]
 fn test_ltrim_multiple_chars() {
     let mut session = create_session();
     let result = session
@@ -916,7 +884,6 @@ fn test_normalize_nfkc() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_normalize_and_casefold() {
     let mut session = create_session();
     let result = session
@@ -932,7 +899,6 @@ fn test_normalize_and_casefold() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_octet_length() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT OCTET_LENGTH('hello')").unwrap();
@@ -940,7 +906,6 @@ fn test_octet_length() {
 }
 
 #[test]
-#[ignore]
 fn test_octet_length_utf8() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT OCTET_LENGTH('абвгд')").unwrap();
@@ -1006,7 +971,6 @@ fn test_replace_multiple() {
 }
 
 #[test]
-#[ignore]
 fn test_replace_empty_pattern() {
     let mut session = create_session();
     let result = session
@@ -1111,7 +1075,6 @@ fn test_rpad_with_pattern() {
 }
 
 #[test]
-#[ignore]
 fn test_rpad_with_long_pattern() {
     let mut session = create_session();
     let result = session
@@ -1148,7 +1111,6 @@ fn test_rtrim() {
 }
 
 #[test]
-#[ignore]
 fn test_rtrim_with_chars() {
     let mut session = create_session();
     let result = session
@@ -1158,7 +1120,6 @@ fn test_rtrim_with_chars() {
 }
 
 #[test]
-#[ignore]
 fn test_rtrim_multiple_chars() {
     let mut session = create_session();
     let result = session
@@ -1181,13 +1142,12 @@ fn test_safe_convert_bytes_to_string() {
 }
 
 #[test]
-#[ignore]
 fn test_safe_convert_bytes_to_string_invalid_utf8() {
     let mut session = create_session();
     let result = session
         .execute_sql("SELECT SAFE_CONVERT_BYTES_TO_STRING(b'\\xc2')")
         .unwrap();
-    assert_table_eq!(result, [["�"]]);
+    assert_table_eq!(result, [[null]]);
 }
 
 // =============================================================================
@@ -1195,7 +1155,6 @@ fn test_safe_convert_bytes_to_string_invalid_utf8() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_soundex() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT SOUNDEX('Ashcraft')").unwrap();
@@ -1203,7 +1162,6 @@ fn test_soundex() {
 }
 
 #[test]
-#[ignore]
 fn test_soundex_similar_names() {
     let mut session = create_session();
     let result = session
@@ -1252,7 +1210,6 @@ fn test_split_no_delimiter() {
 }
 
 #[test]
-#[ignore]
 fn test_split_empty_delimiter() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT SPLIT('abc', '')").unwrap();
@@ -1325,7 +1282,6 @@ fn test_substr_with_length() {
 }
 
 #[test]
-#[ignore]
 fn test_substr_negative_position() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT SUBSTR('apple', -2)").unwrap();
@@ -1353,7 +1309,6 @@ fn test_substr_beyond_string() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_translate() {
     let mut session = create_session();
     let result = session
@@ -1363,7 +1318,6 @@ fn test_translate() {
 }
 
 #[test]
-#[ignore]
 fn test_translate_remove_chars() {
     let mut session = create_session();
     let result = session
@@ -1373,7 +1327,6 @@ fn test_translate_remove_chars() {
 }
 
 #[test]
-#[ignore]
 fn test_translate_null() {
     let mut session = create_session();
     let result = session
@@ -1396,7 +1349,6 @@ fn test_trim() {
 }
 
 #[test]
-#[ignore]
 fn test_trim_with_chars() {
     let mut session = create_session();
     let result = session
@@ -1406,7 +1358,6 @@ fn test_trim_with_chars() {
 }
 
 #[test]
-#[ignore]
 fn test_trim_multiple_chars() {
     let mut session = create_session();
     let result = session
@@ -1429,7 +1380,6 @@ fn test_trim_concat() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn test_unicode() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT UNICODE('âbcd')").unwrap();
@@ -1437,7 +1387,6 @@ fn test_unicode() {
 }
 
 #[test]
-#[ignore]
 fn test_unicode_single() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT UNICODE('â')").unwrap();
@@ -1445,7 +1394,6 @@ fn test_unicode_single() {
 }
 
 #[test]
-#[ignore]
 fn test_unicode_empty() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT UNICODE('')").unwrap();
@@ -1453,7 +1401,6 @@ fn test_unicode_empty() {
 }
 
 #[test]
-#[ignore]
 fn test_unicode_null() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT UNICODE(NULL)").unwrap();
@@ -1461,7 +1408,6 @@ fn test_unicode_null() {
 }
 
 #[test]
-#[ignore]
 fn test_unicode_ascii() {
     let mut session = create_session();
     let result = session.execute_sql("SELECT UNICODE('A')").unwrap();

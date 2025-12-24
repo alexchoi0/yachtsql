@@ -173,14 +173,11 @@ impl Table {
 
     pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<()> {
         let upper = old_name.to_uppercase();
-        let found = self
-            .columns
-            .keys()
-            .find(|k| k.to_uppercase() == upper)
-            .cloned();
-        if let Some(key) = found {
+        let found_idx = self.columns.keys().position(|k| k.to_uppercase() == upper);
+        if let Some(idx) = found_idx {
+            let key = self.columns.keys().nth(idx).cloned().unwrap();
             if let Some(col) = self.columns.shift_remove(&key) {
-                self.columns.insert(new_name.to_string(), col);
+                self.columns.shift_insert(idx, new_name.to_string(), col);
             }
             let fields: Vec<_> = self
                 .schema
@@ -258,6 +255,66 @@ impl Table {
                         f.data_type.clone(),
                         crate::FieldMode::Nullable,
                     )
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        self.schema = Schema::from_fields(fields);
+        Ok(())
+    }
+
+    pub fn set_column_default(&mut self, col_name: &str, default: Value) -> Result<()> {
+        let upper = col_name.to_uppercase();
+        let found = self
+            .schema
+            .fields()
+            .iter()
+            .any(|f| f.name.to_uppercase() == upper);
+        if !found {
+            return Err(yachtsql_common::error::Error::ColumnNotFound(
+                col_name.to_string(),
+            ));
+        }
+        let fields: Vec<_> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| {
+                if f.name.to_uppercase() == upper {
+                    let mut new_field = f.clone();
+                    new_field.default_value = Some(default.clone());
+                    new_field
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        self.schema = Schema::from_fields(fields);
+        Ok(())
+    }
+
+    pub fn drop_column_default(&mut self, col_name: &str) -> Result<()> {
+        let upper = col_name.to_uppercase();
+        let found = self
+            .schema
+            .fields()
+            .iter()
+            .any(|f| f.name.to_uppercase() == upper);
+        if !found {
+            return Err(yachtsql_common::error::Error::ColumnNotFound(
+                col_name.to_string(),
+            ));
+        }
+        let fields: Vec<_> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| {
+                if f.name.to_uppercase() == upper {
+                    let mut new_field = f.clone();
+                    new_field.default_value = None;
+                    new_field
                 } else {
                     f.clone()
                 }

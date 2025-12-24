@@ -589,7 +589,15 @@ impl<'a> IrEvaluator<'a> {
             ScalarFunction::Cot => self.fn_cot(&arg_values),
             ScalarFunction::Csc => self.fn_csc(&arg_values),
             ScalarFunction::Sec => self.fn_sec(&arg_values),
+            ScalarFunction::Coth => self.fn_coth(&arg_values),
+            ScalarFunction::Csch => self.fn_csch(&arg_values),
+            ScalarFunction::Sech => self.fn_sech(&arg_values),
             ScalarFunction::Pi => Ok(Value::Float64(OrderedFloat(std::f64::consts::PI))),
+            ScalarFunction::IsNan => self.fn_is_nan(&arg_values),
+            ScalarFunction::IsInf => self.fn_is_inf(&arg_values),
+            ScalarFunction::CosineDistance => self.fn_cosine_distance(&arg_values),
+            ScalarFunction::EuclideanDistance => self.fn_euclidean_distance(&arg_values),
+            ScalarFunction::RangeBucket => self.fn_range_bucket(&arg_values),
             ScalarFunction::Rand | ScalarFunction::RandCanonical => self.fn_rand(&arg_values),
             ScalarFunction::Split => self.fn_split(&arg_values),
             ScalarFunction::ArrayConcat => self.fn_array_concat(&arg_values),
@@ -604,8 +612,20 @@ impl<'a> IrEvaluator<'a> {
             }
             ScalarFunction::Ascii => self.fn_ascii(&arg_values),
             ScalarFunction::Chr => self.fn_chr(&arg_values),
+            ScalarFunction::Unicode => self.fn_unicode(&arg_values),
+            ScalarFunction::ToCodePoints => self.fn_to_code_points(&arg_values),
+            ScalarFunction::CodePointsToString => self.fn_code_points_to_string(&arg_values),
+            ScalarFunction::CodePointsToBytes => self.fn_code_points_to_bytes(&arg_values),
+            ScalarFunction::Translate => self.fn_translate(&arg_values),
+            ScalarFunction::Soundex => self.fn_soundex(&arg_values),
+            ScalarFunction::Normalize => self.fn_normalize(&arg_values),
+            ScalarFunction::NormalizeAndCasefold => self.fn_normalize_and_casefold(&arg_values),
+            ScalarFunction::EditDistance => self.fn_edit_distance(&arg_values),
+            ScalarFunction::ContainsSubstr => self.fn_contains_substr(&arg_values),
             ScalarFunction::ToBase64 => self.fn_to_base64(&arg_values),
             ScalarFunction::FromBase64 => self.fn_from_base64(&arg_values),
+            ScalarFunction::ToBase32 => self.fn_to_base32(&arg_values),
+            ScalarFunction::FromBase32 => self.fn_from_base32(&arg_values),
             ScalarFunction::ToHex => self.fn_to_hex(&arg_values),
             ScalarFunction::FromHex => self.fn_from_hex(&arg_values),
             ScalarFunction::ToJson => self.fn_to_json(&arg_values),
@@ -1001,28 +1021,42 @@ impl<'a> IrEvaluator<'a> {
         match val {
             Value::Null => Ok(Value::Null),
             Value::String(s) => {
-                let start_idx = start_val
-                    .and_then(|v| v.as_i64())
-                    .map(|n| (n - 1).max(0) as usize)
-                    .unwrap_or(0);
                 let chars: Vec<char> = s.chars().collect();
+                let char_len = chars.len();
+                let start_raw = start_val.and_then(|v| v.as_i64()).unwrap_or(1);
+
+                let start_idx = if start_raw < 0 {
+                    char_len.saturating_sub((-start_raw) as usize)
+                } else if start_raw == 0 {
+                    0
+                } else {
+                    (start_raw as usize).saturating_sub(1).min(char_len)
+                };
+
                 let len = len_val
                     .and_then(|v| v.as_i64())
                     .map(|n| n.max(0) as usize)
-                    .unwrap_or(chars.len().saturating_sub(start_idx));
+                    .unwrap_or(char_len.saturating_sub(start_idx));
                 let result: String = chars.into_iter().skip(start_idx).take(len).collect();
                 Ok(Value::String(result))
             }
             Value::Bytes(b) => {
-                let start_idx = start_val
-                    .and_then(|v| v.as_i64())
-                    .map(|n| (n - 1).max(0) as usize)
-                    .unwrap_or(0);
+                let byte_len = b.len();
+                let start_raw = start_val.and_then(|v| v.as_i64()).unwrap_or(1);
+
+                let start_idx = if start_raw < 0 {
+                    byte_len.saturating_sub((-start_raw) as usize)
+                } else if start_raw == 0 {
+                    0
+                } else {
+                    (start_raw as usize).saturating_sub(1).min(byte_len)
+                };
+
                 let len = len_val
                     .and_then(|v| v.as_i64())
                     .map(|n| n.max(0) as usize)
-                    .unwrap_or(b.len().saturating_sub(start_idx));
-                let end_idx = (start_idx + len).min(b.len());
+                    .unwrap_or(byte_len.saturating_sub(start_idx));
+                let end_idx = (start_idx + len).min(byte_len);
                 let result: Vec<u8> = b[start_idx..end_idx].to_vec();
                 Ok(Value::Bytes(result))
             }
@@ -2139,11 +2173,11 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_greatest(&self, args: &[Value]) -> Result<Value> {
+        if args.iter().any(|v| v.is_null()) {
+            return Ok(Value::Null);
+        }
         let mut max: Option<Value> = None;
         for arg in args {
-            if arg.is_null() {
-                continue;
-            }
             max = Some(match max {
                 None => arg.clone(),
                 Some(m) => {
@@ -2159,11 +2193,11 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_least(&self, args: &[Value]) -> Result<Value> {
+        if args.iter().any(|v| v.is_null()) {
+            return Ok(Value::Null);
+        }
         let mut min: Option<Value> = None;
         for arg in args {
-            if arg.is_null() {
-                continue;
-            }
             min = Some(match min {
                 None => arg.clone(),
                 Some(m) => {
@@ -2430,25 +2464,43 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_trim(&self, args: &[Value]) -> Result<Value> {
-        match args.first() {
-            Some(Value::Null) => Ok(Value::Null),
-            Some(Value::String(s)) => Ok(Value::String(s.trim().to_string())),
+        match args {
+            [Value::Null, ..] => Ok(Value::Null),
+            [Value::String(s)] => Ok(Value::String(s.trim().to_string())),
+            [Value::String(s), Value::String(chars)] => {
+                let char_set: std::collections::HashSet<char> = chars.chars().collect();
+                let result = s
+                    .trim_start_matches(|c| char_set.contains(&c))
+                    .trim_end_matches(|c| char_set.contains(&c))
+                    .to_string();
+                Ok(Value::String(result))
+            }
             _ => Err(Error::InvalidQuery("TRIM requires string argument".into())),
         }
     }
 
     fn fn_ltrim(&self, args: &[Value]) -> Result<Value> {
-        match args.first() {
-            Some(Value::Null) => Ok(Value::Null),
-            Some(Value::String(s)) => Ok(Value::String(s.trim_start().to_string())),
+        match args {
+            [Value::Null, ..] => Ok(Value::Null),
+            [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
+            [Value::String(s), Value::String(chars)] => {
+                let char_set: std::collections::HashSet<char> = chars.chars().collect();
+                let result = s.trim_start_matches(|c| char_set.contains(&c)).to_string();
+                Ok(Value::String(result))
+            }
             _ => Err(Error::InvalidQuery("LTRIM requires string argument".into())),
         }
     }
 
     fn fn_rtrim(&self, args: &[Value]) -> Result<Value> {
-        match args.first() {
-            Some(Value::Null) => Ok(Value::Null),
-            Some(Value::String(s)) => Ok(Value::String(s.trim_end().to_string())),
+        match args {
+            [Value::Null, ..] => Ok(Value::Null),
+            [Value::String(s)] => Ok(Value::String(s.trim_end().to_string())),
+            [Value::String(s), Value::String(chars)] => {
+                let char_set: std::collections::HashSet<char> = chars.chars().collect();
+                let result = s.trim_end_matches(|c| char_set.contains(&c)).to_string();
+                Ok(Value::String(result))
+            }
             _ => Err(Error::InvalidQuery("RTRIM requires string argument".into())),
         }
     }
@@ -2468,13 +2520,22 @@ impl<'a> IrEvaluator<'a> {
                 ));
             }
         };
-        let start = args.get(1).and_then(|v| v.as_i64()).unwrap_or(1).max(1) as usize;
+        let start_raw = args.get(1).and_then(|v| v.as_i64()).unwrap_or(1);
         let len = args.get(2).and_then(|v| v.as_i64()).map(|l| l as usize);
         let chars: Vec<char> = s.chars().collect();
-        let start_idx = start.saturating_sub(1).min(chars.len());
+        let char_len = chars.len();
+
+        let start_idx = if start_raw < 0 {
+            char_len.saturating_sub((-start_raw) as usize)
+        } else if start_raw == 0 {
+            0
+        } else {
+            (start_raw as usize).saturating_sub(1).min(char_len)
+        };
+
         let end_idx = len
-            .map(|l| (start_idx + l).min(chars.len()))
-            .unwrap_or(chars.len());
+            .map(|l| (start_idx + l).min(char_len))
+            .unwrap_or(char_len);
         Ok(Value::String(chars[start_idx..end_idx].iter().collect()))
     }
 
@@ -2485,7 +2546,11 @@ impl<'a> IrEvaluator<'a> {
         match (&args[0], &args[1], &args[2]) {
             (Value::Null, _, _) => Ok(Value::Null),
             (Value::String(s), Value::String(from), Value::String(to)) => {
-                Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+                if from.is_empty() {
+                    Ok(Value::String(s.clone()))
+                } else {
+                    Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+                }
             }
             _ => Err(Error::InvalidQuery(
                 "REPLACE requires string arguments".into(),
@@ -2633,18 +2698,21 @@ impl<'a> IrEvaluator<'a> {
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::String(s), Value::Int64(n)) => {
-                let pad_char = args
-                    .get(2)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.chars().next().unwrap_or(' '))
-                    .unwrap_or(' ');
+                let pad_str = args.get(2).and_then(|v| v.as_str()).unwrap_or(" ");
                 let n = *n as usize;
-                if s.len() >= n {
-                    Ok(Value::String(s[..n].to_string()))
+                let s_chars: Vec<char> = s.chars().collect();
+                if s_chars.len() >= n {
+                    Ok(Value::String(s_chars[..n].iter().collect()))
                 } else {
-                    Ok(Value::String(
-                        format!("{:>width$}", s, width = n).replace(' ', &pad_char.to_string()),
-                    ))
+                    let pad_len = n - s_chars.len();
+                    let pad_chars: Vec<char> = pad_str.chars().collect();
+                    let padded: String = pad_chars
+                        .iter()
+                        .cycle()
+                        .take(pad_len)
+                        .chain(s_chars.iter())
+                        .collect();
+                    Ok(Value::String(padded))
                 }
             }
             _ => Err(Error::InvalidQuery(
@@ -2662,18 +2730,19 @@ impl<'a> IrEvaluator<'a> {
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::String(s), Value::Int64(n)) => {
-                let pad_char = args
-                    .get(2)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.chars().next().unwrap_or(' '))
-                    .unwrap_or(' ');
+                let pad_str = args.get(2).and_then(|v| v.as_str()).unwrap_or(" ");
                 let n = *n as usize;
-                if s.len() >= n {
-                    Ok(Value::String(s[..n].to_string()))
+                let s_chars: Vec<char> = s.chars().collect();
+                if s_chars.len() >= n {
+                    Ok(Value::String(s_chars[..n].iter().collect()))
                 } else {
-                    Ok(Value::String(
-                        format!("{:<width$}", s, width = n).replace(' ', &pad_char.to_string()),
-                    ))
+                    let pad_len = n - s_chars.len();
+                    let pad_chars: Vec<char> = pad_str.chars().collect();
+                    let padded: String = s_chars
+                        .iter()
+                        .chain(pad_chars.iter().cycle().take(pad_len))
+                        .collect();
+                    Ok(Value::String(padded))
                 }
             }
             _ => Err(Error::InvalidQuery(
@@ -2686,20 +2755,25 @@ impl<'a> IrEvaluator<'a> {
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::String(s)) => {
-                let result: String = s
-                    .split_whitespace()
-                    .map(|word| {
-                        let mut chars = word.chars();
-                        match chars.next() {
-                            None => String::new(),
-                            Some(c) => c
-                                .to_uppercase()
-                                .chain(chars.map(|c| c.to_ascii_lowercase()))
-                                .collect(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let delimiters: std::collections::HashSet<char> = args
+                    .get(1)
+                    .and_then(|v| v.as_str())
+                    .map(|d| d.chars().collect())
+                    .unwrap_or_else(|| " \t\n\r-_!@#$%^&*()+=[]{}|;:',.<>?/~`".chars().collect());
+
+                let mut result = String::new();
+                let mut capitalize_next = true;
+                for c in s.chars() {
+                    if delimiters.contains(&c) {
+                        result.push(c);
+                        capitalize_next = true;
+                    } else if capitalize_next {
+                        result.extend(c.to_uppercase());
+                        capitalize_next = false;
+                    } else {
+                        result.extend(c.to_lowercase());
+                    }
+                }
                 Ok(Value::String(result))
             }
             _ => Err(Error::InvalidQuery(
@@ -3372,7 +3446,7 @@ impl<'a> IrEvaluator<'a> {
                 }
             }
         } else {
-            NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+            NaiveDate::from_ymd_opt(1950, 1, 1).unwrap()
         };
         if interval.months != 0 {
             let date_months = date.year() * 12 + date.month() as i32 - 1;
@@ -3757,13 +3831,13 @@ impl<'a> IrEvaluator<'a> {
                 let origin = if args.len() > 2 {
                     match &args[2] {
                         Value::DateTime(o) => *o,
-                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                        _ => NaiveDate::from_ymd_opt(1950, 1, 1)
                             .unwrap()
                             .and_hms_opt(0, 0, 0)
                             .unwrap(),
                     }
                 } else {
-                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                    NaiveDate::from_ymd_opt(1950, 1, 1)
                         .unwrap()
                         .and_hms_opt(0, 0, 0)
                         .unwrap()
@@ -3789,13 +3863,13 @@ impl<'a> IrEvaluator<'a> {
                 let origin = if args.len() > 2 {
                     match &args[2] {
                         Value::Timestamp(o) => o.naive_utc(),
-                        _ => NaiveDate::from_ymd_opt(1970, 1, 1)
+                        _ => NaiveDate::from_ymd_opt(1950, 1, 1)
                             .unwrap()
                             .and_hms_opt(0, 0, 0)
                             .unwrap(),
                     }
                 } else {
-                    NaiveDate::from_ymd_opt(1970, 1, 1)
+                    NaiveDate::from_ymd_opt(1950, 1, 1)
                         .unwrap()
                         .and_hms_opt(0, 0, 0)
                         .unwrap()
@@ -4048,6 +4122,209 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn fn_coth(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(1.0 / x.tanh())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(1.0 / f.0.tanh()))),
+            _ => Err(Error::InvalidQuery("COTH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_csch(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(1.0 / x.sinh())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(1.0 / f.0.sinh()))),
+            _ => Err(Error::InvalidQuery("CSCH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_sech(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Int64(n)) => {
+                let x = *n as f64;
+                Ok(Value::Float64(OrderedFloat(1.0 / x.cosh())))
+            }
+            Some(Value::Float64(f)) => Ok(Value::Float64(OrderedFloat(1.0 / f.0.cosh()))),
+            _ => Err(Error::InvalidQuery("SECH requires numeric argument".into())),
+        }
+    }
+
+    fn fn_is_nan(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Float64(f)) => Ok(Value::Bool(f.0.is_nan())),
+            Some(Value::Int64(_)) => Ok(Value::Bool(false)),
+            _ => Err(Error::InvalidQuery(
+                "IS_NAN requires numeric argument".into(),
+            )),
+        }
+    }
+
+    fn fn_is_inf(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Float64(f)) => Ok(Value::Bool(f.0.is_infinite())),
+            Some(Value::Int64(_)) => Ok(Value::Bool(false)),
+            _ => Err(Error::InvalidQuery(
+                "IS_INF requires numeric argument".into(),
+            )),
+        }
+    }
+
+    fn fn_cosine_distance(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(Error::InvalidQuery(
+                "COSINE_DISTANCE requires 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Array(a), Value::Array(b)) => {
+                if a.len() != b.len() {
+                    return Err(Error::InvalidQuery(
+                        "COSINE_DISTANCE: arrays must have same length".into(),
+                    ));
+                }
+                let mut dot_product = 0.0;
+                let mut norm_a = 0.0;
+                let mut norm_b = 0.0;
+                for (va, vb) in a.iter().zip(b.iter()) {
+                    let fa = match va {
+                        Value::Float64(f) => f.0,
+                        Value::Int64(n) => *n as f64,
+                        Value::Null => return Ok(Value::Null),
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "COSINE_DISTANCE: array elements must be numeric".into(),
+                            ));
+                        }
+                    };
+                    let fb = match vb {
+                        Value::Float64(f) => f.0,
+                        Value::Int64(n) => *n as f64,
+                        Value::Null => return Ok(Value::Null),
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "COSINE_DISTANCE: array elements must be numeric".into(),
+                            ));
+                        }
+                    };
+                    dot_product += fa * fb;
+                    norm_a += fa * fa;
+                    norm_b += fb * fb;
+                }
+                let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+                Ok(Value::Float64(OrderedFloat(1.0 - similarity)))
+            }
+            _ => Err(Error::InvalidQuery(
+                "COSINE_DISTANCE requires array arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_euclidean_distance(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(Error::InvalidQuery(
+                "EUCLIDEAN_DISTANCE requires 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Array(a), Value::Array(b)) => {
+                if a.len() != b.len() {
+                    return Err(Error::InvalidQuery(
+                        "EUCLIDEAN_DISTANCE: arrays must have same length".into(),
+                    ));
+                }
+                let mut sum_sq = 0.0;
+                for (va, vb) in a.iter().zip(b.iter()) {
+                    let fa = match va {
+                        Value::Float64(f) => f.0,
+                        Value::Int64(n) => *n as f64,
+                        Value::Null => return Ok(Value::Null),
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "EUCLIDEAN_DISTANCE: array elements must be numeric".into(),
+                            ));
+                        }
+                    };
+                    let fb = match vb {
+                        Value::Float64(f) => f.0,
+                        Value::Int64(n) => *n as f64,
+                        Value::Null => return Ok(Value::Null),
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "EUCLIDEAN_DISTANCE: array elements must be numeric".into(),
+                            ));
+                        }
+                    };
+                    let diff = fa - fb;
+                    sum_sq += diff * diff;
+                }
+                Ok(Value::Float64(OrderedFloat(sum_sq.sqrt())))
+            }
+            _ => Err(Error::InvalidQuery(
+                "EUCLIDEAN_DISTANCE requires array arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_range_bucket(&self, args: &[Value]) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(Error::InvalidQuery(
+                "RANGE_BUCKET requires 2 arguments".into(),
+            ));
+        }
+        match (&args[0], &args[1]) {
+            (Value::Null, _) => Ok(Value::Null),
+            (_, Value::Null) => Ok(Value::Null),
+            (point, Value::Array(arr)) => {
+                if arr.is_empty() {
+                    return Ok(Value::Int64(0));
+                }
+                let point_val = match point {
+                    Value::Int64(n) => *n as f64,
+                    Value::Float64(f) => f.0,
+                    _ => {
+                        return Err(Error::InvalidQuery(
+                            "RANGE_BUCKET: point must be numeric".into(),
+                        ));
+                    }
+                };
+                let mut bucket = 0i64;
+                for v in arr {
+                    let boundary = match v {
+                        Value::Int64(n) => *n as f64,
+                        Value::Float64(f) => f.0,
+                        Value::Null => return Ok(Value::Null),
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "RANGE_BUCKET: array elements must be numeric".into(),
+                            ));
+                        }
+                    };
+                    if point_val < boundary {
+                        break;
+                    }
+                    bucket += 1;
+                }
+                Ok(Value::Int64(bucket))
+            }
+            _ => Err(Error::InvalidQuery(
+                "RANGE_BUCKET requires point and array arguments".into(),
+            )),
+        }
+    }
+
     fn fn_rand(&self, _args: &[Value]) -> Result<Value> {
         use std::time::{SystemTime, UNIX_EPOCH};
         let seed = SystemTime::now()
@@ -4068,10 +4345,13 @@ impl<'a> IrEvaluator<'a> {
         match &args[0] {
             Value::Null => Ok(Value::Null),
             Value::String(s) => {
-                let parts: Vec<Value> = s
-                    .split(delimiter)
-                    .map(|p| Value::String(p.to_string()))
-                    .collect();
+                let parts: Vec<Value> = if delimiter.is_empty() {
+                    s.chars().map(|c| Value::String(c.to_string())).collect()
+                } else {
+                    s.split(delimiter)
+                        .map(|p| Value::String(p.to_string()))
+                        .collect()
+                };
                 Ok(Value::Array(parts))
             }
             _ => Err(Error::InvalidQuery("SPLIT requires string argument".into())),
@@ -4115,8 +4395,51 @@ impl<'a> IrEvaluator<'a> {
         match (&args[0], &args[1]) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::String(s), Value::String(substr)) => {
-                let pos = s.find(substr.as_str()).map(|i| i + 1).unwrap_or(0);
-                Ok(Value::Int64(pos as i64))
+                if substr.is_empty() {
+                    return Ok(Value::Int64(0));
+                }
+                let position = args.get(2).and_then(|v| v.as_i64()).unwrap_or(1);
+                let occurrence = args.get(3).and_then(|v| v.as_i64()).unwrap_or(1) as usize;
+
+                let chars: Vec<char> = s.chars().collect();
+                let substr_chars: Vec<char> = substr.chars().collect();
+                let char_len = chars.len();
+
+                if position >= 0 {
+                    let start_idx = if position == 0 {
+                        0
+                    } else {
+                        (position as usize).saturating_sub(1).min(char_len)
+                    };
+                    let mut found_count = 0;
+                    let mut idx = start_idx;
+                    while idx + substr_chars.len() <= char_len {
+                        if chars[idx..idx + substr_chars.len()] == substr_chars[..] {
+                            found_count += 1;
+                            if found_count == occurrence {
+                                return Ok(Value::Int64((idx + 1) as i64));
+                            }
+                        }
+                        idx += 1;
+                    }
+                } else {
+                    let start_idx = char_len.saturating_sub((-position) as usize);
+                    let mut found_count = 0;
+                    let mut idx = start_idx.min(char_len.saturating_sub(substr_chars.len()));
+                    loop {
+                        if chars[idx..idx + substr_chars.len()] == substr_chars[..] {
+                            found_count += 1;
+                            if found_count == occurrence {
+                                return Ok(Value::Int64((idx + 1) as i64));
+                            }
+                        }
+                        if idx == 0 {
+                            break;
+                        }
+                        idx -= 1;
+                    }
+                }
+                Ok(Value::Int64(0))
             }
             _ => Err(Error::InvalidQuery(
                 "INSTR requires string arguments".into(),
@@ -4146,7 +4469,36 @@ impl<'a> IrEvaluator<'a> {
                             continue;
                         }
 
+                        let mut zero_pad = false;
+                        let mut use_grouping = false;
+                        let mut width: Option<usize> = None;
                         let mut precision: Option<usize> = None;
+
+                        while let Some(&ch) = chars.peek() {
+                            if ch == '0' && width.is_none() {
+                                zero_pad = true;
+                                chars.next();
+                            } else if ch == '\'' {
+                                use_grouping = true;
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let mut width_str = String::new();
+                        while let Some(&ch) = chars.peek() {
+                            if ch.is_ascii_digit() {
+                                width_str.push(ch);
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        if !width_str.is_empty() {
+                            width = width_str.parse().ok();
+                        }
+
                         if chars.peek() == Some(&'.') {
                             chars.next();
                             let mut prec_str = String::new();
@@ -4172,11 +4524,73 @@ impl<'a> IrEvaluator<'a> {
                                 's' => val
                                     .map(|v| self.format_value_for_format(v))
                                     .unwrap_or_default(),
-                                'd' | 'i' => val
-                                    .and_then(|v| v.as_i64())
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_default(),
-                                'f' | 'g' | 'e' => {
+                                'd' | 'i' => {
+                                    if let Some(n) = val.and_then(|v| v.as_i64()) {
+                                        let mut s = if use_grouping {
+                                            Self::format_with_grouping(n)
+                                        } else {
+                                            n.to_string()
+                                        };
+                                        if let Some(w) = width {
+                                            if s.len() < w {
+                                                let pad = w - s.len();
+                                                if zero_pad {
+                                                    if n < 0 {
+                                                        s = format!(
+                                                            "-{}{}",
+                                                            "0".repeat(pad),
+                                                            &s[1..]
+                                                        );
+                                                    } else {
+                                                        s = format!("{}{}", "0".repeat(pad), s);
+                                                    }
+                                                } else {
+                                                    s = format!("{}{}", " ".repeat(pad), s);
+                                                }
+                                            }
+                                        }
+                                        s
+                                    } else {
+                                        String::new()
+                                    }
+                                }
+                                'f' => {
+                                    if let Some(v) = val {
+                                        let f_val = match v {
+                                            Value::Float64(f) => Some(f.0),
+                                            Value::Int64(n) => Some(*n as f64),
+                                            Value::Numeric(n) => n.to_string().parse().ok(),
+                                            _ => None,
+                                        };
+                                        if let Some(f) = f_val {
+                                            let prec = precision.unwrap_or(6);
+                                            format!("{:.prec$}", f, prec = prec)
+                                        } else {
+                                            String::new()
+                                        }
+                                    } else {
+                                        String::new()
+                                    }
+                                }
+                                'e' | 'E' => {
+                                    if let Some(v) = val {
+                                        let f_val = match v {
+                                            Value::Float64(f) => Some(f.0),
+                                            Value::Int64(n) => Some(*n as f64),
+                                            Value::Numeric(n) => n.to_string().parse().ok(),
+                                            _ => None,
+                                        };
+                                        if let Some(f) = f_val {
+                                            let prec = precision.unwrap_or(6);
+                                            Self::format_scientific(f, prec, spec == 'E')
+                                        } else {
+                                            String::new()
+                                        }
+                                    } else {
+                                        String::new()
+                                    }
+                                }
+                                'g' => {
                                     if let Some(v) = val {
                                         let f_val = match v {
                                             Value::Float64(f) => Some(f.0),
@@ -4230,6 +4644,39 @@ impl<'a> IrEvaluator<'a> {
                 "FORMAT requires a format string as first argument".into(),
             )),
         }
+    }
+
+    fn format_with_grouping(n: i64) -> String {
+        let sign = if n < 0 { "-" } else { "" };
+        let abs_n = n.abs();
+        let s = abs_n.to_string();
+        let mut result = String::new();
+        for (i, c) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(c);
+        }
+        format!("{}{}", sign, result.chars().rev().collect::<String>())
+    }
+
+    fn format_scientific(f: f64, precision: usize, uppercase: bool) -> String {
+        if f == 0.0 {
+            let e_char = if uppercase { 'E' } else { 'e' };
+            return format!("{:.prec$}{}+00", 0.0, e_char, prec = precision);
+        }
+        let exp = f.abs().log10().floor() as i32;
+        let mantissa = f / 10_f64.powi(exp);
+        let e_char = if uppercase { 'E' } else { 'e' };
+        let sign = if exp >= 0 { '+' } else { '-' };
+        format!(
+            "{:.prec$}{}{}{:02}",
+            mantissa,
+            e_char,
+            sign,
+            exp.abs(),
+            prec = precision
+        )
     }
 
     fn format_value_for_format(&self, value: &Value) -> String {
@@ -4345,10 +4792,270 @@ impl<'a> IrEvaluator<'a> {
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::Int64(n)) => {
+                if *n == 0 {
+                    return Ok(Value::String(String::new()));
+                }
                 let c = char::from_u32(*n as u32).unwrap_or('\0');
                 Ok(Value::String(c.to_string()))
             }
             _ => Err(Error::InvalidQuery("CHR requires integer argument".into())),
+        }
+    }
+
+    fn fn_unicode(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                let code = s.chars().next().map(|c| c as i64).unwrap_or(0);
+                Ok(Value::Int64(code))
+            }
+            _ => Err(Error::InvalidQuery(
+                "UNICODE requires string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_to_code_points(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                let code_points: Vec<Value> = s.chars().map(|c| Value::Int64(c as i64)).collect();
+                Ok(Value::Array(code_points))
+            }
+            _ => Err(Error::InvalidQuery(
+                "TO_CODE_POINTS requires string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_code_points_to_string(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Array(arr)) => {
+                let mut result = String::new();
+                for v in arr {
+                    match v {
+                        Value::Null => return Ok(Value::Null),
+                        Value::Int64(n) => {
+                            if let Some(c) = char::from_u32(*n as u32) {
+                                result.push(c);
+                            }
+                        }
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "CODE_POINTS_TO_STRING requires array of integers".into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(Value::String(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "CODE_POINTS_TO_STRING requires array argument".into(),
+            )),
+        }
+    }
+
+    fn fn_code_points_to_bytes(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Array(arr)) => {
+                let mut result = Vec::new();
+                for v in arr {
+                    match v {
+                        Value::Null => return Ok(Value::Null),
+                        Value::Int64(n) => {
+                            if *n < 0 || *n > 255 {
+                                return Err(Error::InvalidQuery(format!(
+                                    "CODE_POINTS_TO_BYTES: value {} out of range 0-255",
+                                    n
+                                )));
+                            }
+                            result.push(*n as u8);
+                        }
+                        _ => {
+                            return Err(Error::InvalidQuery(
+                                "CODE_POINTS_TO_BYTES requires array of integers".into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(Value::Bytes(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "CODE_POINTS_TO_BYTES requires array argument".into(),
+            )),
+        }
+    }
+
+    fn fn_translate(&self, args: &[Value]) -> Result<Value> {
+        if args.len() < 3 {
+            return Err(Error::InvalidQuery("TRANSLATE requires 3 arguments".into()));
+        }
+        match (&args[0], &args[1], &args[2]) {
+            (Value::Null, _, _) | (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
+            (Value::String(source), Value::String(from_chars), Value::String(to_chars)) => {
+                let from: Vec<char> = from_chars.chars().collect();
+                let to: Vec<char> = to_chars.chars().collect();
+                let result: String = source
+                    .chars()
+                    .filter_map(|c| {
+                        if let Some(pos) = from.iter().position(|&fc| fc == c) {
+                            to.get(pos).copied()
+                        } else {
+                            Some(c)
+                        }
+                    })
+                    .collect();
+                Ok(Value::String(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "TRANSLATE requires string arguments".into(),
+            )),
+        }
+    }
+
+    fn fn_soundex(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                if s.is_empty() {
+                    return Ok(Value::String(String::new()));
+                }
+                let mut result = String::new();
+                let mut chars = s.chars().filter(|c| c.is_ascii_alphabetic());
+                if let Some(first) = chars.next() {
+                    result.push(first.to_ascii_uppercase());
+                }
+                let get_code = |c: char| -> Option<char> {
+                    match c.to_ascii_lowercase() {
+                        'b' | 'f' | 'p' | 'v' => Some('1'),
+                        'c' | 'g' | 'j' | 'k' | 'q' | 's' | 'x' | 'z' => Some('2'),
+                        'd' | 't' => Some('3'),
+                        'l' => Some('4'),
+                        'm' | 'n' => Some('5'),
+                        'r' => Some('6'),
+                        _ => None,
+                    }
+                };
+                let is_hw = |c: char| matches!(c.to_ascii_lowercase(), 'h' | 'w');
+                let mut last_code: Option<char> = None;
+                for c in chars {
+                    if result.len() >= 4 {
+                        break;
+                    }
+                    if is_hw(c) {
+                        continue;
+                    }
+                    if let Some(code) = get_code(c) {
+                        if Some(code) != last_code {
+                            result.push(code);
+                            last_code = Some(code);
+                        }
+                    } else {
+                        last_code = None;
+                    }
+                }
+                while result.len() < 4 {
+                    result.push('0');
+                }
+                Ok(Value::String(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "SOUNDEX requires string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_normalize(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                use unicode_normalization::UnicodeNormalization;
+                let normalized: String = s.nfc().collect();
+                Ok(Value::String(normalized))
+            }
+            _ => Err(Error::InvalidQuery(
+                "NORMALIZE requires string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_normalize_and_casefold(&self, args: &[Value]) -> Result<Value> {
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                use unicode_normalization::UnicodeNormalization;
+                let normalized: String = s.nfkc().collect();
+                let casefolded = normalized.to_lowercase();
+                Ok(Value::String(casefolded))
+            }
+            _ => Err(Error::InvalidQuery(
+                "NORMALIZE_AND_CASEFOLD requires string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_edit_distance(&self, args: &[Value]) -> Result<Value> {
+        let (s1, s2, max_distance) = match args {
+            [Value::Null, ..] | [_, Value::Null, ..] => return Ok(Value::Null),
+            [Value::String(a), Value::String(b)] => (a.as_str(), b.as_str(), None),
+            [Value::String(a), Value::String(b), Value::Int64(max)] => {
+                (a.as_str(), b.as_str(), Some(*max as usize))
+            }
+            _ => {
+                return Err(Error::InvalidQuery(
+                    "EDIT_DISTANCE requires two string arguments".into(),
+                ));
+            }
+        };
+
+        let len1 = s1.chars().count();
+        let len2 = s2.chars().count();
+
+        if let Some(max) = max_distance {
+            if len1.abs_diff(len2) > max {
+                return Ok(Value::Int64(max as i64));
+            }
+        }
+
+        let mut prev_row: Vec<usize> = (0..=len2).collect();
+        let mut curr_row = vec![0; len2 + 1];
+
+        for (i, c1) in s1.chars().enumerate() {
+            curr_row[0] = i + 1;
+            for (j, c2) in s2.chars().enumerate() {
+                let cost = if c1 == c2 { 0 } else { 1 };
+                curr_row[j + 1] = (prev_row[j + 1] + 1)
+                    .min(curr_row[j] + 1)
+                    .min(prev_row[j] + cost);
+            }
+            std::mem::swap(&mut prev_row, &mut curr_row);
+        }
+
+        let distance = prev_row[len2];
+        let result = match max_distance {
+            Some(max) if distance > max => max,
+            _ => distance,
+        };
+        Ok(Value::Int64(result as i64))
+    }
+
+    fn fn_contains_substr(&self, args: &[Value]) -> Result<Value> {
+        match args {
+            [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+            [Value::String(haystack), Value::String(needle)] => {
+                use unicode_normalization::UnicodeNormalization;
+                let normalized_haystack: String = haystack.nfkc().collect();
+                let normalized_needle: String = needle.nfkc().collect();
+                let result = normalized_haystack
+                    .to_lowercase()
+                    .contains(&normalized_needle.to_lowercase());
+                Ok(Value::Bool(result))
+            }
+            _ => Err(Error::InvalidQuery(
+                "CONTAINS_SUBSTR requires string arguments".into(),
+            )),
         }
     }
 
@@ -4382,6 +5089,34 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn fn_to_base32(&self, args: &[Value]) -> Result<Value> {
+        use data_encoding::BASE32;
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::Bytes(b)) => Ok(Value::String(BASE32.encode(b))),
+            Some(Value::String(s)) => Ok(Value::String(BASE32.encode(s.as_bytes()))),
+            _ => Err(Error::InvalidQuery(
+                "TO_BASE32 requires bytes or string argument".into(),
+            )),
+        }
+    }
+
+    fn fn_from_base32(&self, args: &[Value]) -> Result<Value> {
+        use data_encoding::BASE32;
+        match args.first() {
+            Some(Value::Null) => Ok(Value::Null),
+            Some(Value::String(s)) => {
+                let decoded = BASE32
+                    .decode(s.as_bytes())
+                    .map_err(|e| Error::InvalidQuery(format!("Invalid base32: {}", e)))?;
+                Ok(Value::Bytes(decoded))
+            }
+            _ => Err(Error::InvalidQuery(
+                "FROM_BASE32 requires string argument".into(),
+            )),
+        }
+    }
+
     fn fn_to_hex(&self, args: &[Value]) -> Result<Value> {
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
@@ -4395,7 +5130,12 @@ impl<'a> IrEvaluator<'a> {
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::String(s)) => {
-                let decoded = hex::decode(s)
+                let normalized = if s.len() % 2 == 1 {
+                    format!("0{}", s)
+                } else {
+                    s.clone()
+                };
+                let decoded = hex::decode(&normalized)
                     .map_err(|e| Error::InvalidQuery(format!("Invalid hex: {}", e)))?;
                 Ok(Value::Bytes(decoded))
             }
@@ -8806,9 +9546,48 @@ fn parse_time_string(s: &str) -> Result<Value> {
 }
 
 fn parse_timestamp_string(s: &str) -> Result<Value> {
-    use chrono::NaiveDateTime;
+    use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 
     let s_trimmed = s.trim();
+
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s_trimmed) {
+        return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s_trimmed, "%Y-%m-%d %H:%M:%S%:z") {
+        return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s_trimmed, "%Y-%m-%d %H:%M:%S%z") {
+        return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s_trimmed, "%Y-%m-%d %H:%M:%S%.f%:z") {
+        return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s_trimmed, "%Y-%m-%d %H:%M:%S%.f%z") {
+        return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+    }
+
+    let re = regex::Regex::new(r"^(.+?)([+-])(\d{1,2})$").unwrap();
+    if let Some(caps) = re.captures(s_trimmed) {
+        let datetime_part = caps.get(1).unwrap().as_str();
+        let sign = caps.get(2).unwrap().as_str();
+        let hours: i32 = caps.get(3).unwrap().as_str().parse().unwrap_or(0);
+        let offset_secs = hours * 3600 * if sign == "-" { -1 } else { 1 };
+        if let Some(offset) = FixedOffset::east_opt(offset_secs) {
+            if let Ok(ndt) = NaiveDateTime::parse_from_str(datetime_part, "%Y-%m-%d %H:%M:%S") {
+                let dt = offset.from_local_datetime(&ndt).single();
+                if let Some(dt) = dt {
+                    return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+                }
+            }
+            if let Ok(ndt) = NaiveDateTime::parse_from_str(datetime_part, "%Y-%m-%d %H:%M:%S%.f") {
+                let dt = offset.from_local_datetime(&ndt).single();
+                if let Some(dt) = dt {
+                    return Ok(Value::Timestamp(dt.with_timezone(&Utc)));
+                }
+            }
+        }
+    }
+
     let s_no_tz = if s_trimmed.ends_with(" UTC") {
         &s_trimmed[..s_trimmed.len() - 4]
     } else if s_trimmed.ends_with("+00:00") {
@@ -8821,15 +9600,14 @@ fn parse_timestamp_string(s: &str) -> Result<Value> {
         s_trimmed
     };
 
-    let dt = DateTime::parse_from_rfc3339(s_trimmed)
-        .map(|d| d.with_timezone(&Utc))
+    let dt = NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%dT%H:%M:%S%.f"))
         .or_else(|_| {
-            NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%d %H:%M:%S%.f"))
-                .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%dT%H:%M:%S"))
-                .or_else(|_| NaiveDateTime::parse_from_str(s_no_tz, "%Y-%m-%dT%H:%M:%S%.f"))
-                .map(|ndt| ndt.and_utc())
+            NaiveDate::parse_from_str(s_no_tz, "%Y-%m-%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap())
         })
+        .map(|ndt| ndt.and_utc())
         .map_err(|e| Error::InvalidQuery(format!("Invalid timestamp string: {}", e)))?;
     Ok(Value::Timestamp(dt))
 }
@@ -8994,10 +9772,61 @@ fn trunc_datetime(dt: &NaiveDateTime, part: &str) -> Result<NaiveDateTime> {
         "MONTH" => NaiveDate::from_ymd_opt(dt.year(), dt.month(), 1)
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into())),
-        "WEEK" => {
+        "WEEK" | "WEEK_SUNDAY" => {
             let days_from_sunday = dt.weekday().num_days_from_sunday();
             let date = dt.date() - chrono::Duration::days(days_from_sunday as i64);
             date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_MONDAY" => {
+            let days_from_monday = dt.weekday().num_days_from_monday();
+            let date = dt.date() - chrono::Duration::days(days_from_monday as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_TUESDAY" => {
+            let days = (dt.weekday().num_days_from_sunday() + 5) % 7;
+            let date = dt.date() - chrono::Duration::days(days as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_WEDNESDAY" => {
+            let days = (dt.weekday().num_days_from_sunday() + 4) % 7;
+            let date = dt.date() - chrono::Duration::days(days as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_THURSDAY" => {
+            let days = (dt.weekday().num_days_from_sunday() + 3) % 7;
+            let date = dt.date() - chrono::Duration::days(days as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_FRIDAY" => {
+            let days = (dt.weekday().num_days_from_sunday() + 2) % 7;
+            let date = dt.date() - chrono::Duration::days(days as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "WEEK_SATURDAY" => {
+            let days = (dt.weekday().num_days_from_sunday() + 1) % 7;
+            let date = dt.date() - chrono::Duration::days(days as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "ISOWEEK" => {
+            let days_from_monday = dt.weekday().num_days_from_monday();
+            let date = dt.date() - chrono::Duration::days(days_from_monday as i64);
+            date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
+        }
+        "ISOYEAR" => {
+            let iso_year = dt.date().iso_week().year();
+            let first_day_of_iso_year =
+                NaiveDate::from_isoywd_opt(iso_year, 1, chrono::Weekday::Mon)
+                    .ok_or_else(|| Error::InvalidQuery("Invalid ISO year".into()))?;
+            first_day_of_iso_year
+                .and_hms_opt(0, 0, 0)
                 .ok_or_else(|| Error::InvalidQuery("Invalid datetime".into()))
         }
         "DAY" => dt
@@ -9047,7 +9876,11 @@ fn bucket_date(
     } else {
         1
     };
-    let bucket_count = days_since_origin / bucket_days;
+    let bucket_count = if days_since_origin >= 0 {
+        days_since_origin / bucket_days
+    } else {
+        (days_since_origin - bucket_days + 1) / bucket_days
+    };
     let bucket_start_days = bucket_count * bucket_days;
     Ok(*origin + chrono::Duration::days(bucket_start_days))
 }
@@ -9075,7 +9908,11 @@ fn bucket_datetime(
     }
     let diff = *dt - *origin;
     let diff_nanos = diff.num_nanoseconds().unwrap_or(0);
-    let bucket_count = diff_nanos / total_nanos_in_interval;
+    let bucket_count = if diff_nanos >= 0 {
+        diff_nanos / total_nanos_in_interval
+    } else {
+        (diff_nanos - total_nanos_in_interval + 1) / total_nanos_in_interval
+    };
     let bucket_start_nanos = bucket_count * total_nanos_in_interval;
     Ok(*origin + chrono::Duration::nanoseconds(bucket_start_nanos))
 }
@@ -9116,22 +9953,50 @@ fn parse_date_with_pattern(s: &str, pattern: &str) -> Result<NaiveDate> {
 
 fn parse_datetime_with_pattern(s: &str, pattern: &str) -> Result<NaiveDateTime> {
     let chrono_pattern = bq_format_to_chrono(pattern);
-    NaiveDateTime::parse_from_str(s, &chrono_pattern).map_err(|e| {
-        Error::InvalidQuery(format!(
-            "Failed to parse datetime '{}' with pattern '{}': {}",
-            s, pattern, e
-        ))
-    })
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, &chrono_pattern) {
+        return Ok(dt);
+    }
+    let has_date = pattern.contains("%Y") || pattern.contains("%m") || pattern.contains("%d");
+    let has_time = pattern.contains("%H")
+        || pattern.contains("%I")
+        || pattern.contains("%M")
+        || pattern.contains("%S");
+    if has_date && !has_time {
+        if let Ok(date) = NaiveDate::parse_from_str(s, &chrono_pattern) {
+            return Ok(date.and_hms_opt(0, 0, 0).unwrap());
+        }
+    }
+    Err(Error::InvalidQuery(format!(
+        "Failed to parse datetime '{}' with pattern '{}'",
+        s, pattern
+    )))
 }
 
 fn parse_time_with_pattern(s: &str, pattern: &str) -> Result<NaiveTime> {
     let chrono_pattern = bq_format_to_chrono(pattern);
-    NaiveTime::parse_from_str(s, &chrono_pattern).map_err(|e| {
-        Error::InvalidQuery(format!(
-            "Failed to parse time '{}' with pattern '{}': {}",
-            s, pattern, e
-        ))
-    })
+    if let Ok(time) = NaiveTime::parse_from_str(s, &chrono_pattern) {
+        return Ok(time);
+    }
+    let has_hour = pattern.contains("%H") || pattern.contains("%I");
+    let has_minute = pattern.contains("%M");
+    let has_second = pattern.contains("%S");
+    if has_hour && !has_minute && !has_second {
+        let extended_pattern = format!("{} %M %S", chrono_pattern);
+        let extended_input = format!("{} 00 00", s);
+        if let Ok(time) = NaiveTime::parse_from_str(&extended_input, &extended_pattern) {
+            return Ok(time);
+        }
+    } else if has_hour && has_minute && !has_second {
+        let extended_pattern = format!("{} %S", chrono_pattern);
+        let extended_input = format!("{} 00", s);
+        if let Ok(time) = NaiveTime::parse_from_str(&extended_input, &extended_pattern) {
+            return Ok(time);
+        }
+    }
+    Err(Error::InvalidQuery(format!(
+        "Failed to parse time '{}' with pattern '{}'",
+        s, pattern
+    )))
 }
 
 fn value_to_json(value: &Value) -> Result<serde_json::Value> {

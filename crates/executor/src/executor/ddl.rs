@@ -32,6 +32,7 @@ impl<'a> PlanExecutor<'a> {
         columns: &[ColumnDef],
         if_not_exists: bool,
         or_replace: bool,
+        query: Option<&PhysicalPlan>,
     ) -> Result<Table> {
         if self.catalog.get_table(table_name).is_some() {
             if or_replace {
@@ -44,6 +45,13 @@ impl<'a> PlanExecutor<'a> {
                     table_name
                 )));
             }
+        }
+
+        if let Some(query_plan) = query {
+            let result = self.execute_plan(query_plan)?;
+            let schema = result.schema().clone();
+            self.catalog.insert_table(table_name, result)?;
+            return Ok(Table::empty(schema));
         }
 
         let mut schema = Schema::new();
@@ -93,14 +101,31 @@ impl<'a> PlanExecutor<'a> {
         &mut self,
         table_name: &str,
         operation: &AlterTableOp,
+        if_exists: bool,
     ) -> Result<Table> {
-        let _table = self
-            .catalog
-            .get_table(table_name)
-            .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+        let table_opt = self.catalog.get_table(table_name);
+        if table_opt.is_none() {
+            if if_exists {
+                return Ok(Table::empty(Schema::new()));
+            }
+            return Err(Error::TableNotFound(table_name.to_string()));
+        }
+        let _table = table_opt.unwrap();
 
         match operation {
-            AlterTableOp::AddColumn { column } => {
+            AlterTableOp::AddColumn {
+                column,
+                if_not_exists,
+            } => {
+                let table = self
+                    .catalog
+                    .get_table_mut(table_name)
+                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+
+                if *if_not_exists && table.schema().field(&column.name).is_some() {
+                    return Ok(Table::empty(Schema::new()));
+                }
+
                 let mode = if column.nullable {
                     FieldMode::Nullable
                 } else {
@@ -118,10 +143,6 @@ impl<'a> PlanExecutor<'a> {
                     None => None,
                 };
 
-                let table = self
-                    .catalog
-                    .get_table_mut(table_name)
-                    .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
                 table.add_column(field, default_value)?;
 
                 if let Some(ref default_expr) = column.default_value {
@@ -139,11 +160,14 @@ impl<'a> PlanExecutor<'a> {
 
                 Ok(Table::empty(Schema::new()))
             }
-            AlterTableOp::DropColumn { name } => {
+            AlterTableOp::DropColumn { name, if_exists } => {
                 let table = self
                     .catalog
                     .get_table_mut(table_name)
                     .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
+                if *if_exists && table.schema().field(name).is_none() {
+                    return Ok(Table::empty(Schema::new()));
+                }
                 table.drop_column(name)?;
                 Ok(Table::empty(Schema::new()))
             }
@@ -172,9 +196,37 @@ impl<'a> PlanExecutor<'a> {
                     AlterColumnAction::DropNotNull => {
                         table.set_column_nullable(name)?;
                     }
-                    AlterColumnAction::SetDefault { .. }
-                    | AlterColumnAction::DropDefault
-                    | AlterColumnAction::SetDataType { .. } => {
+                    AlterColumnAction::SetDefault { default } => {
+                        let empty_schema = yachtsql_storage::Schema::new();
+                        let evaluator = IrEvaluator::new(&empty_schema);
+                        let empty_record = yachtsql_storage::Record::new();
+                        let default_value = evaluator.evaluate(default, &empty_record)?;
+                        table.set_column_default(name, default_value)?;
+
+                        let mut defaults = self
+                            .catalog
+                            .get_table_defaults(table_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        defaults.retain(|d| d.column_name.to_uppercase() != name.to_uppercase());
+                        defaults.push(ColumnDefault {
+                            column_name: name.clone(),
+                            default_expr: default.clone(),
+                        });
+                        self.catalog.set_table_defaults(table_name, defaults);
+                    }
+                    AlterColumnAction::DropDefault => {
+                        table.drop_column_default(name)?;
+
+                        let mut defaults = self
+                            .catalog
+                            .get_table_defaults(table_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        defaults.retain(|d| d.column_name.to_uppercase() != name.to_uppercase());
+                        self.catalog.set_table_defaults(table_name, defaults);
+                    }
+                    AlterColumnAction::SetDataType { .. } => {
                         return Err(Error::UnsupportedFeature(format!(
                             "ALTER COLUMN {:?} not yet implemented",
                             action
@@ -1319,11 +1371,15 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             columns,
             if_not_exists,
             or_replace,
+            query,
         } => LogicalPlan::CreateTable {
             table_name: table_name.clone(),
             columns: columns.clone(),
             if_not_exists: *if_not_exists,
             or_replace: *or_replace,
+            query: query
+                .as_ref()
+                .map(|q| Box::new(executor_plan_to_logical_plan(q))),
         },
         PhysicalPlan::DropTable {
             table_names,
@@ -1335,9 +1391,11 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
         PhysicalPlan::AlterTable {
             table_name,
             operation,
+            if_exists,
         } => LogicalPlan::AlterTable {
             table_name: table_name.clone(),
             operation: operation.clone(),
+            if_exists: *if_exists,
         },
         PhysicalPlan::Truncate { table_name } => LogicalPlan::Truncate {
             table_name: table_name.clone(),

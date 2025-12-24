@@ -269,7 +269,6 @@ fn test_create_table_with_array_column() {
 }
 
 #[test]
-#[ignore]
 fn test_create_table_as_select() {
     let mut session = create_session();
 
@@ -297,7 +296,6 @@ fn test_create_table_as_select() {
 }
 
 #[test]
-#[ignore]
 fn test_create_table_as_select_with_options() {
     let mut session = create_session();
 
@@ -578,7 +576,6 @@ fn test_create_table_with_complex_nested_types() {
 }
 
 #[test]
-#[ignore]
 fn test_create_table_ctas_preserves_types() {
     let mut session = create_session();
 
@@ -640,7 +637,6 @@ fn test_create_table_with_all_data_types() {
 }
 
 #[test]
-#[ignore]
 fn test_create_table_like() {
     let mut session = create_session();
 

@@ -69,8 +69,11 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             } => self.plan_drop(object_type, names, *if_exists, *cascade),
             Statement::Truncate { table_names, .. } => self.plan_truncate(table_names),
             Statement::AlterTable {
-                name, operations, ..
-            } => self.plan_alter_table(name, operations),
+                name,
+                operations,
+                if_exists,
+                ..
+            } => self.plan_alter_table(name, operations, *if_exists),
             Statement::CreateSchema {
                 schema_name,
                 if_not_exists,
@@ -216,8 +219,13 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
 
         let then_branch = self.plan_statement_sequence(&if_stmt.if_block.conditional_statements)?;
 
-        let mut else_branch = None;
-        for elseif_block in &if_stmt.elseif_blocks {
+        let mut else_branch = if let Some(else_block) = &if_stmt.else_block {
+            Some(self.plan_statement_sequence(&else_block.conditional_statements)?)
+        } else {
+            None
+        };
+
+        for elseif_block in if_stmt.elseif_blocks.iter().rev() {
             if let Some(elseif_cond) = &elseif_block.condition {
                 let elseif_cond_expr = ExprPlanner::plan_expr(elseif_cond, &empty_schema)?;
                 let elseif_then =
@@ -228,21 +236,6 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     else_branch,
                 };
                 else_branch = Some(vec![nested_if]);
-            }
-        }
-
-        if let Some(else_block) = &if_stmt.else_block {
-            let else_stmts = self.plan_statement_sequence(&else_block.conditional_statements)?;
-            if let Some(ref mut branch) = else_branch {
-                if let Some(LogicalPlan::If {
-                    else_branch: inner_else,
-                    ..
-                }) = branch.last_mut()
-                {
-                    *inner_else = Some(else_stmts);
-                }
-            } else {
-                else_branch = Some(else_stmts);
             }
         }
 
@@ -3117,11 +3110,18 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             })
             .collect();
 
+        let query = if let Some(query_box) = &create.query {
+            Some(Box::new(self.plan_query(query_box)?))
+        } else {
+            None
+        };
+
         Ok(LogicalPlan::CreateTable {
             table_name,
             columns,
             if_not_exists: create.if_not_exists,
             or_replace: create.or_replace,
+            query,
         })
     }
 
@@ -3400,15 +3400,47 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         &self,
         name: &ast::ObjectName,
         operations: &[ast::AlterTableOperation],
+        if_exists: bool,
     ) -> Result<LogicalPlan> {
         let table_name = object_name_to_raw_string(name);
+
+        if operations.len() > 1 {
+            let mut plans: Vec<LogicalPlan> = Vec::new();
+            for operation in operations {
+                let op = self.plan_single_alter_op(operation)?;
+                plans.push(LogicalPlan::AlterTable {
+                    table_name: table_name.clone(),
+                    operation: op,
+                    if_exists,
+                });
+            }
+            return Ok(LogicalPlan::If {
+                condition: yachtsql_ir::Expr::Literal(yachtsql_ir::Literal::Bool(true)),
+                then_branch: plans,
+                else_branch: None,
+            });
+        }
 
         let operation = operations
             .first()
             .ok_or_else(|| Error::parse_error("ALTER TABLE requires an operation"))?;
 
-        let op = match operation {
-            ast::AlterTableOperation::AddColumn { column_def, .. } => {
+        let op = self.plan_single_alter_op(operation)?;
+
+        Ok(LogicalPlan::AlterTable {
+            table_name,
+            operation: op,
+            if_exists,
+        })
+    }
+
+    fn plan_single_alter_op(&self, operation: &ast::AlterTableOperation) -> Result<AlterTableOp> {
+        match operation {
+            ast::AlterTableOperation::AddColumn {
+                column_def,
+                if_not_exists,
+                ..
+            } => {
                 let data_type = self.sql_type_to_data_type(&column_def.data_type);
                 let nullable = !column_def
                     .options
@@ -3421,29 +3453,37 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     }
                     _ => None,
                 });
-                AlterTableOp::AddColumn {
+                Ok(AlterTableOp::AddColumn {
                     column: ColumnDef {
                         name: column_def.name.value.clone(),
                         data_type,
                         nullable,
                         default_value,
                     },
-                }
+                    if_not_exists: *if_not_exists,
+                })
             }
-            ast::AlterTableOperation::DropColumn { column_names, .. } => {
+            ast::AlterTableOperation::DropColumn {
+                column_names,
+                if_exists,
+                ..
+            } => {
                 let name = column_names
                     .first()
                     .map(|c| c.value.clone())
                     .unwrap_or_default();
-                AlterTableOp::DropColumn { name }
+                Ok(AlterTableOp::DropColumn {
+                    name,
+                    if_exists: *if_exists,
+                })
             }
             ast::AlterTableOperation::RenameColumn {
                 old_column_name,
                 new_column_name,
-            } => AlterTableOp::RenameColumn {
+            } => Ok(AlterTableOp::RenameColumn {
                 old_name: old_column_name.value.clone(),
                 new_name: new_column_name.value.clone(),
-            },
+            }),
             ast::AlterTableOperation::RenameTable {
                 table_name: new_name,
             } => {
@@ -3452,9 +3492,9 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         object_name_to_raw_string(name)
                     }
                 };
-                AlterTableOp::RenameTable {
+                Ok(AlterTableOp::RenameTable {
                     new_name: new_name_str,
-                }
+                })
             }
             ast::AlterTableOperation::AlterColumn { column_name, op } => {
                 let action = match op {
@@ -3477,29 +3517,22 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                         )));
                     }
                 };
-                AlterTableOp::AlterColumn {
+                Ok(AlterTableOp::AlterColumn {
                     name: column_name.value.clone(),
                     action,
-                }
+                })
             }
             ast::AlterTableOperation::AddConstraint { constraint, .. } => {
                 let table_constraint = self.plan_table_constraint(constraint)?;
-                AlterTableOp::AddConstraint {
+                Ok(AlterTableOp::AddConstraint {
                     constraint: table_constraint,
-                }
+                })
             }
-            _ => {
-                return Err(Error::unsupported(format!(
-                    "Unsupported ALTER TABLE operation: {:?}",
-                    operation
-                )));
-            }
-        };
-
-        Ok(LogicalPlan::AlterTable {
-            table_name,
-            operation: op,
-        })
+            _ => Err(Error::unsupported(format!(
+                "Unsupported ALTER TABLE operation: {:?}",
+                operation
+            ))),
+        }
     }
 
     fn plan_create_view(
