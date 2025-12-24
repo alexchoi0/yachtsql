@@ -356,6 +356,16 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             if let Some(ref table) = plan_field.table {
                 field = field.with_source_table(table.clone());
             }
+            let source_field = source_table
+                .schema()
+                .fields()
+                .iter()
+                .find(|f| f.name.eq_ignore_ascii_case(&plan_field.name));
+            if let Some(src) = source_field {
+                if let Some(ref collation) = src.collation {
+                    field.collation = Some(collation.clone());
+                }
+            }
             new_schema.add_field(field);
         }
         source_table.with_schema(new_schema)

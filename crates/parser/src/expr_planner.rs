@@ -902,10 +902,10 @@ impl ExprPlanner {
             }
             ast::Value::SingleQuotedString(s)
             | ast::Value::DoubleQuotedString(s)
-            | ast::Value::SingleQuotedRawStringLiteral(s)
-            | ast::Value::DoubleQuotedRawStringLiteral(s)
             | ast::Value::TripleSingleQuotedString(s)
-            | ast::Value::TripleDoubleQuotedString(s)
+            | ast::Value::TripleDoubleQuotedString(s) => Ok(Literal::String(unescape_unicode(s))),
+            ast::Value::SingleQuotedRawStringLiteral(s)
+            | ast::Value::DoubleQuotedRawStringLiteral(s)
             | ast::Value::TripleSingleQuotedRawStringLiteral(s)
             | ast::Value::TripleDoubleQuotedRawStringLiteral(s) => Ok(Literal::String(s.clone())),
             ast::Value::Boolean(b) => Ok(Literal::Bool(*b)),
@@ -1089,6 +1089,14 @@ impl ExprPlanner {
             });
         }
 
+        if name == "NORMALIZE" {
+            let args = Self::extract_normalize_args(func, schema)?;
+            return Ok(Expr::ScalarFunction {
+                name: ScalarFunction::Normalize,
+                args,
+            });
+        }
+
         let args = Self::extract_function_args(func, schema)?;
         let scalar_func = Self::try_scalar_function(&name)?;
         Ok(Expr::ScalarFunction {
@@ -1124,6 +1132,11 @@ impl ExprPlanner {
                                     table: Some(name.to_string()),
                                 });
                             }
+                            ast::FunctionArgExpr::TableRef(_) => {
+                                return Err(Error::unsupported(
+                                    "TABLE argument in scalar function",
+                                ));
+                            }
                         },
                         ast::FunctionArg::Named { arg, .. } => {
                             if let ast::FunctionArgExpr::Expr(e) = arg {
@@ -1139,6 +1152,75 @@ impl ExprPlanner {
                 }
                 Ok(args)
             }
+        }
+    }
+
+    fn extract_normalize_args(func: &ast::Function, schema: &PlanSchema) -> Result<Vec<Expr>> {
+        match &func.args {
+            ast::FunctionArguments::None => Ok(vec![]),
+            ast::FunctionArguments::Subquery(_) => {
+                Err(Error::unsupported("Subquery function arguments"))
+            }
+            ast::FunctionArguments::List(list) => {
+                let mut args = Vec::new();
+                for (i, arg) in list.args.iter().enumerate() {
+                    match arg {
+                        ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                            ast::FunctionArgExpr::Expr(e) => {
+                                if i == 1 {
+                                    let mode = Self::extract_normalize_mode(e)?;
+                                    args.push(Expr::Literal(Literal::String(mode)));
+                                } else {
+                                    args.push(Self::plan_expr(e, schema)?);
+                                }
+                            }
+                            ast::FunctionArgExpr::Wildcard => {
+                                args.push(Expr::Wildcard { table: None });
+                            }
+                            ast::FunctionArgExpr::QualifiedWildcard(name) => {
+                                args.push(Expr::Wildcard {
+                                    table: Some(name.to_string()),
+                                });
+                            }
+                            ast::FunctionArgExpr::TableRef(_) => {
+                                return Err(Error::unsupported(
+                                    "TABLE argument in scalar function",
+                                ));
+                            }
+                        },
+                        ast::FunctionArg::Named { arg, .. } => {
+                            if let ast::FunctionArgExpr::Expr(e) = arg {
+                                args.push(Self::plan_expr(e, schema)?);
+                            }
+                        }
+                        ast::FunctionArg::ExprNamed { arg, .. } => {
+                            if let ast::FunctionArgExpr::Expr(e) = arg {
+                                args.push(Self::plan_expr(e, schema)?);
+                            }
+                        }
+                    }
+                }
+                Ok(args)
+            }
+        }
+    }
+
+    fn extract_normalize_mode(e: &ast::Expr) -> Result<String> {
+        match e {
+            ast::Expr::Identifier(ident) => {
+                let mode = ident.value.to_uppercase();
+                match mode.as_str() {
+                    "NFC" | "NFKC" | "NFD" | "NFKD" => Ok(mode),
+                    _ => Err(Error::invalid_query(format!(
+                        "Invalid normalization mode: {}. Expected NFC, NFKC, NFD, or NFKD",
+                        mode
+                    ))),
+                }
+            }
+            _ => Err(Error::invalid_query(format!(
+                "Normalization mode must be an identifier (NFC, NFKC, NFD, or NFKD), got: {}",
+                e
+            ))),
         }
     }
 
@@ -1597,6 +1679,11 @@ impl ExprPlanner {
                                     table: Some(name.to_string()),
                                 });
                             }
+                            ast::FunctionArgExpr::TableRef(_) => {
+                                return Err(Error::unsupported(
+                                    "TABLE argument in scalar function",
+                                ));
+                            }
                         },
                         ast::FunctionArg::Named { arg, .. } => {
                             if let ast::FunctionArgExpr::Expr(e) = arg {
@@ -1753,6 +1840,73 @@ impl ExprPlanner {
             nanos,
         }))
     }
+}
+
+fn unescape_unicode(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('u') => {
+                    chars.next();
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if hex.len() == 4
+                        && let Ok(code_point) = u32::from_str_radix(&hex, 16)
+                        && let Some(unicode_char) = char::from_u32(code_point)
+                    {
+                        result.push(unicode_char);
+                        continue;
+                    }
+                    result.push_str("\\u");
+                    result.push_str(&hex);
+                }
+                Some('U') => {
+                    chars.next();
+                    let hex: String = chars.by_ref().take(8).collect();
+                    if hex.len() == 8
+                        && let Ok(code_point) = u32::from_str_radix(&hex, 16)
+                        && let Some(unicode_char) = char::from_u32(code_point)
+                    {
+                        result.push(unicode_char);
+                        continue;
+                    }
+                    result.push_str("\\U");
+                    result.push_str(&hex);
+                }
+                Some('n') => {
+                    chars.next();
+                    result.push('\n');
+                }
+                Some('t') => {
+                    chars.next();
+                    result.push('\t');
+                }
+                Some('r') => {
+                    chars.next();
+                    result.push('\r');
+                }
+                Some('\\') => {
+                    chars.next();
+                    result.push('\\');
+                }
+                Some('\'') => {
+                    chars.next();
+                    result.push('\'');
+                }
+                Some('"') => {
+                    chars.next();
+                    result.push('"');
+                }
+                _ => {
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 fn parse_byte_string_escapes(s: &str) -> Vec<u8> {

@@ -402,6 +402,28 @@ impl<'a> IrEvaluator<'a> {
         }
     }
 
+    fn get_collation_for_expr(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Column { name, table, .. } => {
+                let upper_col = name.to_uppercase();
+                for field in self.schema.fields() {
+                    if field.name.to_uppercase() == upper_col {
+                        if let Some(src) = &field.source_table {
+                            if let Some(prefix) = table {
+                                if prefix.to_uppercase() != src.to_uppercase() {
+                                    continue;
+                                }
+                            }
+                        }
+                        return field.collation.clone();
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     fn eval_binary_op(
         &self,
         left: &Expr,
@@ -418,8 +440,18 @@ impl<'a> IrEvaluator<'a> {
             BinaryOp::Mul => self.mul_values(&left_val, &right_val),
             BinaryOp::Div => self.div_values(&left_val, &right_val),
             BinaryOp::Mod => self.mod_values(&left_val, &right_val),
-            BinaryOp::Eq => self.eq_values(&left_val, &right_val),
-            BinaryOp::NotEq => self.neq_values(&left_val, &right_val),
+            BinaryOp::Eq => {
+                let collation = self
+                    .get_collation_for_expr(left)
+                    .or_else(|| self.get_collation_for_expr(right));
+                self.eq_values_with_collation(&left_val, &right_val, collation.as_deref())
+            }
+            BinaryOp::NotEq => {
+                let collation = self
+                    .get_collation_for_expr(left)
+                    .or_else(|| self.get_collation_for_expr(right));
+                self.neq_values_with_collation(&left_val, &right_val, collation.as_deref())
+            }
             BinaryOp::Lt => self.compare_values(&left_val, &right_val, |ord| ord.is_lt()),
             BinaryOp::LtEq => self.compare_values(&left_val, &right_val, |ord| ord.is_le()),
             BinaryOp::Gt => self.compare_values(&left_val, &right_val, |ord| ord.is_gt()),
@@ -1729,6 +1761,15 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn eq_values(&self, left: &Value, right: &Value) -> Result<Value> {
+        self.eq_values_with_collation(left, right, None)
+    }
+
+    fn eq_values_with_collation(
+        &self,
+        left: &Value,
+        right: &Value,
+        collation: Option<&str>,
+    ) -> Result<Value> {
         match (left, right) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::Int64(a), Value::Float64(b)) => {
@@ -1737,11 +1778,23 @@ impl<'a> IrEvaluator<'a> {
             (Value::Float64(a), Value::Int64(b)) => {
                 Ok(Value::Bool((a.0 - *b as f64).abs() < f64::EPSILON))
             }
+            (Value::String(a), Value::String(b)) if matches!(collation, Some("und:ci")) => {
+                Ok(Value::Bool(a.to_lowercase() == b.to_lowercase()))
+            }
             _ => Ok(Value::Bool(left == right)),
         }
     }
 
     fn neq_values(&self, left: &Value, right: &Value) -> Result<Value> {
+        self.neq_values_with_collation(left, right, None)
+    }
+
+    fn neq_values_with_collation(
+        &self,
+        left: &Value,
+        right: &Value,
+        collation: Option<&str>,
+    ) -> Result<Value> {
         match (left, right) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::Int64(a), Value::Float64(b)) => {
@@ -1749,6 +1802,9 @@ impl<'a> IrEvaluator<'a> {
             }
             (Value::Float64(a), Value::Int64(b)) => {
                 Ok(Value::Bool((a.0 - *b as f64).abs() >= f64::EPSILON))
+            }
+            (Value::String(a), Value::String(b)) if matches!(collation, Some("und:ci")) => {
+                Ok(Value::Bool(a.to_lowercase() != b.to_lowercase()))
             }
             _ => Ok(Value::Bool(left != right)),
         }
@@ -4968,11 +5024,34 @@ impl<'a> IrEvaluator<'a> {
     }
 
     fn fn_normalize(&self, args: &[Value]) -> Result<Value> {
+        use unicode_normalization::UnicodeNormalization;
+
+        let mode = args
+            .get(1)
+            .and_then(|v| {
+                if let Value::String(s) = v {
+                    Some(s.to_uppercase())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "NFC".to_string());
+
         match args.first() {
             Some(Value::Null) => Ok(Value::Null),
             Some(Value::String(s)) => {
-                use unicode_normalization::UnicodeNormalization;
-                let normalized: String = s.nfc().collect();
+                let normalized: String = match mode.as_str() {
+                    "NFC" => s.nfc().collect(),
+                    "NFKC" => s.nfkc().collect(),
+                    "NFD" => s.nfd().collect(),
+                    "NFKD" => s.nfkd().collect(),
+                    _ => {
+                        return Err(Error::InvalidQuery(format!(
+                            "Invalid normalization mode: {}. Expected NFC, NFKC, NFD, or NFKD",
+                            mode
+                        )));
+                    }
+                };
                 Ok(Value::String(normalized))
             }
             _ => Err(Error::InvalidQuery(

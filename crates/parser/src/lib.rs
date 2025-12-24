@@ -8,6 +8,7 @@ use sqlparser::dialect::BigQueryDialect;
 use sqlparser::parser::Parser;
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::DataType;
+use yachtsql_ir::plan::{FunctionArg, FunctionBody};
 use yachtsql_ir::{ColumnDef, LoadFormat, LoadOptions, LogicalPlan};
 use yachtsql_storage::Schema;
 
@@ -19,6 +20,15 @@ pub struct ViewDefinition {
 pub trait CatalogProvider {
     fn get_table_schema(&self, name: &str) -> Option<Schema>;
     fn get_view(&self, name: &str) -> Option<ViewDefinition>;
+    fn get_function(&self, name: &str) -> Option<FunctionDefinition>;
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub parameters: Vec<FunctionArg>,
+    pub return_type: DataType,
+    pub body: FunctionBody,
 }
 
 pub fn parse_sql(sql: &str) -> Result<Vec<sqlparser::ast::Statement>> {
@@ -166,6 +176,7 @@ fn try_parse_load_data(sql: &str) -> Result<Option<LogicalPlan>> {
                     data_type: parse_simple_data_type(&dtype),
                     nullable: true,
                     default_value: None,
+                    collation: None,
                 })
                 .collect(),
         )

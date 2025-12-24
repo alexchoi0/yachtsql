@@ -566,7 +566,7 @@ fn test_alter_column_set_options() {
         .unwrap();
 
     session
-        .execute_sql("INSERT INTO col_options VALUES (1, 123.456)")
+        .execute_sql("INSERT INTO col_options VALUES (1, NUMERIC '123.456')")
         .unwrap();
 
     let result = session.execute_sql("SELECT * FROM col_options").unwrap();

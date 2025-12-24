@@ -242,15 +242,6 @@ impl ConcurrentCatalog {
 
     pub fn create_table(&self, name: &str, schema: Schema) -> Result<()> {
         let key = name.to_uppercase();
-        if let Some(dot_pos) = key.find('.') {
-            let schema_name = &key[..dot_pos];
-            if !self.schemas.contains_key(schema_name) && !schema_name.is_empty() {
-                return Err(Error::invalid_query(format!(
-                    "Schema not found: {}",
-                    &name[..dot_pos]
-                )));
-            }
-        }
         if self.tables.contains_key(&key) {
             return Err(Error::invalid_query(format!(
                 "Table already exists: {}",
@@ -284,15 +275,6 @@ impl ConcurrentCatalog {
 
     pub fn insert_table(&self, name: &str, table: Table) -> Result<()> {
         let key = name.to_uppercase();
-        if let Some(dot_pos) = key.find('.') {
-            let schema_name = &key[..dot_pos];
-            if !self.schemas.contains_key(schema_name) {
-                return Err(Error::invalid_query(format!(
-                    "Schema not found: {}",
-                    schema_name
-                )));
-            }
-        }
         if self.tables.contains_key(&key) {
             return Err(Error::invalid_query(format!(
                 "Table already exists: {}",

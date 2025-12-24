@@ -44,6 +44,7 @@ pub enum AlterColumnAction {
     DropDefault,
     SetNotNull,
     DropNotNull,
+    SetOptions { collation: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

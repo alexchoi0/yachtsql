@@ -62,7 +62,11 @@ impl<'a> PlanExecutor<'a> {
             } else {
                 FieldMode::Required
             };
-            schema.add_field(Field::new(&col.name, col.data_type.clone(), mode));
+            let mut field = Field::new(&col.name, col.data_type.clone(), mode);
+            if let Some(ref collation) = col.collation {
+                field = field.with_collation(collation);
+            }
+            schema.add_field(field);
             if let Some(ref default_expr) = col.default_value {
                 defaults.push(ColumnDefault {
                     column_name: col.name.clone(),
@@ -228,6 +232,11 @@ impl<'a> PlanExecutor<'a> {
                     }
                     AlterColumnAction::SetDataType { data_type } => {
                         table.set_column_data_type(name, data_type.clone())?;
+                    }
+                    AlterColumnAction::SetOptions { collation } => {
+                        if let Some(collate) = collation {
+                            table.set_column_collation(name, collate.clone())?;
+                        }
                     }
                 }
                 Ok(Table::empty(Schema::new()))

@@ -400,6 +400,7 @@ impl Spanned for Statement {
                 columns,
                 query,
                 options,
+                partition_by,
                 cluster_by,
                 comment: _,
                 with_no_schema_binding: _,
@@ -408,11 +409,13 @@ impl Spanned for Statement {
                 to,
                 name_before_not_exists: _,
                 params: _,
+                sql_security: _,
             } => union_spans(
                 core::iter::once(name.span())
                     .chain(columns.iter().map(|i| i.span()))
                     .chain(core::iter::once(query.span()))
                     .chain(core::iter::once(options.span()))
+                    .chain(partition_by.iter().map(|i| i.span()))
                     .chain(cluster_by.iter().map(|i| i.span))
                     .chain(to.iter().map(|i| i.span())),
             ),
@@ -428,6 +431,13 @@ impl Spanned for Statement {
                     .chain(module_args.iter().map(|i| i.span)),
             ),
             Statement::CreateIndex(create_index) => create_index.span(),
+            Statement::CreateSearchIndex { .. } => Span::empty(),
+            Statement::CreateVectorIndex { .. } => Span::empty(),
+            Statement::CreateRowAccessPolicy { .. } => Span::empty(),
+            Statement::DropSearchIndex { .. } => Span::empty(),
+            Statement::DropVectorIndex { .. } => Span::empty(),
+            Statement::DropRowAccessPolicy { .. } => Span::empty(),
+            Statement::DropAllRowAccessPolicies { .. } => Span::empty(),
             Statement::CreateRole { .. } => Span::empty(),
             Statement::CreateSecret { .. } => Span::empty(),
             Statement::CreateServer { .. } => Span::empty(),
@@ -556,10 +566,16 @@ impl Spanned for Statement {
             Statement::AlterSchema(s) => s.span(),
             Statement::Vacuum(..) => Span::empty(),
             Statement::Loop(_) => Span::empty(),
+            Statement::For(_) => Span::empty(),
+            Statement::Repeat(_) => Span::empty(),
             Statement::Leave { .. } => Span::empty(),
             Statement::Iterate { .. } => Span::empty(),
             Statement::Break { .. } => Span::empty(),
             Statement::Continue { .. } => Span::empty(),
+            Statement::AlterMaterializedView { name, .. } => name.span(),
+            Statement::AlterViewWithOperations { name, .. } => name.span(),
+            Statement::AlterFunction { name, .. } => name.span(),
+            Statement::AlterProcedure { name, .. } => name.span(),
         }
     }
 }
@@ -607,6 +623,7 @@ impl Spanned for CreateTable {
             without_rowid: _, // bool
             like: _,
             clone,
+            copy: _,
             comment: _, // todo, no span
             on_commit: _,
             on_cluster: _,                      // todo, clickhouse specific
@@ -967,6 +984,7 @@ impl Spanned for AlterColumnOperation {
                 had_set: _,
             } => using.as_ref().map_or(Span::empty(), |u| u.span()),
             AlterColumnOperation::AddGenerated { .. } => Span::empty(),
+            AlterColumnOperation::SetOptions { .. } => Span::empty(),
         }
     }
 }
@@ -1243,6 +1261,7 @@ impl Spanned for AlterTableOperation {
             AlterTableOperation::SetOptionsParens { options } => {
                 union_spans(options.iter().map(|i| i.span()))
             }
+            AlterTableOperation::SetDefaultCollate { collate } => collate.span(),
         }
     }
 }
@@ -1725,7 +1744,8 @@ impl Spanned for Array {
     fn span(&self) -> Span {
         let Array {
             elem,
-            named: _, // bool
+            named: _,
+            element_type: _,
         } = self;
 
         union_spans(elem.iter().map(|i| i.span()))
@@ -2170,6 +2190,9 @@ impl Spanned for FunctionArgExpr {
                 union_spans(object_name.0.iter().map(|i| i.span()))
             }
             FunctionArgExpr::Wildcard => Span::empty(),
+            FunctionArgExpr::TableRef(object_name) => {
+                union_spans(object_name.0.iter().map(|i| i.span()))
+            }
         }
     }
 }
