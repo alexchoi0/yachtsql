@@ -1092,7 +1092,6 @@ fn test_scalar_subquery_in_where_clause() {
 }
 
 #[test]
-#[ignore = "Scalar subquery in CASE not yet supported"]
 fn test_scalar_subquery_in_case() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
@@ -1133,7 +1132,6 @@ fn test_array_subquery_with_limit() {
 }
 
 #[test]
-#[ignore = "IN subquery in SELECT expression not yet supported"]
 fn test_in_subquery_exists() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
@@ -1146,7 +1144,6 @@ fn test_in_subquery_exists() {
 }
 
 #[test]
-#[ignore = "IN subquery in SELECT expression not yet supported"]
 fn test_in_subquery_not_exists() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
@@ -1159,7 +1156,6 @@ fn test_in_subquery_not_exists() {
 }
 
 #[test]
-#[ignore = "NOT IN subquery in SELECT expression not yet supported"]
 fn test_not_in_subquery() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
@@ -1172,7 +1168,6 @@ fn test_not_in_subquery() {
 }
 
 #[test]
-#[ignore = "IN subquery in SELECT expression not yet supported"]
 fn test_in_subquery_empty_result() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
@@ -1303,7 +1298,6 @@ fn test_not_exists_subquery_in_select() {
 }
 
 #[test]
-#[ignore = "IN UNNEST(ARRAY(...)) in SELECT expression not yet supported"]
 fn test_in_unnest_array_subquery() {
     let mut session = create_session();
     setup_players_mascots(&mut session);
