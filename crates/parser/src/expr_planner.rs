@@ -886,6 +886,37 @@ impl ExprPlanner {
             return Ok(Expr::Literal(Literal::String(name.to_uppercase())));
         }
 
+        if index.is_none() && table.is_none() {
+            let struct_fields: Vec<_> = schema
+                .fields
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| {
+                    f.table
+                        .as_ref()
+                        .is_some_and(|t| t.eq_ignore_ascii_case(name))
+                })
+                .collect();
+            if !struct_fields.is_empty() {
+                let field_exprs: Vec<(Option<String>, Expr)> = struct_fields
+                    .iter()
+                    .map(|(i, f)| {
+                        (
+                            Some(f.name.clone()),
+                            Expr::Column {
+                                table: Some(name.to_string()),
+                                name: f.name.clone(),
+                                index: Some(*i),
+                            },
+                        )
+                    })
+                    .collect();
+                return Ok(Expr::Struct {
+                    fields: field_exprs,
+                });
+            }
+        }
+
         Ok(Expr::Column {
             table: table.map(String::from),
             name: name.to_string(),
@@ -2181,6 +2212,10 @@ impl ExprPlanner {
                     })
                     .collect();
                 Ok(DataType::Struct(struct_fields))
+            }
+            ast::DataType::Range(inner) => {
+                let inner_type = Self::plan_data_type(inner)?;
+                Ok(DataType::Range(Box::new(inner_type)))
             }
             _ => Ok(DataType::Unknown),
         }

@@ -669,7 +669,12 @@ impl<'a> PlanExecutor<'a> {
                             .any(|f| f.name.eq_ignore_ascii_case(name) && f.source_table.is_none())
                     }
                 } else {
-                    inner_tables.is_empty() && outer_schema.field_index(name).is_some()
+                    let inner_table_is_only_alias = inner_tables
+                        .iter()
+                        .all(|t| self.catalog.get_table(t).is_none());
+                    inner_table_is_only_alias
+                        && !inner_tables.contains(&name.to_lowercase())
+                        && outer_schema.field_index(name).is_some()
                 };
 
                 if should_substitute && let Some(idx) = outer_schema.field_index(name) {

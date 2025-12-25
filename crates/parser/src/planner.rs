@@ -40,6 +40,7 @@ fn table_object_to_raw_string(table: &TableObject) -> String {
 pub struct Planner<'a, C: CatalogProvider> {
     catalog: &'a C,
     cte_schemas: RefCell<HashMap<String, PlanSchema>>,
+    outer_schema: RefCell<Option<PlanSchema>>,
 }
 
 impl<'a, C: CatalogProvider> Planner<'a, C> {
@@ -47,7 +48,16 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
         Self {
             catalog,
             cte_schemas: RefCell::new(HashMap::new()),
+            outer_schema: RefCell::new(None),
         }
+    }
+
+    fn with_outer_schema(&self, schema: &PlanSchema) {
+        *self.outer_schema.borrow_mut() = Some(schema.clone());
+    }
+
+    fn clear_outer_schema(&self) {
+        *self.outer_schema.borrow_mut() = None;
     }
 
     pub fn plan_statement(&self, stmt: &Statement) -> Result<LogicalPlan> {
@@ -1151,7 +1161,31 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                     .unwrap_or_else(|| "offset".to_string());
 
                 let empty_schema = PlanSchema::new();
-                let context_schema = left_schema.unwrap_or(&empty_schema);
+                let outer_borrowed = self.outer_schema.borrow();
+                let context_schema = match (left_schema, outer_borrowed.as_ref()) {
+                    (Some(ls), Some(os)) => {
+                        let merged = ls.clone().merge(os.clone());
+                        drop(outer_borrowed);
+                        let merged_box = Box::new(merged);
+                        let merged_ref: &'static PlanSchema = Box::leak(merged_box);
+                        merged_ref
+                    }
+                    (Some(ls), None) => {
+                        drop(outer_borrowed);
+                        ls
+                    }
+                    (None, Some(os)) => {
+                        let os_clone = os.clone();
+                        drop(outer_borrowed);
+                        let os_box = Box::new(os_clone);
+                        let os_ref: &'static PlanSchema = Box::leak(os_box);
+                        os_ref
+                    }
+                    (None, None) => {
+                        drop(outer_borrowed);
+                        &empty_schema
+                    }
+                };
                 let array_expr = ExprPlanner::plan_expr(&array_exprs[0], context_schema)?;
                 let array_type = self.infer_expr_type(&array_expr, context_schema);
                 let element_type = match array_type {
@@ -3161,6 +3195,7 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
             None => (None, target_schema.clone()),
         };
 
+        self.with_outer_schema(&combined_schema);
         let subquery_planner = |query: &ast::Query| self.plan_query(query);
 
         let mut plan_assignments = Vec::new();
@@ -3185,6 +3220,8 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 ExprPlanner::plan_expr_with_subquery(s, &combined_schema, Some(&subquery_planner))
             })
             .transpose()?;
+
+        self.clear_outer_schema();
 
         Ok(LogicalPlan::Update {
             table_name,
@@ -4428,6 +4465,10 @@ impl<'a, C: CatalogProvider> Planner<'a, C> {
                 DataType::Array(Box::new(element_type))
             }
             ast::DataType::Interval { .. } => DataType::Interval,
+            ast::DataType::Range(inner) => {
+                let inner_type = Self::convert_sql_type(inner);
+                DataType::Range(Box::new(inner_type))
+            }
             ast::DataType::Custom(name, modifiers) => {
                 let type_name = object_name_to_raw_string(name).to_uppercase();
                 match type_name.as_str() {

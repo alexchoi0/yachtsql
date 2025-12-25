@@ -11028,6 +11028,13 @@ impl<'a> Parser<'a> {
                 Keyword::UUID => Ok(DataType::Uuid),
                 Keyword::DATE => Ok(DataType::Date),
                 Keyword::DATE32 => Ok(DataType::Date32),
+                Keyword::RANGE_DATE => Ok(DataType::Range(Box::new(DataType::Date))),
+                Keyword::RANGE_DATETIME => {
+                    Ok(DataType::Range(Box::new(DataType::Datetime(None))))
+                }
+                Keyword::RANGE_TIMESTAMP => {
+                    Ok(DataType::Range(Box::new(DataType::Timestamp(None, TimezoneInfo::None))))
+                }
                 Keyword::DATETIME => Ok(DataType::Datetime(self.parse_optional_precision()?)),
                 Keyword::DATETIME64 => {
                     self.prev_token();

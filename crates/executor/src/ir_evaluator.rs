@@ -14,7 +14,7 @@ use ordered_float::OrderedFloat;
 use rust_decimal::prelude::ToPrimitive;
 use wkt::TryFromWkt;
 use yachtsql_common::error::{Error, Result};
-use yachtsql_common::types::{DataType, IntervalValue, Value};
+use yachtsql_common::types::{DataType, IntervalValue, RangeValue, Value};
 use yachtsql_ir::{
     AggregateFunction, BinaryOp, DateTimeField, Expr, FunctionArg, FunctionBody, Literal,
     ScalarFunction, TrimWhere, UnaryOp, WeekStartDay, WhenClause,
@@ -1392,12 +1392,12 @@ impl<'a> IrEvaluator<'a> {
                     .map_err(|e| Error::InvalidQuery(format!("Invalid BOOL: {}", e)))?;
                 Ok(Value::Bool(b))
             }
+            DataType::Range(inner_type) => parse_range_string(value, inner_type),
             DataType::Unknown
             | DataType::Geography
             | DataType::Struct(_)
             | DataType::Array(_)
-            | DataType::Interval
-            | DataType::Range(_) => {
+            | DataType::Interval => {
                 panic!(
                     "[ir_evaluator::eval_typed_string] Unsupported TypedString for data type: {:?}",
                     data_type
@@ -5137,8 +5137,9 @@ impl<'a> IrEvaluator<'a> {
     fn fn_contains_substr(&self, args: &[Value]) -> Result<Value> {
         match args {
             [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-            [Value::String(haystack), Value::String(needle)] => {
+            [haystack_val, Value::String(needle)] => {
                 use unicode_normalization::UnicodeNormalization;
+                let haystack = self.value_to_contains_substr_string(haystack_val);
                 let normalized_haystack: String = haystack.nfkc().collect();
                 let normalized_needle: String = needle.nfkc().collect();
                 let result = normalized_haystack
@@ -5147,8 +5148,43 @@ impl<'a> IrEvaluator<'a> {
                 Ok(Value::Bool(result))
             }
             _ => Err(Error::InvalidQuery(
-                "CONTAINS_SUBSTR requires string arguments".into(),
+                "CONTAINS_SUBSTR requires string second argument".into(),
             )),
+        }
+    }
+
+    fn value_to_contains_substr_string(&self, val: &Value) -> String {
+        match val {
+            Value::Null => "".to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::Int64(n) => n.to_string(),
+            Value::Float64(f) => f.to_string(),
+            Value::Numeric(d) | Value::BigNumeric(d) => d.to_string(),
+            Value::String(s) => s.clone(),
+            Value::Bytes(b) => String::from_utf8_lossy(b).to_string(),
+            Value::Date(d) => d.to_string(),
+            Value::Time(t) => t.to_string(),
+            Value::DateTime(dt) => dt.to_string(),
+            Value::Timestamp(ts) => ts.to_string(),
+            Value::Json(j) => j.to_string(),
+            Value::Array(arr) => {
+                let elements: Vec<String> = arr
+                    .iter()
+                    .map(|v| self.value_to_contains_substr_string(v))
+                    .collect();
+                format!("[{}]", elements.join(", "))
+            }
+            Value::Struct(fields) => {
+                let elements: Vec<String> = fields
+                    .iter()
+                    .map(|(_, v)| self.value_to_contains_substr_string(v))
+                    .collect();
+                format!("({})", elements.join(", "))
+            }
+            Value::Geography(g) => g.clone(),
+            Value::Interval(i) => format!("{:?}", i),
+            Value::Range(r) => format!("{:?}", r),
+            Value::Default => "DEFAULT".to_string(),
         }
     }
 
@@ -9749,6 +9785,69 @@ fn parse_datetime_string(s: &str) -> Result<Value> {
         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
         .map_err(|e| Error::InvalidQuery(format!("Invalid datetime string: {}", e)))?;
     Ok(Value::DateTime(dt))
+}
+
+fn parse_range_string(s: &str, inner_type: &DataType) -> Result<Value> {
+    let s = s.trim();
+    if s.len() < 2 {
+        return Err(Error::InvalidQuery(format!(
+            "Invalid range string: too short: {}",
+            s
+        )));
+    }
+    let first_char = s.chars().next().unwrap();
+    let last_char = s.chars().last().unwrap();
+    if first_char != '[' && first_char != '(' {
+        return Err(Error::InvalidQuery(format!(
+            "Invalid range string: must start with '[' or '(': {}",
+            s
+        )));
+    }
+    if last_char != ']' && last_char != ')' {
+        return Err(Error::InvalidQuery(format!(
+            "Invalid range string: must end with ']' or ')': {}",
+            s
+        )));
+    }
+    let inner = &s[1..s.len() - 1];
+    let parts: Vec<&str> = inner.splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return Err(Error::InvalidQuery(format!(
+            "Invalid range string: must contain exactly one comma: {}",
+            s
+        )));
+    }
+    let start_str = parts[0].trim();
+    let end_str = parts[1].trim();
+    let start = if start_str.is_empty()
+        || start_str.eq_ignore_ascii_case("NULL")
+        || start_str.eq_ignore_ascii_case("UNBOUNDED")
+    {
+        None
+    } else {
+        Some(parse_range_value(start_str, inner_type)?)
+    };
+    let end = if end_str.is_empty()
+        || end_str.eq_ignore_ascii_case("NULL")
+        || end_str.eq_ignore_ascii_case("UNBOUNDED")
+    {
+        None
+    } else {
+        Some(parse_range_value(end_str, inner_type)?)
+    };
+    Ok(Value::Range(RangeValue::new(start, end)))
+}
+
+fn parse_range_value(s: &str, inner_type: &DataType) -> Result<Value> {
+    match inner_type {
+        DataType::Date => parse_date_string(s),
+        DataType::DateTime => parse_datetime_string(s),
+        DataType::Timestamp => parse_timestamp_string(s),
+        _ => Err(Error::InvalidQuery(format!(
+            "Unsupported range inner type: {:?}",
+            inner_type
+        ))),
+    }
 }
 
 fn parse_interval_string(_s: &str) -> Result<Value> {
