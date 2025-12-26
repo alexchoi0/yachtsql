@@ -132,73 +132,74 @@ fn bench_filter_queries(c: &mut Criterion) {
 }
 
 fn bench_join_queries(c: &mut Criterion) {
-    let row_count = 500;
-    let mut session = setup_session_with_data(row_count);
-
     let mut group = c.benchmark_group("join");
 
-    group.bench_function(format!("{row_count}_rows_inner_join_basic"), |b| {
-        b.iter(|| {
-            black_box(
-                session
-                    .execute_sql(
-                        "SELECT u.name, o.amount
-                         FROM users u
-                         INNER JOIN orders o ON u.id = o.user_id
-                         LIMIT 100",
-                    )
-                    .unwrap(),
-            )
-        })
-    });
+    for row_count in [500, 2000] {
+        let mut session = setup_session_with_data(row_count);
 
-    group.bench_function(format!("{row_count}_rows_join_with_filter_on_left"), |b| {
-        b.iter(|| {
-            black_box(
-                session
-                    .execute_sql(
-                        "SELECT u.name, o.amount
-                         FROM users u
-                         INNER JOIN orders o ON u.id = o.user_id
-                         WHERE u.department = 'Engineering'
-                         LIMIT 100",
-                    )
-                    .unwrap(),
-            )
-        })
-    });
+        group.bench_function(format!("{row_count}_rows_inner_join_basic"), |b| {
+            b.iter(|| {
+                black_box(
+                    session
+                        .execute_sql(
+                            "SELECT u.name, o.amount
+                             FROM users u
+                             INNER JOIN orders o ON u.id = o.user_id
+                             LIMIT 100",
+                        )
+                        .unwrap(),
+                )
+            })
+        });
 
-    group.bench_function(format!("{row_count}_rows_join_with_filter_on_right"), |b| {
-        b.iter(|| {
-            black_box(
-                session
-                    .execute_sql(
-                        "SELECT u.name, o.amount
-                         FROM users u
-                         INNER JOIN orders o ON u.id = o.user_id
-                         WHERE o.status = 'completed'
-                         LIMIT 100",
-                    )
-                    .unwrap(),
-            )
-        })
-    });
+        group.bench_function(format!("{row_count}_rows_join_filter_left"), |b| {
+            b.iter(|| {
+                black_box(
+                    session
+                        .execute_sql(
+                            "SELECT u.name, o.amount
+                             FROM users u
+                             INNER JOIN orders o ON u.id = o.user_id
+                             WHERE u.department = 'Engineering'
+                             LIMIT 100",
+                        )
+                        .unwrap(),
+                )
+            })
+        });
 
-    group.bench_function(format!("{row_count}_rows_join_with_filter_on_both"), |b| {
-        b.iter(|| {
-            black_box(
-                session
-                    .execute_sql(
-                        "SELECT u.name, o.amount
-                         FROM users u
-                         INNER JOIN orders o ON u.id = o.user_id
-                         WHERE u.department = 'Engineering' AND o.status = 'completed'
-                         LIMIT 100",
-                    )
-                    .unwrap(),
-            )
-        })
-    });
+        group.bench_function(format!("{row_count}_rows_join_filter_right"), |b| {
+            b.iter(|| {
+                black_box(
+                    session
+                        .execute_sql(
+                            "SELECT u.name, o.amount
+                             FROM users u
+                             INNER JOIN orders o ON u.id = o.user_id
+                             WHERE o.status = 'completed'
+                             LIMIT 100",
+                        )
+                        .unwrap(),
+                )
+            })
+        });
+
+        group.bench_function(format!("{row_count}_rows_join_filter_both"), |b| {
+            b.iter(|| {
+                black_box(
+                    session
+                        .execute_sql(
+                            "SELECT u.name, o.amount
+                             FROM users u
+                             INNER JOIN orders o ON u.id = o.user_id
+                             WHERE u.department = 'Engineering' AND o.status = 'completed'
+                             LIMIT 100",
+                        )
+                        .unwrap(),
+                )
+            })
+        });
+    }
 
     group.finish();
 }
