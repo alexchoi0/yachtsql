@@ -1146,8 +1146,16 @@ impl PhysicalPlan {
                 }
             }
 
-            PhysicalPlan::LoadData { table_name, .. } => {
-                accesses.add_write(table_name.clone());
+            PhysicalPlan::LoadData {
+                table_name,
+                temp_table,
+                ..
+            } => {
+                if *temp_table {
+                    accesses.add_write_optional(table_name.clone());
+                } else {
+                    accesses.add_write(table_name.clone());
+                }
             }
 
             PhysicalPlan::CreateSnapshot { source_name, .. } => {
