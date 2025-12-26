@@ -6,7 +6,7 @@ use yachtsql_ir::{Expr, SortExpr, WindowFrame};
 use yachtsql_storage::{Record, Schema, Table};
 
 use super::PlanExecutor;
-use super::window::WindowFuncType;
+use super::window::{WindowFuncType, partition_rows, sort_partition, compute_window_function};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 
@@ -49,13 +49,13 @@ impl<'a> PlanExecutor<'a> {
             let (partition_by, order_by, frame, func_type) =
                 Self::extract_qualify_window_spec(window_expr)?;
 
-            let partitions = Self::partition_rows(&rows, &partition_by, &evaluator)?;
+            let partitions = partition_rows(&rows, &partition_by, &evaluator)?;
             let mut results = vec![Value::Null; rows.len()];
 
             for (_key, mut indices) in partitions {
-                Self::sort_partition(&rows, &mut indices, &order_by, &evaluator)?;
+                sort_partition(&rows, &mut indices, &order_by, &evaluator)?;
 
-                let partition_results = Self::compute_window_function(
+                let partition_results = compute_window_function(
                     &rows,
                     &indices,
                     window_expr,

@@ -1059,16 +1059,17 @@ impl<'a> ConcurrentPlanExecutor<'a> {
     pub(crate) fn execute_window(
         &mut self,
         input: &PhysicalPlan,
-        _window_exprs: &[Expr],
+        window_exprs: &[Expr],
         schema: &PlanSchema,
     ) -> Result<Table> {
         let input_table = self.execute_plan(input)?;
-        let result_schema = plan_schema_to_schema(schema);
-        let mut result = Table::empty(result_schema);
-        for record in input_table.rows()? {
-            result.push_row(record.values().to_vec())?;
-        }
-        Ok(result)
+        crate::executor::compute_window(
+            &input_table,
+            window_exprs,
+            schema,
+            &self.variables,
+            &self.user_function_defs,
+        )
     }
 
     pub(crate) fn execute_cte(

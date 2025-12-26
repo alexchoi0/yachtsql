@@ -5,11 +5,70 @@ use yachtsql_common::types::Value;
 use yachtsql_ir::{
     AggregateFunction, Expr, PlanSchema, SortExpr, WindowFrame, WindowFrameBound, WindowFunction,
 };
-use yachtsql_storage::{Record, Table};
+use yachtsql_storage::{Record, Schema, Table};
 
 use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
+
+pub fn compute_window(
+    input_table: &Table,
+    window_exprs: &[Expr],
+    schema: &PlanSchema,
+    variables: &HashMap<String, Value>,
+    user_function_defs: &HashMap<String, crate::ir_evaluator::UserFunctionDef>,
+) -> Result<Table> {
+    let input_schema = input_table.schema().clone();
+    let result_schema = plan_schema_to_schema(schema);
+    let evaluator = IrEvaluator::new(&input_schema)
+        .with_variables(variables)
+        .with_user_functions(user_function_defs);
+
+    let rows: Vec<Record> = input_table.rows()?;
+    let mut all_window_results: Vec<Vec<Value>> = vec![Vec::new(); window_exprs.len()];
+
+    for (expr_idx, window_expr) in window_exprs.iter().enumerate() {
+        let (partition_by, order_by, frame, func_type) = extract_window_spec(window_expr)?;
+
+        let partitions = partition_rows(&rows, &partition_by, &evaluator)?;
+
+        for (_key, mut indices) in partitions {
+            sort_partition(&rows, &mut indices, &order_by, &evaluator)?;
+
+            let partition_results = compute_window_function(
+                &rows,
+                &indices,
+                window_expr,
+                &func_type,
+                &order_by,
+                &frame,
+                &evaluator,
+            )?;
+
+            for (local_idx, row_idx) in indices.iter().enumerate() {
+                while all_window_results[expr_idx].len() <= *row_idx {
+                    all_window_results[expr_idx].push(Value::Null);
+                }
+                all_window_results[expr_idx][*row_idx] = partition_results[local_idx].clone();
+            }
+        }
+    }
+
+    let mut result = Table::empty(result_schema);
+    for (row_idx, record) in rows.iter().enumerate() {
+        let mut new_row = record.values().to_vec();
+        for window_result in &all_window_results {
+            if row_idx < window_result.len() {
+                new_row.push(window_result[row_idx].clone());
+            } else {
+                new_row.push(Value::Null);
+            }
+        }
+        result.push_row(new_row)?;
+    }
+
+    Ok(result)
+}
 
 impl<'a> PlanExecutor<'a> {
     pub fn execute_window(
@@ -19,58 +78,17 @@ impl<'a> PlanExecutor<'a> {
         schema: &PlanSchema,
     ) -> Result<Table> {
         let input_table = self.execute_plan(input)?;
-        let input_schema = input_table.schema().clone();
-        let result_schema = plan_schema_to_schema(schema);
-        let evaluator = IrEvaluator::new(&input_schema);
-
-        let rows: Vec<Record> = input_table.rows()?;
-        let mut all_window_results: Vec<Vec<Value>> = vec![Vec::new(); window_exprs.len()];
-
-        for (expr_idx, window_expr) in window_exprs.iter().enumerate() {
-            let (partition_by, order_by, frame, func_type) =
-                Self::extract_window_spec(window_expr)?;
-
-            let partitions = Self::partition_rows(&rows, &partition_by, &evaluator)?;
-
-            for (_key, mut indices) in partitions {
-                Self::sort_partition(&rows, &mut indices, &order_by, &evaluator)?;
-
-                let partition_results = Self::compute_window_function(
-                    &rows,
-                    &indices,
-                    window_expr,
-                    &func_type,
-                    &order_by,
-                    &frame,
-                    &evaluator,
-                )?;
-
-                for (local_idx, row_idx) in indices.iter().enumerate() {
-                    while all_window_results[expr_idx].len() <= *row_idx {
-                        all_window_results[expr_idx].push(Value::Null);
-                    }
-                    all_window_results[expr_idx][*row_idx] = partition_results[local_idx].clone();
-                }
-            }
-        }
-
-        let mut result = Table::empty(result_schema);
-        for (row_idx, record) in rows.iter().enumerate() {
-            let mut new_row = record.values().to_vec();
-            for window_result in &all_window_results {
-                if row_idx < window_result.len() {
-                    new_row.push(window_result[row_idx].clone());
-                } else {
-                    new_row.push(Value::Null);
-                }
-            }
-            result.push_row(new_row)?;
-        }
-
-        Ok(result)
+        compute_window(
+            &input_table,
+            window_exprs,
+            schema,
+            &self.variables,
+            &self.user_function_defs,
+        )
     }
+}
 
-    fn extract_window_spec(
+fn extract_window_spec(
         expr: &Expr,
     ) -> Result<(
         Vec<Expr>,
@@ -103,36 +121,36 @@ impl<'a> PlanExecutor<'a> {
                 frame.clone(),
                 WindowFuncType::Aggregate(*func),
             )),
-            Expr::Alias { expr: inner, .. } => Self::extract_window_spec(inner),
+            Expr::Alias { expr: inner, .. } => extract_window_spec(inner),
             Expr::BinaryOp { left, right, .. } => {
-                if let Ok(spec) = Self::extract_window_spec(left) {
+                if let Ok(spec) = extract_window_spec(left) {
                     Ok(spec)
                 } else {
-                    Self::extract_window_spec(right)
+                    extract_window_spec(right)
                 }
             }
-            Expr::UnaryOp { expr: inner, .. } => Self::extract_window_spec(inner),
-            Expr::Cast { expr: inner, .. } => Self::extract_window_spec(inner),
+            Expr::UnaryOp { expr: inner, .. } => extract_window_spec(inner),
+            Expr::Cast { expr: inner, .. } => extract_window_spec(inner),
             Expr::Case {
                 operand,
                 when_clauses,
                 else_result,
             } => {
                 if let Some(op) = operand
-                    && let Ok(spec) = Self::extract_window_spec(op)
+                    && let Ok(spec) = extract_window_spec(op)
                 {
                     return Ok(spec);
                 }
                 for clause in when_clauses {
-                    if let Ok(spec) = Self::extract_window_spec(&clause.condition) {
+                    if let Ok(spec) = extract_window_spec(&clause.condition) {
                         return Ok(spec);
                     }
-                    if let Ok(spec) = Self::extract_window_spec(&clause.result) {
+                    if let Ok(spec) = extract_window_spec(&clause.result) {
                         return Ok(spec);
                     }
                 }
                 if let Some(e) = else_result
-                    && let Ok(spec) = Self::extract_window_spec(e)
+                    && let Ok(spec) = extract_window_spec(e)
                 {
                     return Ok(spec);
                 }
@@ -143,7 +161,7 @@ impl<'a> PlanExecutor<'a> {
             }
             Expr::ScalarFunction { args, .. } => {
                 for arg in args {
-                    if let Ok(spec) = Self::extract_window_spec(arg) {
+                    if let Ok(spec) = extract_window_spec(arg) {
                         return Ok(spec);
                     }
                 }
@@ -159,7 +177,7 @@ impl<'a> PlanExecutor<'a> {
         }
     }
 
-    pub fn partition_rows(
+pub fn partition_rows(
         rows: &[Record],
         partition_by: &[Expr],
         evaluator: &IrEvaluator,
@@ -182,7 +200,7 @@ impl<'a> PlanExecutor<'a> {
         Ok(partitions)
     }
 
-    pub fn sort_partition(
+pub fn sort_partition(
         rows: &[Record],
         indices: &mut [usize],
         order_by: &[SortExpr],
@@ -220,7 +238,7 @@ impl<'a> PlanExecutor<'a> {
         Ok(())
     }
 
-    pub fn compute_window_function(
+pub fn compute_window_function(
         rows: &[Record],
         sorted_indices: &[usize],
         expr: &Expr,
@@ -292,7 +310,7 @@ impl<'a> PlanExecutor<'a> {
                     }
                 }
                 WindowFunction::Ntile => {
-                    let n = Self::extract_window_arg(expr, 0, evaluator, &rows[sorted_indices[0]])?
+                    let n = extract_window_arg(expr, 0, evaluator, &rows[sorted_indices[0]])?
                         .as_i64()
                         .unwrap_or(1) as usize;
                     let n = n.max(1);
@@ -316,17 +334,17 @@ impl<'a> PlanExecutor<'a> {
                 }
                 WindowFunction::Lag => {
                     let offset =
-                        Self::extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
+                        extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
                             .as_i64()
                             .unwrap_or(1) as usize;
                     let default =
-                        Self::extract_window_arg(expr, 2, evaluator, &rows[sorted_indices[0]])
+                        extract_window_arg(expr, 2, evaluator, &rows[sorted_indices[0]])
                             .unwrap_or(Value::Null);
 
                     for i in 0..partition_size {
                         if i >= offset {
                             let lag_idx = sorted_indices[i - offset];
-                            let val = Self::extract_window_arg(expr, 0, evaluator, &rows[lag_idx])?;
+                            let val = extract_window_arg(expr, 0, evaluator, &rows[lag_idx])?;
                             results.push(val);
                         } else {
                             results.push(default.clone());
@@ -335,18 +353,18 @@ impl<'a> PlanExecutor<'a> {
                 }
                 WindowFunction::Lead => {
                     let offset =
-                        Self::extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
+                        extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
                             .as_i64()
                             .unwrap_or(1) as usize;
                     let default =
-                        Self::extract_window_arg(expr, 2, evaluator, &rows[sorted_indices[0]])
+                        extract_window_arg(expr, 2, evaluator, &rows[sorted_indices[0]])
                             .unwrap_or(Value::Null);
 
                     for i in 0..partition_size {
                         if i + offset < partition_size {
                             let lead_idx = sorted_indices[i + offset];
                             let val =
-                                Self::extract_window_arg(expr, 0, evaluator, &rows[lead_idx])?;
+                                extract_window_arg(expr, 0, evaluator, &rows[lead_idx])?;
                             results.push(val);
                         } else {
                             results.push(default.clone());
@@ -355,7 +373,7 @@ impl<'a> PlanExecutor<'a> {
                 }
                 WindowFunction::FirstValue => {
                     let first_idx = sorted_indices[0];
-                    let first_val = Self::extract_window_arg(expr, 0, evaluator, &rows[first_idx])?;
+                    let first_val = extract_window_arg(expr, 0, evaluator, &rows[first_idx])?;
                     results = vec![first_val; partition_size];
                 }
                 WindowFunction::LastValue => {
@@ -364,26 +382,26 @@ impl<'a> PlanExecutor<'a> {
                             let end_bound =
                                 frame.end.as_ref().unwrap_or(&WindowFrameBound::CurrentRow);
                             let end_idx =
-                                Self::compute_frame_end(end_bound, curr_pos, partition_size);
+                                compute_frame_end(end_bound, curr_pos, partition_size);
                             let actual_idx = sorted_indices[end_idx.min(partition_size - 1)];
                             let val =
-                                Self::extract_window_arg(expr, 0, evaluator, &rows[actual_idx])?;
+                                extract_window_arg(expr, 0, evaluator, &rows[actual_idx])?;
                             results.push(val);
                         }
                     } else {
                         let last_idx = sorted_indices[partition_size - 1];
                         let last_val =
-                            Self::extract_window_arg(expr, 0, evaluator, &rows[last_idx])?;
+                            extract_window_arg(expr, 0, evaluator, &rows[last_idx])?;
                         results = vec![last_val; partition_size];
                     }
                 }
                 WindowFunction::NthValue => {
-                    let n = Self::extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
+                    let n = extract_window_arg(expr, 1, evaluator, &rows[sorted_indices[0]])?
                         .as_i64()
                         .unwrap_or(1) as usize;
                     let nth_val = if n > 0 && n <= partition_size {
                         let nth_idx = sorted_indices[n - 1];
-                        Self::extract_window_arg(expr, 0, evaluator, &rows[nth_idx])?
+                        extract_window_arg(expr, 0, evaluator, &rows[nth_idx])?
                     } else {
                         Value::Null
                     };
@@ -457,16 +475,16 @@ impl<'a> PlanExecutor<'a> {
                 if let Some(frame) = frame {
                     for curr_pos in 0..partition_size {
                         let start_idx =
-                            Self::compute_frame_start(&frame.start, curr_pos, partition_size);
+                            compute_frame_start(&frame.start, curr_pos, partition_size);
                         let end_bound = frame.end.as_ref().unwrap_or(&WindowFrameBound::CurrentRow);
-                        let end_idx = Self::compute_frame_end(end_bound, curr_pos, partition_size);
+                        let end_idx = compute_frame_end(end_bound, curr_pos, partition_size);
                         let frame_indices: Vec<usize> = if start_idx <= end_idx {
                             sorted_indices[start_idx..=end_idx].to_vec()
                         } else {
                             vec![]
                         };
                         let agg_result =
-                            Self::compute_aggregate(func, expr, rows, &frame_indices, evaluator)?;
+                            compute_aggregate(func, expr, rows, &frame_indices, evaluator)?;
                         results.push(agg_result);
                     }
                 } else if has_order_by {
@@ -497,14 +515,14 @@ impl<'a> PlanExecutor<'a> {
                     for (group_start, group_end) in &peer_groups {
                         let running_indices: Vec<usize> = sorted_indices[..=*group_end].to_vec();
                         let agg_result =
-                            Self::compute_aggregate(func, expr, rows, &running_indices, evaluator)?;
+                            compute_aggregate(func, expr, rows, &running_indices, evaluator)?;
                         for _ in *group_start..=*group_end {
                             results.push(agg_result.clone());
                         }
                     }
                 } else {
                     let agg_result =
-                        Self::compute_aggregate(func, expr, rows, sorted_indices, evaluator)?;
+                        compute_aggregate(func, expr, rows, sorted_indices, evaluator)?;
                     results = vec![agg_result; partition_size];
                 }
             }
@@ -585,7 +603,7 @@ impl<'a> PlanExecutor<'a> {
         let values: Vec<Value> = indices
             .iter()
             .map(|&idx| {
-                Self::extract_window_arg(expr, 0, evaluator, &rows[idx]).unwrap_or(Value::Null)
+                extract_window_arg(expr, 0, evaluator, &rows[idx]).unwrap_or(Value::Null)
             })
             .collect();
 
@@ -640,7 +658,6 @@ impl<'a> PlanExecutor<'a> {
             _ => Ok(Value::Null),
         }
     }
-}
 
 pub enum WindowFuncType {
     Window(WindowFunction),
