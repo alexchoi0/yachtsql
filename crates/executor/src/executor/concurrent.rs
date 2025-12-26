@@ -506,6 +506,10 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         source_table: &Table,
         planned_schema: &PlanSchema,
     ) -> Table {
+        if planned_schema.fields.is_empty() {
+            return source_table.clone();
+        }
+
         let mut new_schema = Schema::new();
         let mut column_indices = Vec::new();
         for plan_field in &planned_schema.fields {
