@@ -428,12 +428,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             PhysicalPlan::ExecuteImmediate { .. } => Err(Error::internal(
                 "EXECUTE IMMEDIATE not yet implemented in concurrent executor",
             )),
-            PhysicalPlan::Grant { .. } => Err(Error::internal(
-                "GRANT not yet implemented in concurrent executor",
-            )),
-            PhysicalPlan::Revoke { .. } => Err(Error::internal(
-                "REVOKE not yet implemented in concurrent executor",
-            )),
+            PhysicalPlan::Grant { .. } => Ok(Table::empty(Schema::new())),
+            PhysicalPlan::Revoke { .. } => Ok(Table::empty(Schema::new())),
             PhysicalPlan::BeginTransaction => Err(Error::internal(
                 "BEGIN TRANSACTION not yet implemented in concurrent executor",
             )),
