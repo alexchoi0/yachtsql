@@ -18,6 +18,72 @@ use crate::executor::plan_schema_to_schema;
 use crate::ir_evaluator::{IrEvaluator, UserFunctionDef};
 use crate::plan::PhysicalPlan;
 
+fn coerce_value(value: Value, target_type: &DataType) -> Result<Value> {
+    match (&value, target_type) {
+        (Value::String(s), DataType::Date) => {
+            let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| Error::InvalidQuery(format!("Invalid date string: {}", e)))?;
+            Ok(Value::Date(date))
+        }
+        (Value::String(s), DataType::Time) => {
+            let time = NaiveTime::parse_from_str(s, "%H:%M:%S")
+                .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S%.f"))
+                .map_err(|e| Error::InvalidQuery(format!("Invalid time string: {}", e)))?;
+            Ok(Value::Time(time))
+        }
+        (Value::String(s), DataType::Timestamp) => {
+            let dt = DateTime::parse_from_rfc3339(s)
+                .map(|d| d.with_timezone(&Utc))
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                        })
+                        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+                        })
+                        .map(|ndt| ndt.and_utc())
+                })
+                .map_err(|e| Error::InvalidQuery(format!("Invalid timestamp string: {}", e)))?;
+            Ok(Value::Timestamp(dt))
+        }
+        (Value::String(s), DataType::DateTime) => {
+            let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
+                .map_err(|e| Error::InvalidQuery(format!("Invalid datetime string: {}", e)))?;
+            Ok(Value::DateTime(dt))
+        }
+        (Value::Int64(n), DataType::Float64) => {
+            Ok(Value::Float64(ordered_float::OrderedFloat(*n as f64)))
+        }
+        (Value::Float64(f), DataType::Int64) => Ok(Value::Int64(f.0 as i64)),
+        (Value::Struct(fields), DataType::Struct(target_fields)) => {
+            let mut coerced_fields = Vec::with_capacity(fields.len());
+            for (i, (_, val)) in fields.iter().enumerate() {
+                let (new_name, new_type) = if i < target_fields.len() {
+                    (target_fields[i].name.clone(), &target_fields[i].data_type)
+                } else {
+                    (format!("_field{}", i), &DataType::Unknown)
+                };
+                let coerced_val = coerce_value(val.clone(), new_type)?;
+                coerced_fields.push((new_name, coerced_val));
+            }
+            Ok(Value::Struct(coerced_fields))
+        }
+        (Value::Array(elements), DataType::Array(element_type)) => {
+            let coerced_elements: Result<Vec<_>> = elements
+                .iter()
+                .map(|elem| coerce_value(elem.clone(), element_type))
+                .collect();
+            Ok(Value::Array(coerced_elements?))
+        }
+        _ => Ok(value),
+    }
+}
+
 pub struct ConcurrentPlanExecutor<'a> {
     pub(crate) catalog: &'a ConcurrentCatalog,
     pub(crate) session: &'a ConcurrentSession,
@@ -976,15 +1042,22 @@ impl<'a> ConcurrentPlanExecutor<'a> {
 
     pub(crate) fn execute_aggregate(
         &mut self,
-        _input: &PhysicalPlan,
-        _group_by: &[Expr],
-        _aggregates: &[Expr],
-        _schema: &PlanSchema,
-        _grouping_sets: Option<&Vec<Vec<usize>>>,
+        input: &PhysicalPlan,
+        group_by: &[Expr],
+        aggregates: &[Expr],
+        schema: &PlanSchema,
+        grouping_sets: Option<&Vec<Vec<usize>>>,
     ) -> Result<Table> {
-        Err(Error::internal(
-            "Aggregate not yet implemented in concurrent executor",
-        ))
+        let input_table = self.execute_plan(input)?;
+        crate::executor::compute_aggregate(
+            &input_table,
+            group_by,
+            aggregates,
+            schema,
+            grouping_sets,
+            &self.variables,
+            &self.user_function_defs,
+        )
     }
 
     pub(crate) fn execute_window(
@@ -1075,6 +1148,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             .get_table_mut(table_name)
             .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
         let target_schema = target.schema().clone();
+        let fields = target_schema.fields().to_vec();
 
         let source_table = self.execute_plan(source)?;
 
@@ -1085,13 +1159,24 @@ impl<'a> ConcurrentPlanExecutor<'a> {
 
         for record in source_table.rows()? {
             if columns.is_empty() {
-                target.push_row(record.values().to_vec())?;
+                let mut coerced_row = Vec::with_capacity(fields.len());
+                for (i, val) in record.values().iter().enumerate() {
+                    if i < fields.len() {
+                        coerced_row.push(coerce_value(val.clone(), &fields[i].data_type)?);
+                    } else {
+                        coerced_row.push(val.clone());
+                    }
+                }
+                target.push_row(coerced_row)?;
             } else {
                 let mut row = vec![Value::Null; target_schema.field_count()];
                 for (i, col_name) in columns.iter().enumerate() {
                     if let Some(col_idx) = target_schema.field_index(col_name) {
-                        if i < record.values().len() {
-                            row[col_idx] = record.values()[i].clone();
+                        if i < record.values().len() && col_idx < fields.len() {
+                            row[col_idx] = coerce_value(
+                                record.values()[i].clone(),
+                                &fields[col_idx].data_type,
+                            )?;
                         }
                     }
                 }

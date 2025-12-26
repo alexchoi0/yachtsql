@@ -10,6 +10,203 @@ use super::{PlanExecutor, plan_schema_to_schema};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 
+pub fn compute_aggregate(
+    input_table: &Table,
+    group_by: &[Expr],
+    aggregates: &[Expr],
+    schema: &PlanSchema,
+    grouping_sets: Option<&Vec<Vec<usize>>>,
+    variables: &HashMap<String, Value>,
+    user_function_defs: &HashMap<String, crate::ir_evaluator::UserFunctionDef>,
+) -> Result<Table> {
+    if can_use_columnar_aggregate(aggregates, group_by, grouping_sets) {
+        return execute_columnar_aggregate(input_table, aggregates, schema);
+    }
+
+    let input_schema = input_table.schema().clone();
+    let evaluator = IrEvaluator::new(&input_schema)
+        .with_variables(variables)
+        .with_user_functions(user_function_defs);
+
+    let result_schema = plan_schema_to_schema(schema);
+    let mut result = Table::empty(result_schema);
+
+    if group_by.is_empty() {
+        let mut accumulators: Vec<Accumulator> =
+            aggregates.iter().map(Accumulator::from_expr).collect();
+
+        for record in input_table.rows()? {
+            for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
+                if matches!(
+                    acc,
+                    Accumulator::SumIf(_)
+                        | Accumulator::AvgIf { .. }
+                        | Accumulator::MinIf(_)
+                        | Accumulator::MaxIf(_)
+                ) {
+                    let (value, condition) =
+                        extract_conditional_agg_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_conditional(&value, condition)?;
+                } else if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_array_agg(&arg_val, sort_keys)?;
+                } else if matches!(acc, Accumulator::Covariance { .. }) {
+                    let (x, y) = extract_bivariate_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_bivariate(&x, &y)?;
+                } else if matches!(acc, Accumulator::ApproxTopSum { .. }) {
+                    let (value, weight) = extract_bivariate_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_approx_top_sum(&value, &weight)?;
+                } else {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    acc.accumulate(&arg_val)?;
+                }
+            }
+        }
+
+        let row: Vec<Value> = accumulators.iter().map(|a| a.finalize()).collect();
+        result.push_row(row)?;
+    } else if let Some(sets) = grouping_sets {
+        let rows = input_table.rows()?;
+
+        for grouping_set in sets {
+            let active_indices: Vec<usize> = grouping_set.clone();
+            let mut group_map: HashMap<String, (Vec<Value>, Vec<Accumulator>, Vec<usize>)> =
+                HashMap::new();
+
+            for record in &rows {
+                let mut group_key_values = Vec::new();
+                for (i, group_expr) in group_by.iter().enumerate() {
+                    if active_indices.contains(&i) {
+                        let val = evaluator.evaluate(group_expr, record)?;
+                        group_key_values.push(val);
+                    } else {
+                        group_key_values.push(Value::Null);
+                    }
+                }
+                let key = format!("{:?}", group_key_values);
+
+                let entry = group_map.entry(key).or_insert_with(|| {
+                    let mut accs: Vec<Accumulator> =
+                        aggregates.iter().map(Accumulator::from_expr).collect();
+                    for (acc, agg_expr) in accs.iter_mut().zip(aggregates.iter()) {
+                        match acc {
+                            Accumulator::Grouping { .. } => {
+                                let col_idx = get_grouping_column_index(agg_expr, group_by);
+                                let is_active = col_idx
+                                    .map(|idx| active_indices.contains(&idx))
+                                    .unwrap_or(true);
+                                acc.set_grouping_value(if is_active { 0 } else { 1 });
+                            }
+                            Accumulator::GroupingId { .. } => {
+                                let gid = compute_grouping_id(agg_expr, group_by, &active_indices);
+                                acc.set_grouping_value(gid);
+                            }
+                            _ => {}
+                        }
+                    }
+                    (group_key_values.clone(), accs, active_indices.clone())
+                });
+
+                for (acc, agg_expr) in entry.1.iter_mut().zip(aggregates.iter()) {
+                    if matches!(
+                        acc,
+                        Accumulator::Grouping { .. } | Accumulator::GroupingId { .. }
+                    ) {
+                        continue;
+                    }
+                    if matches!(
+                        acc,
+                        Accumulator::SumIf(_)
+                            | Accumulator::AvgIf { .. }
+                            | Accumulator::MinIf(_)
+                            | Accumulator::MaxIf(_)
+                    ) {
+                        let (value, condition) =
+                            extract_conditional_agg_args(&evaluator, agg_expr, record)?;
+                        acc.accumulate_conditional(&value, condition)?;
+                    } else if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, record)?;
+                        let sort_keys = extract_order_by_keys(&evaluator, agg_expr, record)?;
+                        acc.accumulate_array_agg(&arg_val, sort_keys)?;
+                    } else if matches!(acc, Accumulator::Covariance { .. }) {
+                        let (x, y) = extract_bivariate_args(&evaluator, agg_expr, record)?;
+                        acc.accumulate_bivariate(&x, &y)?;
+                    } else if matches!(acc, Accumulator::ApproxTopSum { .. }) {
+                        let (value, weight) = extract_bivariate_args(&evaluator, agg_expr, record)?;
+                        acc.accumulate_approx_top_sum(&value, &weight)?;
+                    } else {
+                        let arg_val = extract_agg_arg(&evaluator, agg_expr, record)?;
+                        acc.accumulate(&arg_val)?;
+                    }
+                }
+            }
+
+            for (group_key, accumulators, _active) in group_map.into_values() {
+                let mut row = group_key;
+                row.extend(accumulators.iter().map(|a| a.finalize()));
+                result.push_row(row)?;
+            }
+        }
+    } else {
+        let mut groups: HashMap<Vec<String>, Vec<Accumulator>> = HashMap::new();
+        let mut group_keys: HashMap<Vec<String>, Vec<Value>> = HashMap::new();
+
+        for record in input_table.rows()? {
+            let group_key_values: Vec<Value> = group_by
+                .iter()
+                .map(|e| evaluator.evaluate(e, &record))
+                .collect::<Result<_>>()?;
+            let group_key_strings: Vec<String> = group_key_values
+                .iter()
+                .map(|v| format!("{:?}", v))
+                .collect();
+
+            let accumulators = groups
+                .entry(group_key_strings.clone())
+                .or_insert_with(|| aggregates.iter().map(Accumulator::from_expr).collect());
+            group_keys
+                .entry(group_key_strings.clone())
+                .or_insert(group_key_values);
+
+            for (acc, agg_expr) in accumulators.iter_mut().zip(aggregates.iter()) {
+                if matches!(
+                    acc,
+                    Accumulator::SumIf(_)
+                        | Accumulator::AvgIf { .. }
+                        | Accumulator::MinIf(_)
+                        | Accumulator::MaxIf(_)
+                ) {
+                    let (value, condition) =
+                        extract_conditional_agg_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_conditional(&value, condition)?;
+                } else if matches!(acc, Accumulator::ArrayAgg { .. }) {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    let sort_keys = extract_order_by_keys(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_array_agg(&arg_val, sort_keys)?;
+                } else if matches!(acc, Accumulator::Covariance { .. }) {
+                    let (x, y) = extract_bivariate_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_bivariate(&x, &y)?;
+                } else if matches!(acc, Accumulator::ApproxTopSum { .. }) {
+                    let (value, weight) = extract_bivariate_args(&evaluator, agg_expr, &record)?;
+                    acc.accumulate_approx_top_sum(&value, &weight)?;
+                } else {
+                    let arg_val = extract_agg_arg(&evaluator, agg_expr, &record)?;
+                    acc.accumulate(&arg_val)?;
+                }
+            }
+        }
+
+        for (key_strings, accumulators) in groups {
+            let mut row = group_keys.get(&key_strings).unwrap().clone();
+            row.extend(accumulators.iter().map(|a| a.finalize()));
+            result.push_row(row)?;
+        }
+    }
+
+    Ok(result)
+}
+
 #[allow(clippy::wildcard_enum_match_arm)]
 fn get_simple_column_index(expr: &Expr) -> Option<usize> {
     match expr {
