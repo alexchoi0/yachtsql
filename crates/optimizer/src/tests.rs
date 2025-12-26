@@ -5,7 +5,7 @@ mod optimizer_tests {
 
     use crate::{OptimizedLogicalPlan, PhysicalPlanner};
 
-    fn test_schema() -> PlanSchema {
+    async fn test_schema() -> PlanSchema {
         PlanSchema::from_fields(vec![
             PlanField::new("id", DataType::Int64),
             PlanField::new("name", DataType::String),
@@ -107,7 +107,7 @@ mod optimizer_tests {
     mod topn_optimization {
         use super::*;
 
-        #[test]
+        #[tokio::test]
         fn sort_with_limit_becomes_topn() {
             let plan = LogicalPlan::Limit {
                 input: Box::new(LogicalPlan::Sort {
@@ -136,7 +136,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn sort_with_limit_and_offset_stays_separate() {
             let plan = LogicalPlan::Limit {
                 input: Box::new(LogicalPlan::Sort {
@@ -161,7 +161,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn sort_without_limit_stays_sort() {
             let plan = LogicalPlan::Sort {
                 input: Box::new(scan("users")),
@@ -183,7 +183,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn limit_without_sort_stays_limit() {
             let plan = LogicalPlan::Limit {
                 input: Box::new(scan("users")),
@@ -202,7 +202,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn limit_none_with_sort_stays_separate() {
             let plan = LogicalPlan::Limit {
                 input: Box::new(LogicalPlan::Sort {
@@ -228,7 +228,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn topn_with_filter() {
             let plan = LogicalPlan::Limit {
                 input: Box::new(LogicalPlan::Sort {
@@ -274,7 +274,7 @@ mod optimizer_tests {
             ])
         }
 
-        #[test]
+        #[tokio::test]
         fn inner_join_with_equi_condition_becomes_hash_join() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -315,7 +315,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn inner_join_with_multiple_equi_keys_becomes_hash_join() {
             let multi_key_schema = PlanSchema::from_fields(vec![
                 PlanField::new("a", DataType::Int64),
@@ -368,7 +368,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn inner_join_without_condition_uses_nested_loop() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -388,7 +388,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn inner_join_with_non_equi_condition_uses_nested_loop() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -406,7 +406,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn left_join_uses_nested_loop() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -426,7 +426,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn right_join_uses_nested_loop() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -446,7 +446,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn full_join_uses_nested_loop() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -466,7 +466,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn cross_join_uses_cross_join() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -484,7 +484,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn hash_join_into_logical_restores_right_indices() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -532,7 +532,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn hash_join_with_reversed_condition_order() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -574,7 +574,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn hash_join_with_table_qualified_columns() {
             let plan = LogicalPlan::Join {
                 left: Box::new(scan_users()),
@@ -595,7 +595,7 @@ mod optimizer_tests {
             }
         }
 
-        #[test]
+        #[tokio::test]
         fn nested_hash_joins() {
             let products_schema = PlanSchema::from_fields(vec![
                 PlanField::new("product_id", DataType::Int64),

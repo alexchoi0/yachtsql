@@ -1,7 +1,7 @@
 use crate::assert_table_eq;
 use crate::common::{create_session, d, n, ts};
 
-fn setup_sales_data(session: &mut yachtsql::YachtSQLSession) {
+async fn setup_sales_data(session: &yachtsql::YachtSQLSession) {
     session
         .execute_sql(
             "CREATE TABLE sales (
@@ -17,6 +17,7 @@ fn setup_sales_data(session: &mut yachtsql::YachtSQLSession) {
                 customer_id INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -33,13 +34,14 @@ fn setup_sales_data(session: &mut yachtsql::YachtSQLSession) {
             (9, 301, 'Book', 'Media', 'West', DATE '2024-02-04', 20, 25, 500, 1006),
             (10, 302, 'Magazine', 'Media', 'South', DATE '2024-02-05', 50, 10, 500, 1007)",
         )
+        .await
         .unwrap();
 }
 
-#[test]
-fn test_sales_by_category() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_sales_by_category() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -48,6 +50,7 @@ fn test_sales_by_category() {
             GROUP BY category
             ORDER BY revenue DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -55,10 +58,10 @@ fn test_sales_by_category() {
     );
 }
 
-#[test]
-fn test_sales_by_region_and_category() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_sales_by_region_and_category() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -67,6 +70,7 @@ fn test_sales_by_region_and_category() {
             GROUP BY region, category
             ORDER BY region, category",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -83,10 +87,10 @@ fn test_sales_by_region_and_category() {
     );
 }
 
-#[test]
-fn test_top_products_by_revenue() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_top_products_by_revenue() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -96,6 +100,7 @@ fn test_top_products_by_revenue() {
             ORDER BY revenue DESC, product_name
             LIMIT 5",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -109,10 +114,10 @@ fn test_top_products_by_revenue() {
     );
 }
 
-#[test]
-fn test_monthly_revenue_trend() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_monthly_revenue_trend() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -124,6 +129,7 @@ fn test_monthly_revenue_trend() {
             GROUP BY month
             ORDER BY month",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -131,10 +137,10 @@ fn test_monthly_revenue_trend() {
     );
 }
 
-#[test]
-fn test_running_total() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_running_total() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -145,6 +151,7 @@ fn test_running_total() {
             FROM sales
             ORDER BY sale_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -163,10 +170,10 @@ fn test_running_total() {
     );
 }
 
-#[test]
-fn test_moving_average() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_moving_average() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -180,6 +187,7 @@ fn test_moving_average() {
             FROM sales
             ORDER BY sale_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -198,10 +206,10 @@ fn test_moving_average() {
     );
 }
 
-#[test]
-fn test_rank_products_by_sales() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_rank_products_by_sales() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -213,6 +221,7 @@ fn test_rank_products_by_sales() {
             GROUP BY product_name
             ORDER BY revenue_rank, product_name",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -228,10 +237,10 @@ fn test_rank_products_by_sales() {
     );
 }
 
-#[test]
-fn test_dense_rank_by_category() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_dense_rank_by_category() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -247,6 +256,7 @@ fn test_dense_rank_by_category() {
             GROUP BY category, product_name
             ORDER BY category, category_rank, product_name",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -262,10 +272,10 @@ fn test_dense_rank_by_category() {
     );
 }
 
-#[test]
-fn test_percentile_analysis() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_percentile_analysis() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -276,6 +286,7 @@ fn test_percentile_analysis() {
             FROM sales
             ORDER BY percentile DESC, product_name",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -294,10 +305,10 @@ fn test_percentile_analysis() {
     );
 }
 
-#[test]
-fn test_ntile_quartiles() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_ntile_quartiles() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -308,6 +319,7 @@ fn test_ntile_quartiles() {
             FROM sales
             ORDER BY quartile, total_amount",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -326,10 +338,10 @@ fn test_ntile_quartiles() {
     );
 }
 
-#[test]
-fn test_lead_lag_analysis() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_lead_lag_analysis() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -341,6 +353,7 @@ fn test_lead_lag_analysis() {
             FROM sales
             ORDER BY sale_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -359,10 +372,10 @@ fn test_lead_lag_analysis() {
     );
 }
 
-#[test]
-fn test_first_last_value() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_first_last_value() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -382,6 +395,7 @@ fn test_first_last_value() {
             FROM sales
             ORDER BY category, total_amount DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -400,10 +414,10 @@ fn test_first_last_value() {
     );
 }
 
-#[test]
-fn test_customer_purchase_frequency() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_customer_purchase_frequency() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -417,13 +431,14 @@ fn test_customer_purchase_frequency() {
             HAVING COUNT(*) > 1
             ORDER BY total_spent DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(result, [[1001, 3, 1500, 500.0], [1002, 2, 1450, 725.0],]);
 }
 
-#[test]
-fn test_year_over_year_comparison() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_year_over_year_comparison() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE yearly_sales (
@@ -432,6 +447,7 @@ fn test_year_over_year_comparison() {
                 revenue INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -439,6 +455,7 @@ fn test_year_over_year_comparison() {
             (2023, 1, 1000), (2023, 2, 1200), (2023, 3, 1100), (2023, 4, 1500),
             (2024, 1, 1100), (2024, 2, 1400), (2024, 3, 1300), (2024, 4, 1700)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -452,7 +469,7 @@ fn test_year_over_year_comparison() {
             FROM (SELECT quarter, revenue AS rev_a FROM yearly_sales WHERE year = 2023) a
             JOIN (SELECT quarter, revenue AS rev_b FROM yearly_sales WHERE year = 2024) b ON a.quarter = b.quarter
             ORDER BY a.quarter",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -465,9 +482,9 @@ fn test_year_over_year_comparison() {
     );
 }
 
-#[test]
-fn test_cohort_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cohort_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE user_activity (
@@ -477,6 +494,7 @@ fn test_cohort_analysis() {
                 activity_type STRING
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -489,6 +507,7 @@ fn test_cohort_analysis() {
             (3, DATE '2024-02-01', DATE '2024-02-01', 'signup'),
             (3, DATE '2024-02-01', DATE '2024-02-15', 'purchase')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -502,6 +521,7 @@ fn test_cohort_analysis() {
             GROUP BY cohort_month, days_since_signup
             ORDER BY cohort_month, days_since_signup",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -514,9 +534,9 @@ fn test_cohort_analysis() {
     );
 }
 
-#[test]
-fn test_funnel_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_funnel_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE events (
@@ -525,6 +545,7 @@ fn test_funnel_analysis() {
                 event_time TIMESTAMP
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -540,6 +561,7 @@ fn test_funnel_analysis() {
             (4, 'add_to_cart', TIMESTAMP '2024-01-01 13:05:00'),
             (4, 'checkout', TIMESTAMP '2024-01-01 13:10:00')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -561,6 +583,7 @@ fn test_funnel_analysis() {
                     WHEN 'purchase' THEN 4
                 END",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -573,9 +596,9 @@ fn test_funnel_analysis() {
     );
 }
 
-#[test]
-fn test_retention_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_retention_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE logins (
@@ -583,6 +606,7 @@ fn test_retention_analysis() {
                 login_date DATE
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -592,7 +616,7 @@ fn test_retention_analysis() {
             (3, DATE '2024-01-01'),
             (4, DATE '2024-01-08'), (4, DATE '2024-01-15'),
             (5, DATE '2024-01-01'), (5, DATE '2024-01-08'), (5, DATE '2024-01-15'), (5, DATE '2024-01-22')",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -617,14 +641,15 @@ fn test_retention_analysis() {
             GROUP BY week_number
             ORDER BY week_number",
         )
+        .await
         .unwrap();
     assert_table_eq!(result, [[0, 5], [1, 4], [2, 2], [3, 1],]);
 }
 
-#[test]
-fn test_abc_analysis() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_abc_analysis() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -655,6 +680,7 @@ fn test_abc_analysis() {
             FROM cumulative
             ORDER BY revenue DESC, product_name",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -670,9 +696,9 @@ fn test_abc_analysis() {
     );
 }
 
-#[test]
-fn test_rfm_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_rfm_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE transactions (
@@ -681,6 +707,7 @@ fn test_rfm_analysis() {
                 amount INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -689,7 +716,7 @@ fn test_rfm_analysis() {
             (2, DATE '2024-01-05', 500),
             (3, DATE '2024-01-10', 50), (3, DATE '2024-01-20', 75), (3, DATE '2024-01-30', 60), (3, DATE '2024-02-10', 80),
             (4, DATE '2024-02-01', 1000)",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -714,6 +741,7 @@ fn test_rfm_analysis() {
             FROM rfm
             ORDER BY monetary DESC",
         )
+        .await
         .unwrap();
     let r_scores: Vec<i64> = (0..result.num_rows())
         .map(|i| result.column(4).unwrap().get(i).unwrap().as_i64().unwrap())
@@ -733,9 +761,9 @@ fn test_rfm_analysis() {
     assert_eq!(m_scores, vec![4, 3, 2, 1]);
 }
 
-#[test]
-fn test_time_series_decomposition() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_time_series_decomposition() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE daily_metrics (
@@ -743,6 +771,7 @@ fn test_time_series_decomposition() {
                 value INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -752,6 +781,7 @@ fn test_time_series_decomposition() {
             (DATE '2024-01-07', 130), (DATE '2024-01-08', 135), (DATE '2024-01-09', 140),
             (DATE '2024-01-10', 138)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -763,7 +793,7 @@ fn test_time_series_decomposition() {
                 value - AVG(value) OVER (ORDER BY metric_date ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) AS residual
             FROM daily_metrics
             ORDER BY metric_date",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -782,9 +812,9 @@ fn test_time_series_decomposition() {
     );
 }
 
-#[test]
-fn test_sessionization() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_sessionization() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE clickstream (
@@ -793,6 +823,7 @@ fn test_sessionization() {
                 page STRING
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -805,6 +836,7 @@ fn test_sessionization() {
             (2, TIMESTAMP '2024-01-01 11:00:00', 'home'),
             (2, TIMESTAMP '2024-01-01 11:01:00', 'products')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -834,6 +866,7 @@ fn test_sessionization() {
             FROM session_breaks
             ORDER BY user_id, event_time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -849,9 +882,9 @@ fn test_sessionization() {
     );
 }
 
-#[test]
-fn test_market_basket_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_market_basket_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE order_items (
@@ -859,6 +892,7 @@ fn test_market_basket_analysis() {
                 product_id INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -869,6 +903,7 @@ fn test_market_basket_analysis() {
             (4, 101), (4, 103),
             (5, 101), (5, 102), (5, 103), (5, 104)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -900,6 +935,7 @@ fn test_market_basket_analysis() {
             FROM product_pairs
             ORDER BY co_occurrence DESC, product_a, product_b",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -914,10 +950,10 @@ fn test_market_basket_analysis() {
     );
 }
 
-#[test]
-fn test_pareto_analysis() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_pareto_analysis() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -944,7 +980,7 @@ fn test_pareto_analysis() {
                 SUM(total_value) OVER (ORDER BY total_value DESC) * 100.0 / grand_total AS cumulative_value_pct
             FROM ranked
             ORDER BY customer_rank, customer_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -960,9 +996,9 @@ fn test_pareto_analysis() {
     );
 }
 
-#[test]
-fn test_growth_rates() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_growth_rates() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE monthly_revenue (
@@ -970,6 +1006,7 @@ fn test_growth_rates() {
                 revenue INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -981,6 +1018,7 @@ fn test_growth_rates() {
             (DATE '2024-05-01', 15500),
             (DATE '2024-06-01', 16000)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -995,6 +1033,7 @@ fn test_growth_rates() {
             FROM monthly_revenue
             ORDER BY month",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1009,9 +1048,9 @@ fn test_growth_rates() {
     );
 }
 
-#[test]
-fn test_variance_analysis() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_variance_analysis() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE budget_vs_actual (
@@ -1020,6 +1059,7 @@ fn test_variance_analysis() {
                 actual INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1029,6 +1069,7 @@ fn test_variance_analysis() {
             ('Engineering', 200000, 210000),
             ('Operations', 75000, 70000)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1047,6 +1088,7 @@ fn test_variance_analysis() {
             FROM budget_vs_actual
             ORDER BY ABS(actual - budget) DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1059,9 +1101,9 @@ fn test_variance_analysis() {
     );
 }
 
-#[test]
-fn test_weighted_average() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_weighted_average() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE portfolio (
@@ -1070,6 +1112,7 @@ fn test_weighted_average() {
                 return_pct FLOAT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1079,6 +1122,7 @@ fn test_weighted_average() {
             ('Real Estate', 15000, 6.0),
             ('Cash', 5000, 1.5)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1088,13 +1132,14 @@ fn test_weighted_average() {
                 ROUND(SUM(value * return_pct) / SUM(value), 2) AS weighted_avg_return
             FROM portfolio",
         )
+        .await
         .unwrap();
     assert_table_eq!(result, [[100000, 6.49]]);
 }
 
-#[test]
-fn test_anomaly_detection_zscore() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_anomaly_detection_zscore() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE metrics (
@@ -1102,6 +1147,7 @@ fn test_anomaly_detection_zscore() {
                 value INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1110,6 +1156,7 @@ fn test_anomaly_detection_zscore() {
             (DATE '2024-01-04', 105), (DATE '2024-01-05', 500),
             (DATE '2024-01-06', 101), (DATE '2024-01-07', 99), (DATE '2024-01-08', 103)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1132,6 +1179,7 @@ fn test_anomaly_detection_zscore() {
             CROSS JOIN stats s
             ORDER BY m.metric_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1148,10 +1196,10 @@ fn test_anomaly_detection_zscore() {
     );
 }
 
-#[test]
-fn test_data_quality_checks() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_data_quality_checks() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
@@ -1170,7 +1218,7 @@ fn test_data_quality_checks() {
             SELECT
                 'Duplicate Sale IDs', CAST(COUNT(*) - COUNT(DISTINCT sale_id) AS STRING)
             FROM sales",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1183,9 +1231,9 @@ fn test_data_quality_checks() {
     );
 }
 
-#[test]
-fn test_complex_nested_ctes_with_array_agg_limit() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_complex_nested_ctes_with_array_agg_limit() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE orders (
@@ -1196,6 +1244,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
                 total_amount FLOAT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1208,6 +1257,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
                 unit_price FLOAT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1219,6 +1269,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
                 signup_date DATE
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -1230,6 +1281,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
             (4, 'Delta Co', 'Startup', 'West', DATE '2023-06-15'),
             (5, 'Epsilon Ltd', 'SMB', 'North', DATE '2023-09-01')",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1245,6 +1297,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
             (109, 5, DATE '2024-02-01', 'completed', 2100.0),
             (110, 1, DATE '2024-02-15', 'completed', 4200.0)",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1264,6 +1317,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
             (13, 110, 1001, 'Widget Pro', 8, 300.0),
             (14, 110, 1003, 'Tool Max', 4, 350.0)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1332,7 +1386,7 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
             FROM customer_rankings cr
             LEFT JOIN top_products_per_customer tp ON cr.customer_id = tp.customer_id
             ORDER BY cr.revenue_rank",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1386,9 +1440,9 @@ fn test_complex_nested_ctes_with_array_agg_limit() {
     );
 }
 
-#[test]
-fn test_multi_level_cte_with_correlated_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_multi_level_cte_with_correlated_subquery() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE products (
@@ -1398,6 +1452,7 @@ fn test_multi_level_cte_with_correlated_subquery() {
                 base_price FLOAT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1410,6 +1465,7 @@ fn test_multi_level_cte_with_correlated_subquery() {
                 region STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -1422,6 +1478,7 @@ fn test_multi_level_cte_with_correlated_subquery() {
             (5, 'Wireless Mouse', 'Accessories', 50.0),
             (6, 'Keyboard Pro', 'Accessories', 120.0)",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1439,6 +1496,7 @@ fn test_multi_level_cte_with_correlated_subquery() {
             (11, 1, DATE '2024-02-10', 4, 1200.0, 'East'),
             (12, 4, DATE '2024-02-15', 8, 790.0, 'North')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1508,7 +1566,7 @@ fn test_multi_level_cte_with_correlated_subquery() {
             FROM final_ranking
             WHERE category_rank <= 2
             ORDER BY category, category_rank",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1583,9 +1641,9 @@ fn test_multi_level_cte_with_correlated_subquery() {
     );
 }
 
-#[test]
-fn test_array_agg_with_order_and_limit_in_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_with_order_and_limit_in_subquery() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE user_events (
@@ -1596,6 +1654,7 @@ fn test_array_agg_with_order_and_limit_in_subquery() {
                 page_url STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -1616,6 +1675,7 @@ fn test_array_agg_with_order_and_limit_in_subquery() {
             (4, 'page_view', TIMESTAMP '2024-01-03 16:00:00', 0, '/home'),
             (4, 'page_view', TIMESTAMP '2024-01-03 16:01:00', 0, '/products')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1680,7 +1740,7 @@ fn test_array_agg_with_order_and_limit_in_subquery() {
                 cart_additions
             FROM conversion_analysis
             ORDER BY total_value DESC, user_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1693,9 +1753,9 @@ fn test_array_agg_with_order_and_limit_in_subquery() {
     );
 }
 
-#[test]
-fn test_complex_window_with_array_agg_ordered() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_complex_window_with_array_agg_ordered() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE stock_trades (
@@ -1708,6 +1768,7 @@ fn test_complex_window_with_array_agg_ordered() {
                 trade_type STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -1725,6 +1786,7 @@ fn test_complex_window_with_array_agg_ordered() {
             (10, 'MSFT', DATE '2024-01-02', TIMESTAMP '2024-01-02 14:00:00', 376.50, 350, 'sell'),
             (11, 'MSFT', DATE '2024-01-03', TIMESTAMP '2024-01-03 09:45:00', 377.00, 500, 'buy')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -1788,6 +1850,7 @@ fn test_complex_window_with_array_agg_ordered() {
             FROM ranked_symbols
             ORDER BY trade_date, volume_rank, symbol",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -1831,9 +1894,9 @@ fn test_complex_window_with_array_agg_ordered() {
     );
 }
 
-#[test]
-fn test_nested_aggregates_with_scalar_subqueries() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_nested_aggregates_with_scalar_subqueries() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE departments (
@@ -1842,6 +1905,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
                 budget FLOAT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1854,6 +1918,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
                 manager_id INT64
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1866,6 +1931,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
                 status STRING
             )",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1877,6 +1943,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
                 hours_allocated INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -1887,6 +1954,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
             (3, 'Sales', 400000.0),
             (4, 'HR', 150000.0)",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1900,6 +1968,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
             (107, 'Grace', 3, 90000.0, DATE '2021-11-01', 106),
             (108, 'Henry', 4, 80000.0, DATE '2022-02-15', NULL)",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1910,6 +1979,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
             (1004, 'Sales Automation', 3, 80000.0, DATE '2023-11-01', 'completed'),
             (1005, 'HR Portal', 4, 50000.0, DATE '2024-03-01', 'planning')",
         )
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -1925,6 +1995,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
             (9, 1004, 107, 'Sales Rep', 120),
             (10, 1005, 108, 'Lead', 40)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2013,7 +2084,7 @@ fn test_nested_aggregates_with_scalar_subqueries() {
                 salary_rank
             FROM final_dept_analysis
             ORDER BY salary_rank",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2036,9 +2107,9 @@ fn test_nested_aggregates_with_scalar_subqueries() {
     );
 }
 
-#[test]
-fn test_recursive_like_hierarchy_with_arrays() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_recursive_like_hierarchy_with_arrays() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE org_hierarchy (
@@ -2049,6 +2120,7 @@ fn test_recursive_like_hierarchy_with_arrays() {
                 level INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2067,6 +2139,7 @@ fn test_recursive_like_hierarchy_with_arrays() {
             (11, 'Controller', 3, 'Controller', 3),
             (12, 'Sr Accountant', 11, 'Senior Accountant', 4)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2140,6 +2213,7 @@ fn test_recursive_like_hierarchy_with_arrays() {
             FROM with_subordinates
             ORDER BY level, emp_name",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2255,9 +2329,9 @@ fn test_recursive_like_hierarchy_with_arrays() {
     );
 }
 
-#[test]
-fn test_time_series_with_gaps_and_array_agg() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_time_series_with_gaps_and_array_agg() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE sensor_readings (
@@ -2268,6 +2342,7 @@ fn test_time_series_with_gaps_and_array_agg() {
                 status STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2285,6 +2360,7 @@ fn test_time_series_with_gaps_and_array_agg() {
             (2, TIMESTAMP '2024-01-01 04:00:00', 17.5, 56.0, 'cold'),
             (2, TIMESTAMP '2024-01-01 05:00:00', 19.0, 52.0, 'normal')",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2370,7 +2446,7 @@ fn test_time_series_with_gaps_and_array_agg() {
             FROM sensor_summary ss
             JOIN status_transitions st ON ss.sensor_id = st.sensor_id
             ORDER BY ss.sensor_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2405,9 +2481,9 @@ fn test_time_series_with_gaps_and_array_agg() {
     );
 }
 
-#[test]
-fn test_complex_pivot_simulation_with_ctes() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_complex_pivot_simulation_with_ctes() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE quarterly_sales (
@@ -2419,6 +2495,7 @@ fn test_complex_pivot_simulation_with_ctes() {
                 units_sold INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2440,6 +2517,7 @@ fn test_complex_pivot_simulation_with_ctes() {
             (2024, 1, 'South', 'Electronics', 145000.0, 490),
             (2024, 1, 'North', 'Furniture', 95000.0, 245)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2503,7 +2581,7 @@ fn test_complex_pivot_simulation_with_ctes() {
                 revenue_rank
             FROM ranked
             ORDER BY year, revenue_rank",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2596,14 +2674,16 @@ fn test_complex_pivot_simulation_with_ctes() {
     );
 }
 
-#[test]
-fn test_cte_qualified_wildcard() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cte_qualified_wildcard() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE t (year INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO t VALUES (2023, 100), (2023, 200), (2024, 150)")
+        .await
         .unwrap();
 
     let result = session
@@ -2617,15 +2697,16 @@ fn test_cte_qualified_wildcard() {
         SELECT t1.* FROM totals t1 ORDER BY t1.year
     ",
         )
+        .await
         .unwrap();
     assert_eq!(result.schema().field_count(), 2);
     let records = result.to_records().unwrap();
     assert_eq!(records.len(), 2);
 }
 
-#[test]
-fn test_unnest_with_complex_cte_and_array_operations() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_unnest_with_complex_cte_and_array_operations() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE user_tags (
@@ -2636,6 +2717,7 @@ fn test_unnest_with_complex_cte_and_array_operations() {
                 preferences ARRAY<STRUCT<key STRING, value STRING>>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2645,7 +2727,7 @@ fn test_unnest_with_complex_cte_and_array_operations() {
             (2, 'bob', ['tech', 'gaming'], [95, 88], [STRUCT('theme', 'light'), STRUCT('lang', 'es')]),
             (3, 'charlie', ['music', 'art', 'travel'], [70, 85, 92], [STRUCT('theme', 'dark'), STRUCT('lang', 'fr')]),
             (4, 'diana', ['tech', 'sports', 'fitness'], [80, 78, 95], [STRUCT('theme', 'auto'), STRUCT('lang', 'en')])",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -2717,6 +2799,7 @@ fn test_unnest_with_complex_cte_and_array_operations() {
             FROM users_with_popular_tags
             ORDER BY avg_score DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2729,9 +2812,9 @@ fn test_unnest_with_complex_cte_and_array_operations() {
     );
 }
 
-#[test]
-fn test_unnest_cross_join_with_nested_structs() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_unnest_cross_join_with_nested_structs() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE orders_nested (
@@ -2746,6 +2829,7 @@ fn test_unnest_cross_join_with_nested_structs() {
                 >>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2763,6 +2847,7 @@ fn test_unnest_cross_join_with_nested_structs() {
                 STRUCT('Tablet', 1, 600.0, [STRUCT('storage', '256GB'), STRUCT('color', 'gray')])
             ])",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2830,6 +2915,7 @@ fn test_unnest_cross_join_with_nested_structs() {
             FROM order_summary os
             ORDER BY os.order_total DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2841,9 +2927,9 @@ fn test_unnest_cross_join_with_nested_structs() {
     );
 }
 
-#[test]
-fn test_unnest_with_window_functions_and_array_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_unnest_with_window_functions_and_array_subquery() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE product_reviews (
@@ -2857,6 +2943,7 @@ fn test_unnest_with_window_functions_and_array_subquery() {
                 >>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2881,6 +2968,7 @@ fn test_unnest_with_window_functions_and_array_subquery() {
                 STRUCT('user10', 4, DATE '2024-01-25', 6)
             ])",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -2952,7 +3040,7 @@ fn test_unnest_with_window_functions_and_array_subquery() {
                 most_helpful_reviewer
             FROM product_summary
             ORDER BY avg_rating DESC, total_votes DESC",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -2964,9 +3052,9 @@ fn test_unnest_with_window_functions_and_array_subquery() {
     );
 }
 
-#[test]
-fn test_unnest_multi_array_correlation() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_unnest_multi_array_correlation() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE student_grades (
@@ -2977,6 +3065,7 @@ fn test_unnest_multi_array_correlation() {
                 semesters ARRAY<STRING>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -2986,7 +3075,7 @@ fn test_unnest_multi_array_correlation() {
             (2, 'Bob', ['Math', 'Physics', 'English'], [78.0, 82.5, 88.0], ['Fall', 'Spring', 'Spring']),
             (3, 'Charlie', ['Chemistry', 'Biology', 'English', 'History'], [91.0, 89.5, 84.0, 87.5], ['Fall', 'Fall', 'Fall', 'Spring']),
             (4, 'Diana', ['Math', 'English', 'History'], [95.0, 92.0, 88.5], ['Fall', 'Spring', 'Spring'])",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -3069,7 +3158,7 @@ fn test_unnest_multi_array_correlation() {
                 class_rank
             FROM final_analysis
             ORDER BY class_rank",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -3082,9 +3171,9 @@ fn test_unnest_multi_array_correlation() {
     );
 }
 
-#[test]
-fn test_unnest_with_lateral_join_simulation() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_unnest_with_lateral_join_simulation() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE sales_teams (
@@ -3095,6 +3184,7 @@ fn test_unnest_with_lateral_join_simulation() {
                 monthly_targets ARRAY<INT64>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -3109,7 +3199,7 @@ fn test_unnest_with_lateral_join_simulation() {
             (3, 'Gamma Team', 'East',
              [STRUCT('Anna', 'Lead', 550000), STRUCT('Peter', 'Rep', 320000), STRUCT('Emma', 'Rep', 290000), STRUCT('David', 'Rep', 270000)],
              [180000, 210000, 240000, 270000])",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -3191,6 +3281,7 @@ fn test_unnest_with_lateral_join_simulation() {
             FROM combined_analysis
             ORDER BY quota_rank",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -3202,9 +3293,9 @@ fn test_unnest_with_lateral_join_simulation() {
     );
 }
 
-#[test]
-fn test_deep_nested_unnest_with_aggregations() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_deep_nested_unnest_with_aggregations() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE ecommerce_orders (
@@ -3221,6 +3312,7 @@ fn test_deep_nested_unnest_with_aggregations() {
                 >>
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -3243,7 +3335,7 @@ fn test_deep_nested_unnest_with_aggregations() {
              [
                  STRUCT('SKU001', 'Laptop', 1, 1200.0, [STRUCT('REPEAT', 100.0)])
              ])",
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -3338,7 +3430,7 @@ fn test_deep_nested_unnest_with_aggregations() {
             FROM order_level_stats ols
             JOIN customer_summary cs ON ols.customer_id = cs.customer_id
             ORDER BY ols.order_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -3350,34 +3442,35 @@ fn test_deep_nested_unnest_with_aggregations() {
     );
 }
 
-#[test]
-fn test_union_debug_case_in_agg() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_union_debug_case_in_agg() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT SUM(CASE WHEN product_name IS NULL THEN 1 ELSE 0 END) AS null_count FROM sales",
         )
+        .await
         .unwrap();
     assert_table_eq!(result, [[0]]);
 }
 
-#[test]
-fn test_union_debug_with_case() {
-    let mut session = create_session();
-    setup_sales_data(&mut session);
+#[tokio::test]
+async fn test_union_debug_with_case() {
+    let session = create_session();
+    setup_sales_data(&session).await;
 
     let r1 = session.execute_sql(
         "SELECT 'b', CAST(SUM(CASE WHEN product_name IS NULL THEN 1 ELSE 0 END) AS STRING) FROM sales",
-    );
+    ).await;
     eprintln!("Standalone: {:?}", r1.is_ok());
 
     let r2 = session.execute_sql(
         "SELECT 'a' AS m, CAST(COUNT(*) AS STRING) AS v FROM sales
          UNION ALL
          SELECT 'b', CAST(SUM(CASE WHEN product_name IS NULL THEN 1 ELSE 0 END) AS STRING) FROM sales",
-    );
+    ).await;
     eprintln!("UNION: {:?}", r2.is_ok());
     if r2.is_err() {
         eprintln!("UNION Error: {:?}", r2.err());

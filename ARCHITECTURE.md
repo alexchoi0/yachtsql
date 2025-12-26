@@ -343,7 +343,7 @@ fn my_test() {
 
 Key test helpers:
 
-- `create_executor()`: Fresh QueryExecutor
+- `create_session()`: Fresh AsyncQueryExecutor session
 - `exec_ok(exec, sql)`: Execute, panic on error
 - `query(exec, sql)`: Execute and return result
 - `assert_batch_values(result, expected)`: Compare results

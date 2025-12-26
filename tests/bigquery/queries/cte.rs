@@ -3,82 +3,83 @@ use yachtsql::YachtSQLSession;
 use crate::assert_table_eq;
 use crate::common::{create_session, d};
 
-fn setup_tables(session: &mut YachtSQLSession) {
+async fn setup_tables(session: &YachtSQLSession) {
     session
         .execute_sql(
             "CREATE TABLE employees (id INT64, name STRING, manager_id INT64, salary INT64)",
         )
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO employees VALUES (1, 'CEO', NULL, 200000), (2, 'VP', 1, 150000), (3, 'Manager', 2, 100000), (4, 'Developer', 3, 80000)")
+        .execute_sql("INSERT INTO employees VALUES (1, 'CEO', NULL, 200000), (2, 'VP', 1, 150000), (3, 'Manager', 2, 100000), (4, 'Developer', 3, 80000)").await
         .unwrap();
 }
 
-#[test]
-fn test_simple_cte() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_simple_cte() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH high_earners AS (SELECT name, salary FROM employees WHERE salary > 100000) SELECT name FROM high_earners ORDER BY salary DESC",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"], ["VP"]]);
 }
 
-#[test]
-fn test_cte_with_column_aliases() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_with_column_aliases() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH emp_data (emp_name, emp_salary) AS (SELECT name, salary FROM employees) SELECT emp_name FROM emp_data WHERE emp_salary > 100000 ORDER BY emp_salary DESC",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"], ["VP"]]);
 }
 
-#[test]
-fn test_multiple_ctes() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_multiple_ctes() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH managers AS (SELECT id, name FROM employees WHERE manager_id IS NOT NULL), top_managers AS (SELECT id, name FROM managers WHERE id IN (SELECT manager_id FROM employees)) SELECT name FROM top_managers ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["VP"], ["Manager"]]);
 }
 
-#[test]
-fn test_cte_used_multiple_times() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_used_multiple_times() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH emp AS (SELECT * FROM employees), stats AS (SELECT COUNT(*) AS cnt, AVG(salary) AS avg_sal FROM emp) SELECT cnt AS total, CAST(avg_sal AS FLOAT64) AS avg_salary FROM stats",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [[4, 132500.0]]);
 }
 
-#[test]
-fn test_cte_with_join() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_with_join() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH mgrs AS (SELECT id, name AS mgr_name FROM employees WHERE id IN (SELECT manager_id FROM employees WHERE manager_id IS NOT NULL)) SELECT e.name, m.mgr_name FROM employees e JOIN mgrs m ON e.manager_id = m.id ORDER BY e.id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -87,16 +88,16 @@ fn test_cte_with_join() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+async fn test_recursive_cte() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH RECURSIVE emp_hierarchy AS (SELECT id, name, manager_id, 1 AS level FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.id, e.name, e.manager_id, h.level + 1 FROM employees e JOIN emp_hierarchy h ON e.manager_id = h.id) SELECT name, level FROM emp_hierarchy ORDER BY level, id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -105,120 +106,126 @@ fn test_recursive_cte() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_with_limit() {
-    let mut session = create_session();
+async fn test_recursive_cte_with_limit() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE numbers (n INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO numbers VALUES (1)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "WITH RECURSIVE cnt AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM cnt WHERE n < 5) SELECT n FROM cnt ORDER BY n",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [[1], [2], [3], [4], [5],]);
 }
 
-#[test]
-fn test_cte_with_aggregation() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_with_aggregation() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "WITH salary_stats AS (SELECT AVG(salary) AS avg_sal, MAX(salary) AS max_sal FROM employees) SELECT name FROM employees, salary_stats WHERE salary > avg_sal ORDER BY salary DESC",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"], ["VP"]]);
 }
 
-#[test]
-fn test_cte_in_subquery() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_in_subquery() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT name FROM employees WHERE salary > (WITH avg_sal AS (SELECT AVG(salary) AS val FROM employees) SELECT val FROM avg_sal) ORDER BY salary DESC",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"], ["VP"]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_cte_with_insert() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+async fn test_cte_with_insert() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
         .execute_sql("CREATE TABLE high_earners (name STRING, salary INT64)")
+        .await
         .unwrap();
 
     session
         .execute_sql(
             "WITH he AS (SELECT name, salary FROM employees WHERE salary > 100000) INSERT INTO high_earners SELECT * FROM he",
-        )
+        ).await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT name FROM high_earners ORDER BY salary DESC")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"], ["VP"]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_cte_with_update() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+async fn test_cte_with_update() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
         .execute_sql(
             "WITH low_earners AS (SELECT id FROM employees WHERE salary < 100000) UPDATE employees SET salary = CAST(salary * 1.1 AS INT64) WHERE id IN (SELECT id FROM low_earners)",
-        )
+        ).await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT salary FROM employees WHERE name = 'Developer'")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[88000]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_cte_with_delete() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+async fn test_cte_with_delete() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
         .execute_sql(
             "WITH low_earners AS (SELECT id FROM employees WHERE salary < 90000) DELETE FROM employees WHERE id IN (SELECT id FROM low_earners)",
-        )
+        ).await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT COUNT(*) FROM employees")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_fibonacci() {
-    let mut session = create_session();
+async fn test_recursive_cte_fibonacci() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -231,6 +238,7 @@ fn test_recursive_cte_fibonacci() {
             )
             SELECT n, fib_n FROM fib ORDER BY n",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -250,13 +258,14 @@ fn test_recursive_cte_fibonacci() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_path_finding() {
-    let mut session = create_session();
+async fn test_recursive_cte_path_finding() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE edges (from_node STRING, to_node STRING, weight INT64)")
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -264,6 +273,7 @@ fn test_recursive_cte_path_finding() {
             ('A', 'B', 1), ('B', 'C', 2), ('C', 'D', 1),
             ('A', 'C', 4), ('B', 'D', 3)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -284,18 +294,20 @@ fn test_recursive_cte_path_finding() {
             FROM paths
             WHERE end_node = 'D'",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_tree_aggregation() {
-    let mut session = create_session();
+async fn test_recursive_cte_tree_aggregation() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE org (id INT64, name STRING, parent_id INT64, salary INT64)")
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -308,6 +320,7 @@ fn test_recursive_cte_tree_aggregation() {
             (6, 'Dev 2', 4, 95000),
             (7, 'Accountant', 3, 80000)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -322,6 +335,7 @@ fn test_recursive_cte_tree_aggregation() {
             )
             SELECT name, depth, salary FROM subtree ORDER BY depth, name",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -338,10 +352,10 @@ fn test_recursive_cte_tree_aggregation() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_generate_series() {
-    let mut session = create_session();
+async fn test_recursive_cte_generate_series() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -354,6 +368,7 @@ fn test_recursive_cte_generate_series() {
             )
             SELECT dt FROM series ORDER BY dt",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -370,10 +385,10 @@ fn test_recursive_cte_generate_series() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_max_depth() {
-    let mut session = create_session();
+async fn test_recursive_cte_max_depth() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -386,18 +401,20 @@ fn test_recursive_cte_max_depth() {
             )
             SELECT MAX(level) AS max_level FROM deep",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[100]]);
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_with_aggregation() {
-    let mut session = create_session();
+async fn test_recursive_cte_with_aggregation() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE categories (id INT64, name STRING, parent_id INT64)")
+        .await
         .unwrap();
     session
         .execute_sql(
@@ -408,6 +425,7 @@ fn test_recursive_cte_with_aggregation() {
             (4, 'Phones', 1),
             (5, 'Smartphones', 4)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -423,6 +441,7 @@ fn test_recursive_cte_with_aggregation() {
             )
             SELECT id, name, level, path FROM cat_tree ORDER BY path",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -437,10 +456,10 @@ fn test_recursive_cte_with_aggregation() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_multiple_anchors() {
-    let mut session = create_session();
+async fn test_recursive_cte_multiple_anchors() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -455,6 +474,7 @@ fn test_recursive_cte_multiple_anchors() {
             )
             SELECT n, source FROM multi ORDER BY source, n",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -470,10 +490,10 @@ fn test_recursive_cte_multiple_anchors() {
     );
 }
 
-#[test]
+#[tokio::test]
 
-fn test_recursive_cte_string_accumulation() {
-    let mut session = create_session();
+async fn test_recursive_cte_string_accumulation() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -496,15 +516,16 @@ fn test_recursive_cte_string_accumulation() {
             )
             SELECT sentence FROM words WHERE pos = 4",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["Hello World from SQL"]]);
 }
 
-#[test]
-fn test_cte_referencing_another_cte() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_referencing_another_cte() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -514,15 +535,16 @@ fn test_cte_referencing_another_cte() {
                 ranked AS (SELECT name, RANK() OVER (ORDER BY salary DESC) AS rk FROM filtered)
             SELECT name FROM ranked WHERE rk = 1",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["CEO"]]);
 }
 
-#[test]
-fn test_cte_with_window_functions() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cte_with_window_functions() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -535,7 +557,7 @@ fn test_cte_with_window_functions() {
                 FROM employees
             )
             SELECT name, running_total FROM windowed WHERE salary > avg_salary ORDER BY running_total",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["VP", 330000], ["CEO", 530000]]);

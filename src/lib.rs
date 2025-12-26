@@ -10,69 +10,59 @@
 //! SQL String → Parser → LogicalPlan → Optimizer → PhysicalPlan → Executor → Result
 //! ```
 //!
-//! The `YachtSQLEngine` creates isolated sessions that share a query plan cache.
-//! Each session owns its own `Catalog` (tables, views, functions) and `Session`
-//! state (variables, system state).
+//! The `YachtSQLEngine` creates isolated sessions with their own catalog and state.
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use yachtsql::YachtSQLEngine;
 //!
-//! let engine = YachtSQLEngine::new();
-//! let mut session = engine.create_session();
+//! #[tokio::main]
+//! async fn main() {
+//!     let engine = YachtSQLEngine::new();
+//!     let session = engine.create_session();
 //!
-//! // Create a table
-//! session
-//!     .execute_sql("CREATE TABLE users (id INT64, name STRING)")
-//!     .unwrap();
+//!     // Create a table
+//!     session
+//!         .execute_sql("CREATE TABLE users (id INT64, name STRING)")
+//!         .await
+//!         .unwrap();
 //!
-//! // Insert data
-//! session
-//!     .execute_sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
-//!     .unwrap();
+//!     // Insert data
+//!     session
+//!         .execute_sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+//!         .await
+//!         .unwrap();
 //!
-//! // Query data
-//! let result = session
-//!     .execute_sql("SELECT * FROM users WHERE id = 1")
-//!     .unwrap();
+//!     // Query data
+//!     let result = session
+//!         .execute_sql("SELECT * FROM users WHERE id = 1")
+//!         .await
+//!         .unwrap();
+//! }
 //! ```
-
-use std::sync::Arc;
 
 pub use yachtsql_common::error::{Error, Result};
 pub use yachtsql_common::result::{ColumnInfo, QueryResult, Row};
 pub use yachtsql_common::types::{DataType, Value};
-#[cfg(feature = "concurrent")]
-pub use yachtsql_executor::AsyncQueryExecutor;
 pub use yachtsql_executor::{
-    Catalog, QueryExecutor, Record, Session, SessionExecutor, SharedState, Table,
+    AsyncQueryExecutor, ConcurrentCatalog, ConcurrentSession, Record, Table,
 };
 pub use yachtsql_ir::LogicalPlan;
 pub use yachtsql_optimizer::OptimizedLogicalPlan;
 pub use yachtsql_parser::{CatalogProvider, Planner, PlannerError, parse_and_plan, parse_sql};
 pub use yachtsql_storage::{Field, FieldMode, Schema};
 
-pub struct YachtSQLEngine {
-    shared: Arc<SharedState>,
-}
+pub struct YachtSQLEngine;
 
 impl YachtSQLEngine {
     pub fn new() -> Self {
-        Self {
-            shared: Arc::new(SharedState::new()),
-        }
+        Self
     }
 
     pub fn create_session(&self) -> YachtSQLSession {
         YachtSQLSession {
-            executor: SessionExecutor::new(Arc::clone(&self.shared)),
-        }
-    }
-
-    pub fn create_session_with_catalog(&self, catalog: Catalog) -> YachtSQLSession {
-        YachtSQLSession {
-            executor: SessionExecutor::with_catalog(Arc::clone(&self.shared), catalog),
+            executor: AsyncQueryExecutor::new(),
         }
     }
 }
@@ -84,45 +74,41 @@ impl Default for YachtSQLEngine {
 }
 
 pub struct YachtSQLSession {
-    executor: SessionExecutor,
+    executor: AsyncQueryExecutor,
 }
 
 impl YachtSQLSession {
-    pub fn execute_sql(&mut self, sql: &str) -> Result<Table> {
-        self.executor.execute_sql(sql)
+    pub fn new() -> Self {
+        Self {
+            executor: AsyncQueryExecutor::new(),
+        }
     }
 
-    pub fn query(&mut self, sql: &str) -> Result<QueryResult> {
-        let table = self.executor.execute_sql(sql)?;
+    pub async fn execute_sql(&self, sql: &str) -> Result<Table> {
+        self.executor.execute_sql(sql).await
+    }
+
+    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+        let table = self.executor.execute_sql(sql).await?;
         table.to_query_result()
     }
 
-    pub fn run(&mut self, sql: &str) -> Result<u64> {
-        let table = self.executor.execute_sql(sql)?;
+    pub async fn run(&self, sql: &str) -> Result<u64> {
+        let table = self.executor.execute_sql(sql).await?;
         Ok(table.row_count() as u64)
     }
 
-    pub fn session(&self) -> &Session {
+    pub fn session(&self) -> &ConcurrentSession {
         self.executor.session()
     }
 
-    pub fn session_mut(&mut self) -> &mut Session {
-        self.executor.session_mut()
-    }
-
-    pub fn catalog(&self) -> &Catalog {
+    pub fn catalog(&self) -> &ConcurrentCatalog {
         self.executor.catalog()
     }
+}
 
-    pub fn catalog_mut(&mut self) -> &mut Catalog {
-        self.executor.catalog_mut()
-    }
-
-    pub fn executor(&self) -> &SessionExecutor {
-        &self.executor
-    }
-
-    pub fn executor_mut(&mut self) -> &mut SessionExecutor {
-        &mut self.executor
+impl Default for YachtSQLSession {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -3,24 +3,24 @@ use yachtsql::YachtSQLSession;
 use crate::assert_table_eq;
 use crate::common::create_session;
 
-fn setup_tables(session: &mut YachtSQLSession) {
+async fn setup_tables(session: &YachtSQLSession) {
     session
-        .execute_sql("CREATE TABLE sales (id INT64, employee STRING, department STRING, amount INT64, sale_date DATE)")
+        .execute_sql("CREATE TABLE sales (id INT64, employee STRING, department STRING, amount INT64, sale_date DATE)").await
         .unwrap();
     session
-        .execute_sql("INSERT INTO sales VALUES (1, 'Alice', 'Electronics', 1000, '2024-01-01'), (2, 'Bob', 'Electronics', 1500, '2024-01-02'), (3, 'Alice', 'Electronics', 2000, '2024-01-03'), (4, 'Charlie', 'Clothing', 800, '2024-01-01'), (5, 'Diana', 'Clothing', 1200, '2024-01-02')")
+        .execute_sql("INSERT INTO sales VALUES (1, 'Alice', 'Electronics', 1000, '2024-01-01'), (2, 'Bob', 'Electronics', 1500, '2024-01-02'), (3, 'Alice', 'Electronics', 2000, '2024-01-03'), (4, 'Charlie', 'Clothing', 800, '2024-01-01'), (5, 'Diana', 'Clothing', 1200, '2024-01-02')").await
         .unwrap();
 }
 
-#[test]
-fn test_row_number() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_row_number() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn FROM sales ORDER BY rn",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -35,15 +35,15 @@ fn test_row_number() {
     );
 }
 
-#[test]
-fn test_row_number_with_partition() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_row_number_with_partition() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, department, amount, ROW_NUMBER() OVER (PARTITION BY department ORDER BY amount DESC) AS rn FROM sales ORDER BY department, rn",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -58,21 +58,23 @@ fn test_row_number_with_partition() {
     );
 }
 
-#[test]
-fn test_rank() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_rank() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE scores (name STRING, score INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO scores VALUES ('A', 100), ('B', 100), ('C', 90), ('D', 80)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT name, score, RANK() OVER (ORDER BY score DESC) AS rank FROM scores ORDER BY rank, name",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -81,21 +83,23 @@ fn test_rank() {
     );
 }
 
-#[test]
-fn test_dense_rank() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_dense_rank() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE scores (name STRING, score INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO scores VALUES ('A', 100), ('B', 100), ('C', 90), ('D', 80)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT name, score, DENSE_RANK() OVER (ORDER BY score DESC) AS drank FROM scores ORDER BY drank, name",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -104,15 +108,15 @@ fn test_dense_rank() {
     );
 }
 
-#[test]
-fn test_ntile() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_ntile() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, NTILE(2) OVER (ORDER BY amount DESC) AS bucket FROM sales ORDER BY bucket, amount DESC",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -127,15 +131,15 @@ fn test_ntile() {
     );
 }
 
-#[test]
-fn test_lag() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_lag() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, LAG(amount) OVER (ORDER BY id) AS prev_amount FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -150,15 +154,15 @@ fn test_lag() {
     );
 }
 
-#[test]
-fn test_lag_with_offset() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_lag_with_offset() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, LAG(amount, 2) OVER (ORDER BY id) AS prev2_amount FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -173,15 +177,15 @@ fn test_lag_with_offset() {
     );
 }
 
-#[test]
-fn test_lag_with_default() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_lag_with_default() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, LAG(amount, 1, 0) OVER (ORDER BY id) AS prev_amount FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -196,15 +200,15 @@ fn test_lag_with_default() {
     );
 }
 
-#[test]
-fn test_lead() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_lead() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, LEAD(amount) OVER (ORDER BY id) AS next_amount FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -219,15 +223,15 @@ fn test_lead() {
     );
 }
 
-#[test]
-fn test_first_value() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_first_value() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, department, amount, FIRST_VALUE(employee) OVER (PARTITION BY department ORDER BY amount DESC) AS top_seller FROM sales ORDER BY department, id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -242,15 +246,15 @@ fn test_first_value() {
     );
 }
 
-#[test]
-fn test_last_value() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_last_value() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, department, amount, LAST_VALUE(employee) OVER (PARTITION BY department ORDER BY amount DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS lowest_seller FROM sales ORDER BY department, id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -265,15 +269,15 @@ fn test_last_value() {
     );
 }
 
-#[test]
-fn test_sum_over() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_sum_over() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, SUM(amount) OVER (ORDER BY id) AS running_total FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -288,15 +292,15 @@ fn test_sum_over() {
     );
 }
 
-#[test]
-fn test_avg_over_partition() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_avg_over_partition() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, department, amount, AVG(amount) OVER (PARTITION BY department) AS dept_avg FROM sales ORDER BY department, id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -311,15 +315,15 @@ fn test_avg_over_partition() {
     );
 }
 
-#[test]
-fn test_count_over() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_count_over() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, COUNT(*) OVER (PARTITION BY employee) AS sale_count FROM sales ORDER BY employee, id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -334,15 +338,15 @@ fn test_count_over() {
     );
 }
 
-#[test]
-fn test_min_max_over() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_min_max_over() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, MIN(amount) OVER () AS min_sale, MAX(amount) OVER () AS max_sale FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -357,15 +361,15 @@ fn test_min_max_over() {
     );
 }
 
-#[test]
-fn test_window_frame_rows() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_window_frame_rows() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, SUM(amount) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS window_sum FROM sales ORDER BY id",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -380,15 +384,15 @@ fn test_window_frame_rows() {
     );
 }
 
-#[test]
-fn test_window_frame_range() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_window_frame_range() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, SUM(amount) OVER (ORDER BY amount RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumsum FROM sales ORDER BY amount",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -403,15 +407,15 @@ fn test_window_frame_range() {
     );
 }
 
-#[test]
-fn test_multiple_window_functions() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_multiple_window_functions() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, ROW_NUMBER() OVER (ORDER BY amount DESC) AS rn, RANK() OVER (ORDER BY amount DESC) AS rnk, SUM(amount) OVER () AS total FROM sales ORDER BY rn",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -426,15 +430,15 @@ fn test_multiple_window_functions() {
     );
 }
 
-#[test]
-fn test_percent_rank() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_percent_rank() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, PERCENT_RANK() OVER (ORDER BY amount) AS prank FROM sales ORDER BY amount",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -449,15 +453,15 @@ fn test_percent_rank() {
     );
 }
 
-#[test]
-fn test_cume_dist() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_cume_dist() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT employee, amount, CUME_DIST() OVER (ORDER BY amount) AS cdist FROM sales ORDER BY amount",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -472,10 +476,10 @@ fn test_cume_dist() {
     );
 }
 
-#[test]
-fn test_named_window() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_named_window() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -484,6 +488,7 @@ fn test_named_window() {
              WINDOW w AS (ORDER BY amount)
              ORDER BY amount",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -498,10 +503,10 @@ fn test_named_window() {
     );
 }
 
-#[test]
-fn test_named_window_with_partition() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_named_window_with_partition() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -510,6 +515,7 @@ fn test_named_window_with_partition() {
              WINDOW w AS (PARTITION BY department ORDER BY amount DESC)
              ORDER BY department, rn",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -524,10 +530,10 @@ fn test_named_window_with_partition() {
     );
 }
 
-#[test]
-fn test_named_window_with_rows_between() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_named_window_with_rows_between() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -536,6 +542,7 @@ fn test_named_window_with_rows_between() {
              WINDOW w AS (ORDER BY amount ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
              ORDER BY amount",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(

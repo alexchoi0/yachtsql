@@ -145,8 +145,8 @@ impl Default for NullBitmap {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_new_valid() {
+    #[tokio::test]
+    async fn test_new_valid() {
         let bitmap = NullBitmap::new_valid(100);
         assert_eq!(bitmap.len(), 100);
         for i in 0..100 {
@@ -154,8 +154,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_new_null() {
+    #[tokio::test]
+    async fn test_new_null() {
         let bitmap = NullBitmap::new_null(100);
         assert_eq!(bitmap.len(), 100);
         for i in 0..100 {
@@ -163,8 +163,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_push_and_check() {
+    #[tokio::test]
+    async fn test_push_and_check() {
         let mut bitmap = NullBitmap::new();
         bitmap.push(false);
         bitmap.push(true);
@@ -175,8 +175,8 @@ mod tests {
         assert!(bitmap.is_valid(2));
     }
 
-    #[test]
-    fn test_set() {
+    #[tokio::test]
+    async fn test_set() {
         let mut bitmap = NullBitmap::new_valid(10);
         bitmap.set(5, true);
         assert!(bitmap.is_null(5));
@@ -184,8 +184,8 @@ mod tests {
         assert!(bitmap.is_valid(5));
     }
 
-    #[test]
-    fn test_remove() {
+    #[tokio::test]
+    async fn test_remove() {
         let mut bitmap = NullBitmap::new();
         bitmap.push(false);
         bitmap.push(true);
@@ -196,8 +196,8 @@ mod tests {
         assert!(bitmap.is_valid(1));
     }
 
-    #[test]
-    fn test_count() {
+    #[tokio::test]
+    async fn test_count() {
         let mut bitmap = NullBitmap::new();
         for i in 0..100 {
             bitmap.push(i % 3 == 0);
@@ -206,8 +206,8 @@ mod tests {
         assert_eq!(bitmap.count_valid(), 66);
     }
 
-    #[test]
-    fn test_across_word_boundary() {
+    #[tokio::test]
+    async fn test_across_word_boundary() {
         let mut bitmap = NullBitmap::new();
         for i in 0..130 {
             bitmap.push(i % 2 == 0);

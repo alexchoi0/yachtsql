@@ -93,7 +93,6 @@ geohash = "0.13"
 
 [features]
 default = []
-concurrent = ["yachtsql-executor/concurrent"]
 
 [dev-dependencies]
 proptest = "1.5"

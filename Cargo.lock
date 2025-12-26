@@ -5522,6 +5522,7 @@ dependencies = [
  "clap",
  "comfy-table",
  "directories",
+ "tokio",
  "uuid",
  "yachtsql",
  "yachtsql-executor",

@@ -1,91 +1,108 @@
 use crate::assert_table_eq;
 use crate::common::{create_session, date};
 
-#[test]
-fn test_declare_variable() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_variable() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64").unwrap();
-    session.execute_sql("SET x = 10").unwrap();
+    session.execute_sql("DECLARE x INT64").await.unwrap();
+    session.execute_sql("SET x = 10").await.unwrap();
 
-    let result = session.execute_sql("SELECT x").unwrap();
+    let result = session.execute_sql("SELECT x").await.unwrap();
     assert_table_eq!(result, [[10]]);
 }
 
-#[test]
-fn test_declare_with_default() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_with_default() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 5").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 5")
+        .await
+        .unwrap();
 
-    let result = session.execute_sql("SELECT x").unwrap();
+    let result = session.execute_sql("SELECT x").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_declare_multiple() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_multiple() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE a, b, c INT64").unwrap();
-    session.execute_sql("SET a = 1").unwrap();
-    session.execute_sql("SET b = 2").unwrap();
-    session.execute_sql("SET c = 3").unwrap();
+    session.execute_sql("DECLARE a, b, c INT64").await.unwrap();
+    session.execute_sql("SET a = 1").await.unwrap();
+    session.execute_sql("SET b = 2").await.unwrap();
+    session.execute_sql("SET c = 3").await.unwrap();
 
-    let result = session.execute_sql("SELECT a + b + c").unwrap();
+    let result = session.execute_sql("SELECT a + b + c").await.unwrap();
     assert_table_eq!(result, [[6]]);
 }
 
-#[test]
-fn test_declare_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_string() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE name STRING DEFAULT 'Hello'")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT name").unwrap();
+    let result = session.execute_sql("SELECT name").await.unwrap();
     assert_table_eq!(result, [["Hello"]]);
 }
 
-#[test]
-fn test_set_variable() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_set_variable() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE counter INT64 DEFAULT 0")
+        .await
         .unwrap();
-    session.execute_sql("SET counter = counter + 1").unwrap();
-    session.execute_sql("SET counter = counter + 1").unwrap();
+    session
+        .execute_sql("SET counter = counter + 1")
+        .await
+        .unwrap();
+    session
+        .execute_sql("SET counter = counter + 1")
+        .await
+        .unwrap();
 
-    let result = session.execute_sql("SELECT counter").unwrap();
+    let result = session.execute_sql("SELECT counter").await.unwrap();
     assert_table_eq!(result, [[2]]);
 }
 
-#[test]
-fn test_set_from_query() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_set_from_query() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE numbers (val INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO numbers VALUES (10), (20), (30)")
+        .await
         .unwrap();
 
-    session.execute_sql("DECLARE total INT64").unwrap();
+    session.execute_sql("DECLARE total INT64").await.unwrap();
     session
         .execute_sql("SET total = (SELECT SUM(val) FROM numbers)")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT total").unwrap();
+    let result = session.execute_sql("SELECT total").await.unwrap();
     assert_table_eq!(result, [[60]]);
 }
 
-#[test]
-fn test_if_then() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_if_then() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 10").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 10")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -93,18 +110,22 @@ fn test_if_then() {
                 SET result = 'big';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["big"]]);
 }
 
-#[test]
-fn test_if_then_else() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_if_then_else() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 3").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 3")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -114,18 +135,22 @@ fn test_if_then_else() {
                 SET result = 'small';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["small"]]);
 }
 
-#[test]
-fn test_if_elseif_else() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_if_elseif_else() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 5").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 5")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -137,18 +162,25 @@ fn test_if_elseif_else() {
                 SET result = 'small';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["medium"]]);
 }
 
-#[test]
-fn test_loop_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_loop_basic() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -160,18 +192,25 @@ fn test_loop_basic() {
                 END IF;
             END LOOP",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[15]]);
 }
 
-#[test]
-fn test_while_loop() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_while_loop() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -180,17 +219,21 @@ fn test_while_loop() {
                 SET sum = sum + i;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[15]]);
 }
 
-#[test]
-fn test_repeat_loop() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_repeat_loop() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -199,17 +242,21 @@ fn test_repeat_loop() {
             UNTIL i >= 5
             END REPEAT",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_for_loop() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_for_loop() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -217,18 +264,25 @@ fn test_for_loop() {
                 SET sum = sum + i.val;
             END FOR",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[15]]);
 }
 
-#[test]
-fn test_break_continue() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_break_continue() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -243,15 +297,16 @@ fn test_break_continue() {
                 END IF;
             END LOOP",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[12]]);
 }
 
-#[test]
-fn test_begin_end_block() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_begin_end_block() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -261,18 +316,20 @@ fn test_begin_end_block() {
                 SELECT x + y;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT 1").unwrap();
+    let result = session.execute_sql("SELECT 1").await.unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_nested_blocks() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_nested_blocks() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE result INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -285,18 +342,20 @@ fn test_nested_blocks() {
                 END;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_exception_handling() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exception_handling() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE result STRING DEFAULT 'start'")
+        .await
         .unwrap();
 
     session
@@ -307,80 +366,95 @@ fn test_exception_handling() {
                 SET result = 'caught';
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["caught"]]);
 }
 
-#[test]
-fn test_raise_exception() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_raise_exception() {
+    let session = create_session();
 
-    let result = session.execute_sql("RAISE USING MESSAGE = 'Custom error'");
+    let result = session
+        .execute_sql("RAISE USING MESSAGE = 'Custom error'")
+        .await;
     assert!(result.is_err());
 }
 
-#[test]
-fn test_execute_immediate() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE dynamic_test (id INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO dynamic_test VALUES (1), (2), (3)")
+        .await
         .unwrap();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dynamic_test'")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT COUNT(*) FROM dynamic_test")
+        .await
         .unwrap();
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_execute_immediate_with_params() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_with_params() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE param_test (id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO param_test VALUES (1, 'Alice'), (2, 'Bob')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql(
-        "EXECUTE IMMEDIATE 'SELECT name FROM param_test WHERE id = @id' USING 1 AS id",
-    );
+    let result = session
+        .execute_sql("EXECUTE IMMEDIATE 'SELECT name FROM param_test WHERE id = @id' USING 1 AS id")
+        .await;
     assert!(result.is_ok() || result.is_err());
 }
 
-#[test]
-fn test_execute_immediate_ddl() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_ddl() {
+    let session = create_session();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'CREATE TABLE created_dynamically (id INT64)'")
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO created_dynamically VALUES (1)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM created_dynamically")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_case_statement() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_case_statement() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 2").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 2")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -391,18 +465,20 @@ fn test_case_statement() {
                 ELSE SET result = 'other';
             END CASE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["two"]]);
 }
 
-#[test]
-fn test_return_statement() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_return_statement() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE result INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -413,17 +489,21 @@ fn test_return_statement() {
                 SET result = 2;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_labeled_block() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_labeled_block() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -434,252 +514,279 @@ fn test_labeled_block() {
                 END IF;
             END LOOP outer_loop",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_variable_in_query() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_variable_in_query() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE employees (id INT64, salary INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO employees VALUES (1, 50000), (2, 60000), (3, 70000)")
+        .await
         .unwrap();
 
     session
         .execute_sql("DECLARE min_salary INT64 DEFAULT 55000")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM employees WHERE salary > min_salary ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[2], [3]]);
 }
 
-#[test]
-fn test_system_variable() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_system_variable() {
+    let session = create_session();
 
     let result = session
         .execute_sql("SELECT @@time_zone IS NOT NULL")
+        .await
         .unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_set_system_variable() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_set_system_variable() {
+    let session = create_session();
 
     session
         .execute_sql("SET @@time_zone = 'America/Los_Angeles'")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT @@time_zone").unwrap();
+    let result = session.execute_sql("SELECT @@time_zone").await.unwrap();
     assert_table_eq!(result, [["America/Los_Angeles"]]);
 }
 
-#[test]
-fn test_declare_type_inference() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_type_inference() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x DEFAULT 42").unwrap();
+    session.execute_sql("DECLARE x DEFAULT 42").await.unwrap();
 
-    let result = session.execute_sql("SELECT x").unwrap();
+    let result = session.execute_sql("SELECT x").await.unwrap();
     assert_table_eq!(result, [[42]]);
 }
 
-#[test]
-fn test_declare_type_inference_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_type_inference_string() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE greeting DEFAULT 'Hello World'")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT greeting").unwrap();
+    let result = session.execute_sql("SELECT greeting").await.unwrap();
     assert_table_eq!(result, [["Hello World"]]);
 }
 
-#[test]
-fn test_declare_type_inference_from_expression() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_type_inference_from_expression() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE computed DEFAULT 10 + 5 * 2")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT computed").unwrap();
+    let result = session.execute_sql("SELECT computed").await.unwrap();
     assert_table_eq!(result, [[20]]);
 }
 
-#[test]
-fn test_declare_date_default() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_date_default() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE d DATE DEFAULT DATE '2024-01-15'")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT d").unwrap();
+    let result = session.execute_sql("SELECT d").await.unwrap();
     assert_table_eq!(result, [[date(2024, 1, 15)]]);
 }
 
-#[test]
-fn test_declare_float64() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_float64() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE pi FLOAT64 DEFAULT 3.14159")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT pi").unwrap();
+    let result = session.execute_sql("SELECT pi").await.unwrap();
     assert_table_eq!(result, [[3.14159]]);
 }
 
-#[test]
-fn test_declare_bool() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_bool() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE flag BOOL DEFAULT TRUE")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT flag").unwrap();
+    let result = session.execute_sql("SELECT flag").await.unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_declare_array() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_array() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE arr ARRAY<INT64> DEFAULT [1, 2, 3]")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT arr").unwrap();
+    let result = session.execute_sql("SELECT arr").await.unwrap();
     assert_table_eq!(result, [[[1, 2, 3]]]);
 }
 
-#[test]
-fn test_declare_multiple_with_default() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_multiple_with_default() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE x, y, z INT64 DEFAULT 0")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT x, y, z").unwrap();
+    let result = session.execute_sql("SELECT x, y, z").await.unwrap();
     assert_table_eq!(result, [[0, 0, 0]]);
 }
 
-#[test]
-fn test_set_multiple_variables() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_set_multiple_variables() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE a INT64").unwrap();
-    session.execute_sql("DECLARE b STRING").unwrap();
-    session.execute_sql("DECLARE c BOOL").unwrap();
+    session.execute_sql("DECLARE a INT64").await.unwrap();
+    session.execute_sql("DECLARE b STRING").await.unwrap();
+    session.execute_sql("DECLARE c BOOL").await.unwrap();
 
     session
         .execute_sql("SET (a, b, c) = (1 + 3, 'foo', FALSE)")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT a, b, c").unwrap();
+    let result = session.execute_sql("SELECT a, b, c").await.unwrap();
     assert_table_eq!(result, [[4, "foo", false]]);
 }
 
-#[test]
-fn test_set_from_struct_query() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_set_from_struct_query() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE count1 INT64").unwrap();
-    session.execute_sql("DECLARE count2 INT64").unwrap();
+    session.execute_sql("DECLARE count1 INT64").await.unwrap();
+    session.execute_sql("DECLARE count2 INT64").await.unwrap();
 
     session
         .execute_sql("SET (count1, count2) = (SELECT AS STRUCT 10, 20)")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT count1, count2").unwrap();
+    let result = session.execute_sql("SELECT count1, count2").await.unwrap();
     assert_table_eq!(result, [[10, 20]]);
 }
 
-#[test]
-fn test_execute_immediate_into() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_into() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE books (title STRING, year INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO books VALUES ('Hamlet', 1599), ('Ulysses', 1922)")
+        .await
         .unwrap();
 
-    session.execute_sql("DECLARE min_year INT64").unwrap();
+    session.execute_sql("DECLARE min_year INT64").await.unwrap();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'SELECT MIN(year) FROM books' INTO min_year")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT min_year").unwrap();
+    let result = session.execute_sql("SELECT min_year").await.unwrap();
     assert_table_eq!(result, [[1599]]);
 }
 
-#[test]
-fn test_execute_immediate_using_positional() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_using_positional() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE y INT64").unwrap();
+    session.execute_sql("DECLARE y INT64").await.unwrap();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'SELECT ? * (? + 2)' INTO y USING 1, 3")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT y").unwrap();
+    let result = session.execute_sql("SELECT y").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_execute_immediate_using_named() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_using_named() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE y INT64").unwrap();
+    session.execute_sql("DECLARE y INT64").await.unwrap();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'SELECT @a * (@b + 2)' INTO y USING 1 AS a, 3 AS b")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT y").unwrap();
+    let result = session.execute_sql("SELECT y").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_execute_immediate_dml() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_execute_immediate_dml() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE items (name STRING)")
+        .await
         .unwrap();
 
     session
         .execute_sql("DECLARE item_name STRING DEFAULT 'Widget'")
+        .await
         .unwrap();
 
     session
         .execute_sql("EXECUTE IMMEDIATE 'INSERT INTO items (name) VALUES(?)' USING item_name")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT name FROM items").unwrap();
+    let result = session.execute_sql("SELECT name FROM items").await.unwrap();
     assert_table_eq!(result, [["Widget"]]);
 }
 
-#[test]
-fn test_exception_error_message() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exception_error_message() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE error_msg STRING").unwrap();
+    session
+        .execute_sql("DECLARE error_msg STRING")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -689,17 +796,24 @@ fn test_exception_error_message() {
                 SET error_msg = @@error.message;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT error_msg IS NOT NULL").unwrap();
+    let result = session
+        .execute_sql("SELECT error_msg IS NOT NULL")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_exception_statement_text() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exception_statement_text() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE stmt_text STRING").unwrap();
+    session
+        .execute_sql("DECLARE stmt_text STRING")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -709,22 +823,25 @@ fn test_exception_statement_text() {
                 SET stmt_text = @@error.statement_text;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT stmt_text").unwrap();
+    let result = session.execute_sql("SELECT stmt_text").await.unwrap();
     assert_table_eq!(result, [["SELECT 1 / 0"]]);
 }
 
-#[test]
-fn test_exception_reraise() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exception_reraise() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE caught BOOL DEFAULT FALSE")
+        .await
         .unwrap();
 
-    let result = session.execute_sql(
-        "BEGIN
+    let result = session
+        .execute_sql(
+            "BEGIN
             BEGIN
                 SELECT 1 / 0;
             EXCEPTION WHEN ERROR THEN
@@ -734,19 +851,22 @@ fn test_exception_reraise() {
         EXCEPTION WHEN ERROR THEN
             -- Outer handler catches the re-raised exception
         END",
-    );
-
+        )
+        .await;
     assert!(result.is_ok());
-    let result = session.execute_sql("SELECT caught").unwrap();
+    let result = session.execute_sql("SELECT caught").await.unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_case_conditional() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_case_conditional() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 15").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 15")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -756,19 +876,24 @@ fn test_case_conditional() {
                 ELSE SET result = 'small';
             END CASE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["medium"]]);
 }
 
-#[test]
-fn test_case_conditional_no_match() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_case_conditional_no_match() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 5").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 5")
+        .await
+        .unwrap();
     session
         .execute_sql("DECLARE result STRING DEFAULT 'default'")
+        .await
         .unwrap();
 
     session
@@ -778,20 +903,22 @@ fn test_case_conditional_no_match() {
                 WHEN x > 10 THEN SET result = 'medium';
             END CASE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["default"]]);
 }
 
-#[test]
-fn test_case_search_expression_else() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_case_search_expression_else() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE product_id INT64 DEFAULT 99")
+        .await
         .unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -801,17 +928,21 @@ fn test_case_search_expression_else() {
                 ELSE SET result = 'Invalid product';
             END CASE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["Invalid product"]]);
 }
 
-#[test]
-fn test_while_with_break() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_while_with_break() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -822,17 +953,21 @@ fn test_while_with_break() {
                 END IF;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_while_never_executes() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_while_never_executes() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 100").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 100")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -840,18 +975,25 @@ fn test_while_never_executes() {
                 SET i = i + 1;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[100]]);
 }
 
-#[test]
-fn test_repeat_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_repeat_basic() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -861,18 +1003,20 @@ fn test_repeat_basic() {
             UNTIL i >= 5
             END REPEAT",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[15]]);
 }
 
-#[test]
-fn test_repeat_executes_at_least_once() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_repeat_executes_at_least_once() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE executed BOOL DEFAULT FALSE")
+        .await
         .unwrap();
 
     session
@@ -882,18 +1026,20 @@ fn test_repeat_executes_at_least_once() {
             UNTIL TRUE
             END REPEAT",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT executed").unwrap();
+    let result = session.execute_sql("SELECT executed").await.unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_for_in_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_for_in_basic() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE total INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -903,24 +1049,30 @@ fn test_for_in_basic() {
                 SET total = total + record.n;
             END FOR",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT total").unwrap();
+    let result = session.execute_sql("SELECT total").await.unwrap();
     assert_table_eq!(result, [[15]]);
 }
 
-#[test]
-fn test_for_in_with_table() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_for_in_with_table() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE numbers (val INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO numbers VALUES (10), (20), (30)")
+        .await
         .unwrap();
 
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -929,18 +1081,20 @@ fn test_for_in_with_table() {
                 SET sum = sum + row.val;
             END FOR",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[60]]);
 }
 
-#[test]
-fn test_for_in_with_break() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_for_in_with_break() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE last_val INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -953,18 +1107,25 @@ fn test_for_in_with_break() {
                 END IF;
             END FOR",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT last_val").unwrap();
+    let result = session.execute_sql("SELECT last_val").await.unwrap();
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_labeled_loop_leave() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_labeled_loop_leave() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE j INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE j INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -979,19 +1140,24 @@ fn test_labeled_loop_leave() {
                 END WHILE;
             END LOOP outer_loop",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i, j").unwrap();
+    let result = session.execute_sql("SELECT i, j").await.unwrap();
     assert_table_eq!(result, [[2, 2]]);
 }
 
-#[test]
-fn test_labeled_loop_continue() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_labeled_loop_continue() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
     session
         .execute_sql("DECLARE skipped INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -1004,18 +1170,20 @@ fn test_labeled_loop_continue() {
                 END IF;
             END WHILE outer_loop",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i, skipped").unwrap();
+    let result = session.execute_sql("SELECT i, skipped").await.unwrap();
     assert_table_eq!(result, [[5, 1]]);
 }
 
-#[test]
-fn test_labeled_begin_leave() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_labeled_begin_leave() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE result STRING DEFAULT 'start'")
+        .await
         .unwrap();
 
     session
@@ -1026,18 +1194,25 @@ fn test_labeled_begin_leave() {
                 SET result = 'after leave';
             END my_block",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["in block"]]);
 }
 
-#[test]
-fn test_iterate_synonym() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_iterate_synonym() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE sum INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE sum INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1049,17 +1224,21 @@ fn test_iterate_synonym() {
                 SET sum = sum + i;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT sum").unwrap();
+    let result = session.execute_sql("SELECT sum").await.unwrap();
     assert_table_eq!(result, [[12]]);
 }
 
-#[test]
-fn test_leave_synonym() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_leave_synonym() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1070,65 +1249,80 @@ fn test_leave_synonym() {
                 END IF;
             END LOOP",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_begin_transaction_commit() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_begin_transaction_commit() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE accounts (id INT64, balance INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO accounts VALUES (1, 100), (2, 200)")
+        .await
         .unwrap();
 
-    session.execute_sql("BEGIN TRANSACTION").unwrap();
+    session.execute_sql("BEGIN TRANSACTION").await.unwrap();
     session
         .execute_sql("UPDATE accounts SET balance = balance - 50 WHERE id = 1")
+        .await
         .unwrap();
     session
         .execute_sql("UPDATE accounts SET balance = balance + 50 WHERE id = 2")
+        .await
         .unwrap();
-    session.execute_sql("COMMIT TRANSACTION").unwrap();
+    session.execute_sql("COMMIT TRANSACTION").await.unwrap();
 
     let result = session
         .execute_sql("SELECT id, balance FROM accounts ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, 50], [2, 250]]);
 }
 
-#[test]
-fn test_begin_transaction_rollback() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_begin_transaction_rollback() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE items (name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO items VALUES ('existing')")
+        .await
         .unwrap();
 
-    session.execute_sql("BEGIN TRANSACTION").unwrap();
+    session.execute_sql("BEGIN TRANSACTION").await.unwrap();
     session
         .execute_sql("INSERT INTO items VALUES ('new item')")
+        .await
         .unwrap();
-    session.execute_sql("ROLLBACK TRANSACTION").unwrap();
+    session.execute_sql("ROLLBACK TRANSACTION").await.unwrap();
 
-    let result = session.execute_sql("SELECT name FROM items").unwrap();
+    let result = session.execute_sql("SELECT name FROM items").await.unwrap();
     assert_table_eq!(result, [["existing"]]);
 }
 
-#[test]
-fn test_transaction_with_exception_rollback() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_transaction_with_exception_rollback() {
+    let session = create_session();
 
-    session.execute_sql("CREATE TABLE data (id INT64)").unwrap();
-    session.execute_sql("INSERT INTO data VALUES (1)").unwrap();
+    session
+        .execute_sql("CREATE TABLE data (id INT64)")
+        .await
+        .unwrap();
+    session
+        .execute_sql("INSERT INTO data VALUES (1)")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1141,27 +1335,36 @@ fn test_transaction_with_exception_rollback() {
                 ROLLBACK TRANSACTION;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT COUNT(*) FROM data").unwrap();
+    let result = session
+        .execute_sql("SELECT COUNT(*) FROM data")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_raise_with_message() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_raise_with_message() {
+    let session = create_session();
 
-    let result = session.execute_sql("RAISE USING MESSAGE = 'Something went wrong'");
+    let result = session
+        .execute_sql("RAISE USING MESSAGE = 'Something went wrong'")
+        .await;
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("Something went wrong"));
 }
 
-#[test]
-fn test_raise_and_catch() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_raise_and_catch() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE caught_msg STRING").unwrap();
+    session
+        .execute_sql("DECLARE caught_msg STRING")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1171,17 +1374,21 @@ fn test_raise_and_catch() {
                 SET caught_msg = @@error.message;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT caught_msg").unwrap();
+    let result = session.execute_sql("SELECT caught_msg").await.unwrap();
     assert_table_eq!(result, [["Custom error"]]);
 }
 
-#[test]
-fn test_return_in_block() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_return_in_block() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1191,17 +1398,21 @@ fn test_return_in_block() {
                 SET x = 2;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT x").unwrap();
+    let result = session.execute_sql("SELECT x").await.unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_return_in_loop() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_return_in_loop() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1212,18 +1423,20 @@ fn test_return_in_loop() {
                 END IF;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i").unwrap();
+    let result = session.execute_sql("SELECT i").await.unwrap();
     assert_table_eq!(result, [[5]]);
 }
 
-#[test]
-fn test_variable_scope_in_block() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_variable_scope_in_block() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE outer_var INT64 DEFAULT 10")
+        .await
         .unwrap();
 
     session
@@ -1233,19 +1446,26 @@ fn test_variable_scope_in_block() {
                 SET outer_var = outer_var + inner_var;
             END",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT outer_var").unwrap();
+    let result = session.execute_sql("SELECT outer_var").await.unwrap();
     assert_table_eq!(result, [[30]]);
 }
 
-#[test]
-fn test_nested_if() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_nested_if() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE a INT64 DEFAULT 5").unwrap();
-    session.execute_sql("DECLARE b INT64 DEFAULT 10").unwrap();
-    session.execute_sql("DECLARE result STRING").unwrap();
+    session
+        .execute_sql("DECLARE a INT64 DEFAULT 5")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE b INT64 DEFAULT 10")
+        .await
+        .unwrap();
+    session.execute_sql("DECLARE result STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -1259,18 +1479,25 @@ fn test_nested_if() {
                 SET result = 'a not positive';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT result").unwrap();
+    let result = session.execute_sql("SELECT result").await.unwrap();
     assert_table_eq!(result, [["b greater"]]);
 }
 
-#[test]
-fn test_loop_with_multiple_exits() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_loop_with_multiple_exits() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE i INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE exit_type STRING").unwrap();
+    session
+        .execute_sql("DECLARE i INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE exit_type STRING")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1286,19 +1513,24 @@ fn test_loop_with_multiple_exits() {
                 END IF;
             END LOOP",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT i, exit_type").unwrap();
+    let result = session.execute_sql("SELECT i, exit_type").await.unwrap();
     assert_table_eq!(result, [[8, "square"]]);
 }
 
-#[test]
-fn test_complex_while_loop() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_complex_while_loop() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE n INT64 DEFAULT 1").unwrap();
+    session
+        .execute_sql("DECLARE n INT64 DEFAULT 1")
+        .await
+        .unwrap();
     session
         .execute_sql("DECLARE factorial INT64 DEFAULT 1")
+        .await
         .unwrap();
 
     session
@@ -1308,28 +1540,33 @@ fn test_complex_while_loop() {
                 SET n = n + 1;
             END WHILE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT factorial").unwrap();
+    let result = session.execute_sql("SELECT factorial").await.unwrap();
     assert_table_eq!(result, [[120]]);
 }
 
-#[test]
-fn test_if_with_subquery_condition() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_if_with_subquery_condition() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE products (id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget')")
+        .await
         .unwrap();
 
     session
         .execute_sql("DECLARE target_id INT64 DEFAULT 1")
+        .await
         .unwrap();
     session
         .execute_sql("DECLARE found STRING DEFAULT 'not found'")
+        .await
         .unwrap();
 
     session
@@ -1338,20 +1575,22 @@ fn test_if_with_subquery_condition() {
                 SET found = 'found';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT found").unwrap();
+    let result = session.execute_sql("SELECT found").await.unwrap();
     assert_table_eq!(result, [["found"]]);
 }
 
-#[test]
-fn test_multiple_elseif() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_multiple_elseif() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE score INT64 DEFAULT 75")
+        .await
         .unwrap();
-    session.execute_sql("DECLARE grade STRING").unwrap();
+    session.execute_sql("DECLARE grade STRING").await.unwrap();
 
     session
         .execute_sql(
@@ -1367,19 +1606,29 @@ fn test_multiple_elseif() {
                 SET grade = 'F';
             END IF",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT grade").unwrap();
+    let result = session.execute_sql("SELECT grade").await.unwrap();
     assert_table_eq!(result, [["C"]]);
 }
 
-#[test]
-fn test_case_with_multiple_statements() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_case_with_multiple_statements() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 1").unwrap();
-    session.execute_sql("DECLARE a INT64 DEFAULT 0").unwrap();
-    session.execute_sql("DECLARE b INT64 DEFAULT 0").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 1")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE a INT64 DEFAULT 0")
+        .await
+        .unwrap();
+    session
+        .execute_sql("DECLARE b INT64 DEFAULT 0")
+        .await
+        .unwrap();
 
     session
         .execute_sql(
@@ -1395,48 +1644,56 @@ fn test_case_with_multiple_statements() {
                     SET b = -1;
             END CASE",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT a, b").unwrap();
+    let result = session.execute_sql("SELECT a, b").await.unwrap();
     assert_table_eq!(result, [[10, 20]]);
 }
 
-#[test]
-fn test_declare_struct() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_declare_struct() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE person STRUCT<name STRING, age INT64> DEFAULT ('Alice', 30)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT person.name, person.age")
+        .await
         .unwrap();
     assert_table_eq!(result, [["Alice", 30]]);
 }
 
-#[test]
-fn test_variable_reassignment() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_variable_reassignment() {
+    let session = create_session();
 
-    session.execute_sql("DECLARE x INT64 DEFAULT 1").unwrap();
-    session.execute_sql("SET x = 2").unwrap();
-    session.execute_sql("SET x = x * 3").unwrap();
-    session.execute_sql("SET x = x + 4").unwrap();
+    session
+        .execute_sql("DECLARE x INT64 DEFAULT 1")
+        .await
+        .unwrap();
+    session.execute_sql("SET x = 2").await.unwrap();
+    session.execute_sql("SET x = x * 3").await.unwrap();
+    session.execute_sql("SET x = x + 4").await.unwrap();
 
-    let result = session.execute_sql("SELECT x").unwrap();
+    let result = session.execute_sql("SELECT x").await.unwrap();
     assert_table_eq!(result, [[10]]);
 }
 
-#[test]
-fn test_loop_counter() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_loop_counter() {
+    let session = create_session();
 
     session
         .execute_sql("DECLARE counter INT64 DEFAULT 0")
+        .await
         .unwrap();
     session
         .execute_sql("DECLARE iterations INT64 DEFAULT 0")
+        .await
         .unwrap();
 
     session
@@ -1449,8 +1706,9 @@ fn test_loop_counter() {
                 END IF;
             END LOOP",
         )
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT counter").unwrap();
+    let result = session.execute_sql("SELECT counter").await.unwrap();
     assert_table_eq!(result, [[5050]]);
 }

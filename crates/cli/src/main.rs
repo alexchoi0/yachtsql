@@ -8,7 +8,7 @@ use comfy_table::presets::UTF8_FULL;
 use directories::ProjectDirs;
 use uuid::Uuid;
 use yachtsql::YachtSQLEngine;
-use yachtsql_executor::QueryExecutor;
+use yachtsql_executor::AsyncQueryExecutor;
 
 #[derive(Parser)]
 #[command(name = "yachtsql")]
@@ -39,12 +39,13 @@ enum SessionCommands {
     Clean,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Query { sql, session_id } => {
-            execute_query(&sql, session_id.as_deref())?;
+            execute_query(&sql, session_id.as_deref()).await?;
         }
         Commands::Session { command } => match command {
             SessionCommands::New => {
@@ -83,7 +84,7 @@ fn get_session_path(session_id: &str) -> Result<PathBuf> {
 
 fn create_session() -> Result<String> {
     let session_id = Uuid::new_v4().to_string();
-    let executor = QueryExecutor::new();
+    let executor = AsyncQueryExecutor::new();
     save_executor(&session_id, &executor)?;
     Ok(session_id)
 }
@@ -136,30 +137,31 @@ fn clean_sessions() -> Result<()> {
     Ok(())
 }
 
-fn load_executor(session_id: &str) -> Result<QueryExecutor> {
+fn load_executor(session_id: &str) -> Result<AsyncQueryExecutor> {
     let path = get_session_path(session_id)?;
     if !path.exists() {
         anyhow::bail!("Session not found: {}", session_id);
     }
     let data = fs::read(&path)?;
-    let executor: QueryExecutor =
+    let executor: AsyncQueryExecutor =
         bincode::deserialize(&data).context("Failed to deserialize session")?;
     Ok(executor)
 }
 
-fn save_executor(session_id: &str, executor: &QueryExecutor) -> Result<()> {
+fn save_executor(session_id: &str, executor: &AsyncQueryExecutor) -> Result<()> {
     let path = get_session_path(session_id)?;
     let data = bincode::serialize(executor).context("Failed to serialize session")?;
     fs::write(&path, data)?;
     Ok(())
 }
 
-fn execute_query(sql: &str, session_id: Option<&str>) -> Result<()> {
+async fn execute_query(sql: &str, session_id: Option<&str>) -> Result<()> {
     match session_id {
         Some(id) => {
-            let mut executor = load_executor(id)?;
+            let executor = load_executor(id)?;
             let table = executor
                 .execute_sql(sql)
+                .await
                 .context("Failed to execute SQL query")?;
             save_executor(id, &executor)?;
             print_table(&table)?;

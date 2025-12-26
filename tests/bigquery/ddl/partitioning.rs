@@ -1,9 +1,9 @@
 use crate::assert_table_eq;
 use crate::common::create_session;
 
-#[test]
-fn test_partition_by_date() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_date() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -14,19 +14,24 @@ fn test_partition_by_date() {
             )
             PARTITION BY event_date",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO events VALUES (1, DATE '2024-01-15', 'Event A')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT event_id FROM events").unwrap();
+    let result = session
+        .execute_sql("SELECT event_id FROM events")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_by_date_trunc() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_date_trunc() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -37,19 +42,24 @@ fn test_partition_by_date_trunc() {
             )
             PARTITION BY DATE_TRUNC(created_at, MONTH)",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO monthly_data VALUES (1, DATE '2024-01-15', 100)")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT id FROM monthly_data").unwrap();
+    let result = session
+        .execute_sql("SELECT id FROM monthly_data")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_by_timestamp() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_timestamp() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -60,19 +70,24 @@ fn test_partition_by_timestamp() {
             )
             PARTITION BY TIMESTAMP_TRUNC(log_time, DAY)",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO logs VALUES (1, TIMESTAMP '2024-01-15 10:30:00', 'Test log')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT log_id FROM logs").unwrap();
+    let result = session
+        .execute_sql("SELECT log_id FROM logs")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_by_datetime() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_datetime() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -82,19 +97,24 @@ fn test_partition_by_datetime() {
             )
             PARTITION BY DATETIME_TRUNC(scheduled_at, HOUR)",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO appointments VALUES (1, DATETIME '2024-01-15 10:30:00')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT id FROM appointments").unwrap();
+    let result = session
+        .execute_sql("SELECT id FROM appointments")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_by_integer_range() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_integer_range() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -104,19 +124,24 @@ fn test_partition_by_integer_range() {
             )
             PARTITION BY RANGE_BUCKET(customer_id, GENERATE_ARRAY(0, 1000000, 100000))",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO customers VALUES (12345, 'Alice')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT name FROM customers").unwrap();
+    let result = session
+        .execute_sql("SELECT name FROM customers")
+        .await
+        .unwrap();
     assert_table_eq!(result, [["Alice"]]);
 }
 
-#[test]
-fn test_partition_expiration() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_expiration() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -129,19 +154,24 @@ fn test_partition_expiration() {
                 partition_expiration_days = 30
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO temp_data VALUES (1, DATE '2024-01-15')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT id FROM temp_data").unwrap();
+    let result = session
+        .execute_sql("SELECT id FROM temp_data")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_require_partition_filter() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_require_partition_filter() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -154,21 +184,24 @@ fn test_require_partition_filter() {
                 require_partition_filter = true
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO filtered_data VALUES (1, DATE '2024-01-15')")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM filtered_data WHERE partition_date = DATE '2024-01-15'")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_cluster_by_single_column() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cluster_by_single_column() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -179,21 +212,24 @@ fn test_cluster_by_single_column() {
             )
             CLUSTER BY category",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO clustered_data VALUES (1, 'A', 100), (2, 'B', 200)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM clustered_data ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1], [2]]);
 }
 
-#[test]
-fn test_cluster_by_multiple_columns() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cluster_by_multiple_columns() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -205,21 +241,24 @@ fn test_cluster_by_multiple_columns() {
             )
             CLUSTER BY category, subcategory",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO multi_clustered VALUES (1, 'A', 'X', 100)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM multi_clustered")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_and_cluster() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_and_cluster() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -232,21 +271,24 @@ fn test_partition_and_cluster() {
             PARTITION BY created_date
             CLUSTER BY category",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO partitioned_clustered VALUES (1, DATE '2024-01-15', 'A', 100)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM partitioned_clustered")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_partition_by_ingestion_time() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_by_ingestion_time() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -256,24 +298,28 @@ fn test_partition_by_ingestion_time() {
             )
             PARTITION BY _PARTITIONDATE",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO ingestion_partitioned VALUES (1, 'test')")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM ingestion_partitioned")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_external_table() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_external_table() {
+    let session = create_session();
 
-    let result = session.execute_sql(
-        "CREATE EXTERNAL TABLE external_data (
+    let result = session
+        .execute_sql(
+            "CREATE EXTERNAL TABLE external_data (
             id INT64,
             name STRING
         )
@@ -281,16 +327,18 @@ fn test_external_table() {
             format = 'CSV',
             uris = ['gs://bucket/path/*.csv']
         )",
-    );
+        )
+        .await;
     assert!(result.is_ok() || result.is_err());
 }
 
-#[test]
-fn test_external_table_with_schema() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_external_table_with_schema() {
+    let session = create_session();
 
-    let result = session.execute_sql(
-        "CREATE EXTERNAL TABLE json_data (
+    let result = session
+        .execute_sql(
+            "CREATE EXTERNAL TABLE json_data (
             id INT64,
             payload JSON
         )
@@ -298,13 +346,14 @@ fn test_external_table_with_schema() {
             format = 'JSON',
             uris = ['gs://bucket/data.json']
         )",
-    );
+        )
+        .await;
     assert!(result.is_ok() || result.is_err());
 }
 
-#[test]
-fn test_table_with_description() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_table_with_description() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -316,21 +365,24 @@ fn test_table_with_description() {
                 description = 'A well-documented table'
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO documented_table VALUES (1, 'Alice')")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM documented_table")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_table_with_labels() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_table_with_labels() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -341,19 +393,24 @@ fn test_table_with_labels() {
                 labels = [('env', 'production'), ('team', 'analytics')]
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO labeled_table VALUES (1)")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT id FROM labeled_table").unwrap();
+    let result = session
+        .execute_sql("SELECT id FROM labeled_table")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_table_with_expiration() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_table_with_expiration() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -364,21 +421,24 @@ fn test_table_with_expiration() {
                 expiration_timestamp = TIMESTAMP '2025-12-31 23:59:59'
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO expiring_table VALUES (1)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM expiring_table")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_cluster_by_up_to_four_columns() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cluster_by_up_to_four_columns() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -391,21 +451,24 @@ fn test_cluster_by_up_to_four_columns() {
             )
             CLUSTER BY a, b, c, d",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("INSERT INTO four_cluster VALUES ('1', '2', '3', '4', 100)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT value FROM four_cluster")
+        .await
         .unwrap();
     assert_table_eq!(result, [[100]]);
 }
 
-#[test]
-fn test_partition_filter_query() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_partition_filter_query() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -416,6 +479,7 @@ fn test_partition_filter_query() {
             )
             PARTITION BY sale_date",
         )
+        .await
         .unwrap();
 
     session
@@ -425,12 +489,13 @@ fn test_partition_filter_query() {
             (2, DATE '2024-01-16', 200),
             (3, DATE '2024-02-15', 300)",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT SUM(amount) FROM sales_data WHERE sale_date BETWEEN DATE '2024-01-01' AND DATE '2024-01-31'",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(result, [[300]]);
 }
