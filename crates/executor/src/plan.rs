@@ -1041,14 +1041,22 @@ impl PhysicalPlan {
 
     pub fn extract_table_accesses(&self) -> TableAccessSet {
         let mut accesses = TableAccessSet::new();
-        self.collect_accesses(&mut accesses);
+        let mut cte_names = std::collections::HashSet::new();
+        self.collect_accesses(&mut accesses, &mut cte_names);
         accesses
     }
 
-    fn collect_accesses(&self, accesses: &mut TableAccessSet) {
+    fn collect_accesses(
+        &self,
+        accesses: &mut TableAccessSet,
+        cte_names: &mut std::collections::HashSet<String>,
+    ) {
         match self {
             PhysicalPlan::TableScan { table_name, .. } => {
-                accesses.add_read(table_name.clone());
+                let table_upper = table_name.to_uppercase();
+                if !cte_names.contains(&table_upper) {
+                    accesses.add_read(table_name.clone());
+                }
             }
 
             PhysicalPlan::Sample { input, .. }
@@ -1062,7 +1070,7 @@ impl PhysicalPlan {
             | PhysicalPlan::Unnest { input, .. }
             | PhysicalPlan::Qualify { input, .. }
             | PhysicalPlan::HashAggregate { input, .. } => {
-                input.collect_accesses(accesses);
+                input.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::NestedLoopJoin { left, right, .. }
@@ -1070,31 +1078,32 @@ impl PhysicalPlan {
             | PhysicalPlan::HashJoin { left, right, .. }
             | PhysicalPlan::Intersect { left, right, .. }
             | PhysicalPlan::Except { left, right, .. } => {
-                left.collect_accesses(accesses);
-                right.collect_accesses(accesses);
+                left.collect_accesses(accesses, cte_names);
+                right.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::Union { inputs, .. } => {
                 for input in inputs {
-                    input.collect_accesses(accesses);
+                    input.collect_accesses(accesses, cte_names);
                 }
             }
 
             PhysicalPlan::WithCte { ctes, body } => {
                 for cte in ctes {
+                    cte_names.insert(cte.name.to_uppercase());
                     if let Ok(physical_cte) = yachtsql_optimizer::optimize(&cte.query) {
                         let cte_plan = PhysicalPlan::from_physical(&physical_cte);
-                        cte_plan.collect_accesses(accesses);
+                        cte_plan.collect_accesses(accesses, cte_names);
                     }
                 }
-                body.collect_accesses(accesses);
+                body.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::Insert {
                 table_name, source, ..
             } => {
                 accesses.add_write(table_name.clone());
-                source.collect_accesses(accesses);
+                source.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::Update { table_name, .. } => {
@@ -1111,7 +1120,7 @@ impl PhysicalPlan {
                 ..
             } => {
                 accesses.add_write(target_table.clone());
-                source.collect_accesses(accesses);
+                source.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::Truncate { table_name } => {
@@ -1131,17 +1140,17 @@ impl PhysicalPlan {
             }
 
             PhysicalPlan::CreateView { query, .. } => {
-                query.collect_accesses(accesses);
+                query.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::ExportData { query, .. } => {
-                query.collect_accesses(accesses);
+                query.collect_accesses(accesses, cte_names);
             }
 
             PhysicalPlan::For { query, body, .. } => {
-                query.collect_accesses(accesses);
+                query.collect_accesses(accesses, cte_names);
                 for stmt in body {
-                    stmt.collect_accesses(accesses);
+                    stmt.collect_accesses(accesses, cte_names);
                 }
             }
 
@@ -1151,11 +1160,11 @@ impl PhysicalPlan {
                 ..
             } => {
                 for stmt in then_branch {
-                    stmt.collect_accesses(accesses);
+                    stmt.collect_accesses(accesses, cte_names);
                 }
                 if let Some(else_stmts) = else_branch {
                     for stmt in else_stmts {
-                        stmt.collect_accesses(accesses);
+                        stmt.collect_accesses(accesses, cte_names);
                     }
                 }
             }
@@ -1165,19 +1174,19 @@ impl PhysicalPlan {
             | PhysicalPlan::Block { body, .. }
             | PhysicalPlan::Repeat { body, .. } => {
                 for stmt in body {
-                    stmt.collect_accesses(accesses);
+                    stmt.collect_accesses(accesses, cte_names);
                 }
             }
 
             PhysicalPlan::CreateProcedure { body, .. } => {
                 for stmt in body {
-                    stmt.collect_accesses(accesses);
+                    stmt.collect_accesses(accesses, cte_names);
                 }
             }
 
             PhysicalPlan::CreateTable { query, .. } => {
                 if let Some(q) = query {
-                    q.collect_accesses(accesses);
+                    q.collect_accesses(accesses, cte_names);
                 }
             }
 

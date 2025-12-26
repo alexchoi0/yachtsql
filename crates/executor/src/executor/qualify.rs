@@ -6,7 +6,7 @@ use yachtsql_ir::{Expr, SortExpr, WindowFrame};
 use yachtsql_storage::{Record, Schema, Table};
 
 use super::PlanExecutor;
-use super::window::{WindowFuncType, partition_rows, sort_partition, compute_window_function};
+use super::window::{WindowFuncType, compute_window_function, partition_rows, sort_partition};
 use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 

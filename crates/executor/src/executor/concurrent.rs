@@ -84,6 +84,34 @@ fn coerce_value(value: Value, target_type: &DataType) -> Result<Value> {
     }
 }
 
+fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
+    match (a, b) {
+        (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
+        (Value::Null, _) => std::cmp::Ordering::Greater,
+        (_, Value::Null) => std::cmp::Ordering::Less,
+        (Value::Int64(a), Value::Int64(b)) => a.cmp(b),
+        (Value::Float64(a), Value::Float64(b)) => {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        }
+        (Value::Int64(a), Value::Float64(b)) => (*a as f64)
+            .partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Float64(a), Value::Int64(b)) => {
+            a.0.partial_cmp(&(*b as f64))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }
+        (Value::String(a), Value::String(b)) => a.cmp(b),
+        (Value::Date(a), Value::Date(b)) => a.cmp(b),
+        (Value::Timestamp(a), Value::Timestamp(b)) => a.cmp(b),
+        (Value::DateTime(a), Value::DateTime(b)) => a.cmp(b),
+        (Value::Time(a), Value::Time(b)) => a.cmp(b),
+        (Value::Numeric(a), Value::Numeric(b)) => a.cmp(b),
+        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+        (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
 pub struct ConcurrentPlanExecutor<'a> {
     pub(crate) catalog: &'a ConcurrentCatalog,
     pub(crate) session: &'a ConcurrentSession,
@@ -454,6 +482,14 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         planned_schema: &PlanSchema,
     ) -> Result<Table> {
         if let Some(cte_table) = self.cte_results.get(table_name) {
+            return Ok(self.apply_planned_schema(cte_table, planned_schema));
+        }
+        let table_name_upper = table_name.to_uppercase();
+        if let Some(cte_table) = self.cte_results.get(&table_name_upper) {
+            return Ok(self.apply_planned_schema(cte_table, planned_schema));
+        }
+        let table_name_lower = table_name.to_lowercase();
+        if let Some(cte_table) = self.cte_results.get(&table_name_lower) {
             return Ok(self.apply_planned_schema(cte_table, planned_schema));
         }
 
@@ -863,10 +899,35 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 let val_b = evaluator
                     .evaluate(&sort_expr.expr, b)
                     .unwrap_or(Value::Null);
-                let cmp = val_a.cmp(&val_b);
-                let cmp = if sort_expr.asc { cmp } else { cmp.reverse() };
-                if cmp != std::cmp::Ordering::Equal {
-                    return cmp;
+
+                let ordering = compare_values_for_sort(&val_a, &val_b);
+                let ordering = if !sort_expr.asc {
+                    ordering.reverse()
+                } else {
+                    ordering
+                };
+
+                match (val_a.is_null(), val_b.is_null()) {
+                    (true, true) => {}
+                    (true, false) => {
+                        return if sort_expr.nulls_first {
+                            std::cmp::Ordering::Less
+                        } else {
+                            std::cmp::Ordering::Greater
+                        };
+                    }
+                    (false, true) => {
+                        return if sort_expr.nulls_first {
+                            std::cmp::Ordering::Greater
+                        } else {
+                            std::cmp::Ordering::Less
+                        };
+                    }
+                    (false, false) => {}
+                }
+
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
                 }
             }
             std::cmp::Ordering::Equal
@@ -1081,7 +1142,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             let physical_cte = yachtsql_optimizer::optimize(&cte.query)?;
             let cte_plan = PhysicalPlan::from_physical(&physical_cte);
             let cte_result = self.execute_plan(&cte_plan)?;
-            self.cte_results.insert(cte.name.clone(), cte_result);
+            self.cte_results.insert(cte.name.to_uppercase(), cte_result);
         }
         self.execute_plan(body)
     }
