@@ -1,34 +1,39 @@
 use crate::assert_table_eq;
 use crate::common::create_session;
 
-fn setup_tables(session: &mut yachtsql::YachtSQLSession) {
+async fn setup_tables(session: &yachtsql::YachtSQLSession) {
     session
         .execute_sql("CREATE TABLE target (id INT64, name STRING, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, name STRING, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)")
+        .await
         .unwrap();
     session
         .execute_sql(
             "INSERT INTO source VALUES (2, 'b_updated', 25), (3, 'c_updated', 35), (4, 'd', 40)",
         )
+        .await
         .unwrap();
 }
 
-#[test]
-fn test_merge_update_when_matched() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_update_when_matched() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, name, value FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -36,47 +41,51 @@ fn test_merge_update_when_matched() {
     );
 }
 
-#[test]
-fn test_merge_insert_when_not_matched() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_insert_when_not_matched() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1], [2], [3], [4]]);
 }
 
-#[test]
-fn test_merge_delete_when_matched() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_delete_when_matched() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
         .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN DELETE")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
 
-#[test]
-fn test_merge_update_and_insert() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_update_and_insert() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, name FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -84,168 +93,195 @@ fn test_merge_update_and_insert() {
     );
 }
 
-#[test]
-fn test_merge_with_condition() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_with_condition() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN UPDATE SET name = S.name, value = S.value")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN UPDATE SET name = S.name, value = S.value").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, value FROM target WHERE id = 3")
+        .await
         .unwrap();
     assert_table_eq!(result, [[3, 35]]);
 }
 
-#[test]
-fn test_merge_update_delete_insert() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_merge_update_delete_insert() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN DELETE WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED AND S.value > 30 THEN DELETE WHEN MATCHED THEN UPDATE SET name = S.name, value = S.value WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (S.id, S.name, S.value)").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1], [2], [4]]);
 }
 
-#[test]
-fn test_merge_with_subquery_source() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_with_subquery_source() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (2, 25), (3, 30)")
+        .await
         .unwrap();
 
     session
-        .execute_sql("MERGE INTO target T USING (SELECT id, value FROM source WHERE value > 20) S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED THEN INSERT (id, value) VALUES (S.id, S.value)")
+        .execute_sql("MERGE INTO target T USING (SELECT id, value FROM source WHERE value > 20) S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED THEN INSERT (id, value) VALUES (S.id, S.value)").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, 10], [2, 25], [3, 30]]);
 }
 
-#[test]
-fn test_merge_insert_row() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_insert_row() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, name STRING, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, name STRING, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (1, 'new', 100)")
+        .await
         .unwrap();
 
     session
         .execute_sql(
             "MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED THEN INSERT ROW",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, name, value FROM target")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, "new", 100]]);
 }
 
-#[test]
-fn test_merge_when_not_matched_by_source() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_when_not_matched_by_source() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (2, 25)")
+        .await
         .unwrap();
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED BY SOURCE THEN DELETE")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN NOT MATCHED BY SOURCE THEN DELETE").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[2]]);
 }
 
-#[test]
-fn test_merge_all_clauses() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_all_clauses() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (2, 25), (4, 40)")
+        .await
         .unwrap();
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED BY TARGET THEN INSERT (id, value) VALUES (S.id, S.value) WHEN NOT MATCHED BY SOURCE THEN DELETE")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET value = S.value WHEN NOT MATCHED BY TARGET THEN INSERT (id, value) VALUES (S.id, S.value) WHEN NOT MATCHED BY SOURCE THEN DELETE").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[2, 25], [4, 40]]);
 }
 
-#[test]
-fn test_merge_with_constants() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_with_constants() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, status STRING, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 'old', 10)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (1, 20), (2, 30)")
+        .await
         .unwrap();
 
     session
-        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET status = 'updated', value = S.value WHEN NOT MATCHED THEN INSERT (id, status, value) VALUES (S.id, 'new', S.value)")
+        .execute_sql("MERGE INTO target T USING source S ON T.id = S.id WHEN MATCHED THEN UPDATE SET status = 'updated', value = S.value WHEN NOT MATCHED THEN INSERT (id, status, value) VALUES (S.id, 'new', S.value)").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, status FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, "updated"], [2, "new"]]);
 }
 
-#[test]
-fn test_merge_insert_new_items_with_condition() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_insert_new_items_with_condition() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -256,10 +292,12 @@ fn test_merge_insert_new_items_with_condition() {
                 comments ARRAY<STRUCT<created DATE, comment STRING>>
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
+        .await
         .unwrap();
 
     session
@@ -268,6 +306,7 @@ fn test_merge_insert_new_items_with_condition() {
             ('microwave', 20, NULL, []),
             ('washer', 20, false, [])",
         )
+        .await
         .unwrap();
 
     session
@@ -278,6 +317,7 @@ fn test_merge_insert_new_items_with_condition() {
             ('oven', 5),
             ('washer', 10)",
         )
+        .await
         .unwrap();
 
     session
@@ -292,6 +332,7 @@ fn test_merge_insert_new_items_with_condition() {
               INSERT(product, quantity, supply_constrained)
               VALUES(product, quantity, false)",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -300,6 +341,7 @@ fn test_merge_insert_new_items_with_condition() {
             FROM detailed_inventory
             ORDER BY product",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -314,12 +356,13 @@ fn test_merge_insert_new_items_with_condition() {
     );
 }
 
-#[test]
-fn test_merge_update_and_delete_with_condition() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_update_and_delete_with_condition() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64, warehouse STRING)")
+        .await
         .unwrap();
 
     session
@@ -329,6 +372,7 @@ fn test_merge_update_and_delete_with_condition() {
             ('oven', 30, 'warehouse #3'),
             ('washer', 10, 'warehouse #1')",
         )
+        .await
         .unwrap();
 
     session
@@ -341,25 +385,29 @@ fn test_merge_update_and_delete_with_condition() {
             WHEN MATCHED THEN
               DELETE",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT product, quantity FROM new_arrivals ORDER BY product")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["dryer", 20], ["washer", 30]]);
 }
 
-#[test]
-fn test_merge_false_predicate_replace() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_false_predicate_replace() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
+        .await
         .unwrap();
 
     session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64)")
+        .await
         .unwrap();
 
     session
@@ -371,6 +419,7 @@ fn test_merge_false_predicate_replace() {
             ('microwave', 20),
             ('oven', 35)",
         )
+        .await
         .unwrap();
 
     session
@@ -378,6 +427,7 @@ fn test_merge_false_predicate_replace() {
             "INSERT INTO new_arrivals VALUES
             ('washer', 30)",
         )
+        .await
         .unwrap();
 
     session
@@ -390,18 +440,20 @@ fn test_merge_false_predicate_replace() {
             WHEN NOT MATCHED BY SOURCE AND product LIKE '%washer%' THEN
               DELETE",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT product FROM inventory ORDER BY product")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["dryer"], ["microwave"], ["oven"], ["washer"]]);
 }
 
-#[test]
-fn test_merge_with_avg_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_with_avg_subquery() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -410,10 +462,12 @@ fn test_merge_with_avg_subquery() {
                 comments ARRAY<STRUCT<created DATE, comment STRING>>
             )",
         )
+        .await
         .unwrap();
 
     session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
+        .await
         .unwrap();
 
     session
@@ -425,6 +479,7 @@ fn test_merge_with_avg_subquery() {
             ('refrigerator', []),
             ('washer', [])",
         )
+        .await
         .unwrap();
 
     session
@@ -436,6 +491,7 @@ fn test_merge_with_avg_subquery() {
             ('refrigerator', 25),
             ('washer', 30)",
         )
+        .await
         .unwrap();
 
     session
@@ -446,6 +502,7 @@ fn test_merge_with_avg_subquery() {
             WHEN MATCHED AND S.quantity < (SELECT AVG(quantity) FROM inventory) THEN
               UPDATE SET comments = ARRAY_CONCAT(comments, [(DATE '2024-02-01', 'below average')])",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -454,6 +511,7 @@ fn test_merge_with_avg_subquery() {
             FROM detailed_inventory
             ORDER BY product",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -468,20 +526,23 @@ fn test_merge_with_avg_subquery() {
     );
 }
 
-#[test]
-fn test_merge_with_joined_source() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_with_joined_source() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE inventory (product STRING, quantity INT64)")
+        .await
         .unwrap();
 
     session
         .execute_sql("CREATE TABLE new_arrivals (product STRING, quantity INT64, warehouse STRING)")
+        .await
         .unwrap();
 
     session
         .execute_sql("CREATE TABLE warehouse (warehouse STRING, state STRING)")
+        .await
         .unwrap();
 
     session
@@ -493,6 +554,7 @@ fn test_merge_with_joined_source() {
             ('refrigerator', 25),
             ('washer', 30)",
         )
+        .await
         .unwrap();
 
     session
@@ -502,6 +564,7 @@ fn test_merge_with_joined_source() {
             ('refrigerator', 25, 'warehouse #2'),
             ('washer', 30, 'warehouse #1')",
         )
+        .await
         .unwrap();
 
     session
@@ -511,6 +574,7 @@ fn test_merge_with_joined_source() {
             ('warehouse #2', 'CA'),
             ('warehouse #3', 'WA')",
         )
+        .await
         .unwrap();
 
     session
@@ -522,11 +586,12 @@ fn test_merge_with_joined_source() {
               UPDATE SET quantity = T.quantity + S.quantity
             WHEN MATCHED THEN
               DELETE",
-        )
+        ).await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT product, quantity FROM inventory ORDER BY product")
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -540,20 +605,24 @@ fn test_merge_with_joined_source() {
     );
 }
 
-#[test]
-fn test_merge_without_into_keyword() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_without_into_keyword() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 10)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (1, 20), (2, 30)")
+        .await
         .unwrap();
 
     session
@@ -564,29 +633,35 @@ fn test_merge_without_into_keyword() {
             WHEN MATCHED THEN UPDATE SET value = S.value
             WHEN NOT MATCHED THEN INSERT (id, value) VALUES (S.id, S.value)",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, 20], [2, 30]]);
 }
 
-#[test]
-fn test_merge_update_by_source_condition() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_merge_update_by_source_condition() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE target (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE source (id INT64, value INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO target VALUES (1, 10), (2, 20), (3, 30)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO source VALUES (2, 25)")
+        .await
         .unwrap();
 
     session
@@ -597,10 +672,12 @@ fn test_merge_update_by_source_condition() {
             WHEN MATCHED THEN UPDATE SET value = S.value
             WHEN NOT MATCHED BY SOURCE AND T.value > 20 THEN UPDATE SET value = 0",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, value FROM target ORDER BY id")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, 10], [2, 25], [3, 0]]);

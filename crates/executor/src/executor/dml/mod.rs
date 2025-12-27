@@ -530,7 +530,12 @@ impl<'a> PlanExecutor<'a> {
         Ok(Table::empty(Schema::new()))
     }
 
-    pub fn execute_delete(&mut self, table_name: &str, filter: Option<&Expr>) -> Result<Table> {
+    pub fn execute_delete(
+        &mut self,
+        table_name: &str,
+        alias: Option<&str>,
+        filter: Option<&Expr>,
+    ) -> Result<Table> {
         let table = self
             .catalog
             .get_table(table_name)
@@ -539,13 +544,14 @@ impl<'a> PlanExecutor<'a> {
 
         let base_schema = table.schema().clone();
         let has_subquery = filter.map(Self::expr_contains_subquery).unwrap_or(false);
+        let source_name = alias.unwrap_or(table_name);
 
         if has_subquery {
             let mut schema_with_source = Schema::new();
             for field in base_schema.fields() {
                 let mut new_field = field.clone();
                 if new_field.source_table.is_none() {
-                    new_field.source_table = Some(table_name.to_string());
+                    new_field.source_table = Some(source_name.to_string());
                 }
                 schema_with_source.add_field(new_field);
             }

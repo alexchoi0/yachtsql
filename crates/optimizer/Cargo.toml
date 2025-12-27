@@ -14,3 +14,6 @@ categories = ["database"]
 yachtsql-common = { version = "0.1.0", path = "../common" }
 yachtsql-ir = { version = "0.1.0", path = "../ir" }
 serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1.42", features = ["rt-multi-thread", "macros"] }

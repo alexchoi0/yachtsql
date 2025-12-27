@@ -156,6 +156,7 @@ pub enum OptimizedLogicalPlan {
 
     Delete {
         table_name: String,
+        alias: Option<String>,
         filter: Option<Expr>,
     },
 

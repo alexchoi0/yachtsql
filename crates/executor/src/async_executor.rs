@@ -1,7 +1,9 @@
 use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
 
+use lazy_static::lazy_static;
 use lru::LruCache;
+use regex::Regex;
 use yachtsql_common::error::Result;
 use yachtsql_optimizer::OptimizedLogicalPlan;
 use yachtsql_storage::Table;
@@ -13,57 +15,65 @@ use crate::plan::PhysicalPlan;
 
 const PLAN_CACHE_SIZE: usize = 10000;
 
+fn preprocess_range_types(sql: &str) -> String {
+    lazy_static! {
+        static ref RANGE_TYPE_RE: Regex =
+            Regex::new(r"(?i)\bRANGE\s*<\s*(DATE|DATETIME|TIMESTAMP)\s*>").unwrap();
+    }
+    RANGE_TYPE_RE.replace_all(sql, "RANGE_$1").to_string()
+}
+
 fn default_plan_cache() -> LruCache<String, OptimizedLogicalPlan> {
     LruCache::new(NonZeroUsize::new(PLAN_CACHE_SIZE).unwrap())
 }
 
 fn is_cacheable_plan(plan: &OptimizedLogicalPlan) -> bool {
-    match plan {
+    matches!(
+        plan,
         OptimizedLogicalPlan::TableScan { .. }
-        | OptimizedLogicalPlan::Sample { .. }
-        | OptimizedLogicalPlan::Filter { .. }
-        | OptimizedLogicalPlan::Project { .. }
-        | OptimizedLogicalPlan::NestedLoopJoin { .. }
-        | OptimizedLogicalPlan::CrossJoin { .. }
-        | OptimizedLogicalPlan::HashJoin { .. }
-        | OptimizedLogicalPlan::HashAggregate { .. }
-        | OptimizedLogicalPlan::Sort { .. }
-        | OptimizedLogicalPlan::Limit { .. }
-        | OptimizedLogicalPlan::TopN { .. }
-        | OptimizedLogicalPlan::Distinct { .. }
-        | OptimizedLogicalPlan::Union { .. }
-        | OptimizedLogicalPlan::Intersect { .. }
-        | OptimizedLogicalPlan::Except { .. }
-        | OptimizedLogicalPlan::Window { .. }
-        | OptimizedLogicalPlan::Unnest { .. }
-        | OptimizedLogicalPlan::Qualify { .. }
-        | OptimizedLogicalPlan::WithCte { .. }
-        | OptimizedLogicalPlan::Values { .. }
-        | OptimizedLogicalPlan::Empty { .. } => true,
-        _ => false,
-    }
+            | OptimizedLogicalPlan::Sample { .. }
+            | OptimizedLogicalPlan::Filter { .. }
+            | OptimizedLogicalPlan::Project { .. }
+            | OptimizedLogicalPlan::NestedLoopJoin { .. }
+            | OptimizedLogicalPlan::CrossJoin { .. }
+            | OptimizedLogicalPlan::HashJoin { .. }
+            | OptimizedLogicalPlan::HashAggregate { .. }
+            | OptimizedLogicalPlan::Sort { .. }
+            | OptimizedLogicalPlan::Limit { .. }
+            | OptimizedLogicalPlan::TopN { .. }
+            | OptimizedLogicalPlan::Distinct { .. }
+            | OptimizedLogicalPlan::Union { .. }
+            | OptimizedLogicalPlan::Intersect { .. }
+            | OptimizedLogicalPlan::Except { .. }
+            | OptimizedLogicalPlan::Window { .. }
+            | OptimizedLogicalPlan::Unnest { .. }
+            | OptimizedLogicalPlan::Qualify { .. }
+            | OptimizedLogicalPlan::WithCte { .. }
+            | OptimizedLogicalPlan::Values { .. }
+            | OptimizedLogicalPlan::Empty { .. }
+    )
 }
 
 fn invalidates_cache(plan: &OptimizedLogicalPlan) -> bool {
-    match plan {
+    matches!(
+        plan,
         OptimizedLogicalPlan::CreateTable { .. }
-        | OptimizedLogicalPlan::DropTable { .. }
-        | OptimizedLogicalPlan::AlterTable { .. }
-        | OptimizedLogicalPlan::Truncate { .. }
-        | OptimizedLogicalPlan::CreateView { .. }
-        | OptimizedLogicalPlan::DropView { .. }
-        | OptimizedLogicalPlan::CreateSchema { .. }
-        | OptimizedLogicalPlan::DropSchema { .. }
-        | OptimizedLogicalPlan::UndropSchema { .. }
-        | OptimizedLogicalPlan::AlterSchema { .. }
-        | OptimizedLogicalPlan::CreateFunction { .. }
-        | OptimizedLogicalPlan::DropFunction { .. }
-        | OptimizedLogicalPlan::CreateProcedure { .. }
-        | OptimizedLogicalPlan::DropProcedure { .. }
-        | OptimizedLogicalPlan::CreateSnapshot { .. }
-        | OptimizedLogicalPlan::DropSnapshot { .. } => true,
-        _ => false,
-    }
+            | OptimizedLogicalPlan::DropTable { .. }
+            | OptimizedLogicalPlan::AlterTable { .. }
+            | OptimizedLogicalPlan::Truncate { .. }
+            | OptimizedLogicalPlan::CreateView { .. }
+            | OptimizedLogicalPlan::DropView { .. }
+            | OptimizedLogicalPlan::CreateSchema { .. }
+            | OptimizedLogicalPlan::DropSchema { .. }
+            | OptimizedLogicalPlan::UndropSchema { .. }
+            | OptimizedLogicalPlan::AlterSchema { .. }
+            | OptimizedLogicalPlan::CreateFunction { .. }
+            | OptimizedLogicalPlan::DropFunction { .. }
+            | OptimizedLogicalPlan::CreateProcedure { .. }
+            | OptimizedLogicalPlan::DropProcedure { .. }
+            | OptimizedLogicalPlan::CreateSnapshot { .. }
+            | OptimizedLogicalPlan::DropSnapshot { .. }
+    )
 }
 
 pub struct AsyncQueryExecutor {
@@ -93,20 +103,21 @@ impl AsyncQueryExecutor {
     }
 
     pub async fn execute_sql(&self, sql: &str) -> Result<Table> {
+        let sql = preprocess_range_types(sql);
         let cached = {
             let mut cache = self.plan_cache.write().unwrap();
-            cache.get(sql).cloned()
+            cache.get(&sql).cloned()
         };
 
         let physical = match cached {
             Some(plan) => plan,
             None => {
-                let logical = yachtsql_parser::parse_and_plan(sql, self)?;
+                let logical = yachtsql_parser::parse_and_plan(&sql, self)?;
                 let physical = yachtsql_optimizer::optimize(&logical)?;
 
                 if is_cacheable_plan(&physical) {
                     let mut cache = self.plan_cache.write().unwrap();
-                    cache.put(sql.to_string(), physical.clone());
+                    cache.put(sql.clone(), physical.clone());
                 }
 
                 physical
@@ -186,6 +197,18 @@ impl yachtsql_parser::CatalogProvider for AsyncQueryExecutor {
             .map(|v| yachtsql_parser::ViewDefinition {
                 query: v.query,
                 column_aliases: v.column_aliases,
+            })
+    }
+
+    fn get_function(&self, name: &str) -> Option<yachtsql_parser::FunctionDefinition> {
+        self.catalog
+            .get_function(name)
+            .map(|f| yachtsql_parser::FunctionDefinition {
+                name: f.name.clone(),
+                parameters: f.parameters.clone(),
+                return_type: f.return_type.clone(),
+                body: f.body.clone(),
+                is_aggregate: f.is_aggregate,
             })
     }
 }

@@ -1508,9 +1508,13 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
                 .map(|p| Box::new(executor_plan_to_logical_plan(p))),
             filter: filter.clone(),
         },
-        PhysicalPlan::Delete { table_name, filter } => LogicalPlan::Delete {
+        PhysicalPlan::Delete {
+            table_name,
+            alias,
+            filter,
+        } => LogicalPlan::Delete {
             table_name: table_name.clone(),
-            alias: None,
+            alias: alias.clone(),
             filter: filter.clone(),
         },
         PhysicalPlan::Merge {

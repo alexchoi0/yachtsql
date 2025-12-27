@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::RwLock;
 
 use dashmap::DashMap;
@@ -6,18 +7,18 @@ use yachtsql_common::types::Value;
 #[derive(Debug)]
 pub struct ConcurrentSession {
     variables: DashMap<String, Value>,
-    system_variables: DashMap<String, Value>,
+    system_variables: RwLock<HashMap<String, Value>>,
     current_schema: RwLock<Option<String>>,
 }
 
 impl ConcurrentSession {
     pub fn new() -> Self {
-        let system_variables = DashMap::new();
+        let mut system_variables = HashMap::new();
         system_variables.insert("@@time_zone".to_string(), Value::String("UTC".to_string()));
 
         Self {
             variables: DashMap::new(),
-            system_variables,
+            system_variables: RwLock::new(system_variables),
             current_schema: RwLock::new(None),
         }
     }
@@ -31,11 +32,18 @@ impl ConcurrentSession {
     }
 
     pub fn get_system_variable(&self, name: &str) -> Option<Value> {
-        self.system_variables.get(name).map(|v| v.clone())
+        self.system_variables.read().unwrap().get(name).cloned()
     }
 
     pub fn set_system_variable(&self, name: &str, value: Value) {
-        self.system_variables.insert(name.to_string(), value);
+        self.system_variables
+            .write()
+            .unwrap()
+            .insert(name.to_string(), value);
+    }
+
+    pub fn system_variables(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Value>> {
+        self.system_variables.read().unwrap()
     }
 
     pub fn current_schema(&self) -> Option<String> {

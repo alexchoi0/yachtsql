@@ -1,7 +1,7 @@
 use crate::assert_table_eq;
 use crate::common::{create_session, d};
 
-fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
+async fn setup_ecommerce_schema(session: &yachtsql::YachtSQLSession) {
     session
         .execute_sql(
             "CREATE TABLE customers (
@@ -13,6 +13,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
                 segment STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -26,6 +27,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
                 cost INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -38,6 +40,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
                 shipping_country STRING
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -51,6 +54,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
                 discount_pct INT64
             )",
         )
+        .await
         .unwrap();
 
     session
@@ -62,6 +66,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
             (4, 'David Brown', 'david@email.com', DATE '2023-09-05', 'USA', 'Standard'),
             (5, 'Eve Davis', 'eve@email.com', DATE '2024-01-01', 'Germany', 'New')",
         )
+        .await
         .unwrap();
 
     session
@@ -75,6 +80,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
             (301, 'Notebook Set', 'Office', 'Supplies', 25, 10),
             (302, 'Pen Pack', 'Office', 'Supplies', 15, 5)",
         )
+        .await
         .unwrap();
 
     session
@@ -89,6 +95,7 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
             (1007, 1, DATE '2024-02-01', 'Completed', 'USA'),
             (1008, 2, DATE '2024-02-05', 'Cancelled', 'Canada')",
         )
+        .await
         .unwrap();
 
     session
@@ -107,13 +114,14 @@ fn setup_ecommerce_schema(session: &mut yachtsql::YachtSQLSession) {
             (11, 1007, 101, 1, 1200, 5),
             (12, 1007, 103, 2, 80, 0)",
         )
+        .await
         .unwrap();
 }
 
-#[test]
-fn test_executive_dashboard_kpis() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_executive_dashboard_kpis() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -128,14 +136,15 @@ fn test_executive_dashboard_kpis() {
             JOIN products p ON oi.product_id = p.product_id
             WHERE o.status = 'Completed'",
         )
+        .await
         .unwrap();
     assert_table_eq!(result, [[6, 4, 5128, 2125, 500.0]]);
 }
 
-#[test]
-fn test_sales_by_geography() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_sales_by_geography() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -150,6 +159,7 @@ fn test_sales_by_geography() {
             GROUP BY o.shipping_country
             ORDER BY revenue DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -162,10 +172,10 @@ fn test_sales_by_geography() {
     );
 }
 
-#[test]
-fn test_category_performance() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_category_performance() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -192,6 +202,7 @@ fn test_category_performance() {
             FROM category_aggregates
             ORDER BY revenue DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -205,10 +216,10 @@ fn test_category_performance() {
     );
 }
 
-#[test]
-fn test_customer_lifetime_value() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_customer_lifetime_value() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -237,7 +248,7 @@ fn test_customer_lifetime_value() {
                 DATE_DIFF(last_order, first_order, DAY) AS customer_tenure_days
             FROM customer_orders
             ORDER BY total_revenue DESC NULLS LAST, customer_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -259,10 +270,10 @@ fn test_customer_lifetime_value() {
     );
 }
 
-#[test]
-fn test_product_affinity_analysis() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_product_affinity_analysis() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -281,7 +292,7 @@ fn test_product_affinity_analysis() {
             GROUP BY p1.name, p2.name
             HAVING COUNT(*) >= 1
             ORDER BY times_bought_together DESC, product_1, product_2",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -295,10 +306,10 @@ fn test_product_affinity_analysis() {
     );
 }
 
-#[test]
-fn test_inventory_velocity() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_inventory_velocity() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -316,7 +327,7 @@ fn test_inventory_velocity() {
             WHERE o.status = 'Completed'
             GROUP BY p.product_id, p.name, p.category
             ORDER BY p.category, category_rank, p.product_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -332,10 +343,10 @@ fn test_inventory_velocity() {
     );
 }
 
-#[test]
-fn test_customer_segmentation() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_customer_segmentation() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -361,6 +372,7 @@ fn test_customer_segmentation() {
             GROUP BY segment
             ORDER BY total_revenue DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -372,10 +384,10 @@ fn test_customer_segmentation() {
     );
 }
 
-#[test]
-fn test_conversion_funnel() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_conversion_funnel() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -391,6 +403,7 @@ fn test_conversion_funnel() {
                 'Completed Order' AS stage, COUNT(DISTINCT customer_id) AS count
             FROM orders WHERE status = 'Completed'",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -402,10 +415,10 @@ fn test_conversion_funnel() {
     );
 }
 
-#[test]
-fn test_order_status_breakdown() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_order_status_breakdown() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -417,6 +430,7 @@ fn test_order_status_breakdown() {
             GROUP BY status
             ORDER BY order_count DESC, status",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -428,10 +442,10 @@ fn test_order_status_breakdown() {
     );
 }
 
-#[test]
-fn test_daily_sales_trend() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_daily_sales_trend() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -445,7 +459,7 @@ fn test_daily_sales_trend() {
             WHERE o.status = 'Completed'
             GROUP BY o.order_date
             ORDER BY o.order_date",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -460,10 +474,10 @@ fn test_daily_sales_trend() {
     );
 }
 
-#[test]
-fn test_discount_impact_analysis() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_discount_impact_analysis() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -489,6 +503,7 @@ fn test_discount_impact_analysis() {
                     ELSE 4
                 END",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -500,10 +515,10 @@ fn test_discount_impact_analysis() {
     );
 }
 
-#[test]
-fn test_new_vs_returning_customers() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_new_vs_returning_customers() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -522,15 +537,15 @@ fn test_new_vs_returning_customers() {
             WHERE o.status = 'Completed'
             GROUP BY month
             ORDER BY month",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(result, [[d(2024, 1, 1), 4, 1], [d(2024, 2, 1), 0, 1],]);
 }
 
-#[test]
-fn test_average_basket_composition() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_average_basket_composition() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -552,6 +567,7 @@ fn test_average_basket_composition() {
                 MAX(unique_products) AS max_products
             FROM order_summary",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -565,10 +581,10 @@ fn test_average_basket_composition() {
     );
 }
 
-#[test]
-fn test_customer_acquisition_by_month() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_customer_acquisition_by_month() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -580,6 +596,7 @@ fn test_customer_acquisition_by_month() {
             GROUP BY signup_month
             ORDER BY signup_month",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -593,10 +610,10 @@ fn test_customer_acquisition_by_month() {
     );
 }
 
-#[test]
-fn test_product_margin_analysis() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_product_margin_analysis() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -616,6 +633,7 @@ fn test_product_margin_analysis() {
             GROUP BY p.product_id, p.name, p.category, p.price, p.cost
             ORDER BY total_profit DESC, p.product_id",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -671,10 +689,10 @@ fn test_product_margin_analysis() {
     );
 }
 
-#[test]
-fn test_order_size_distribution() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_order_size_distribution() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -699,6 +717,7 @@ fn test_order_size_distribution() {
             GROUP BY order_size
             ORDER BY avg_order_value",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -710,10 +729,10 @@ fn test_order_size_distribution() {
     );
 }
 
-#[test]
-fn test_cross_sell_opportunities() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_cross_sell_opportunities() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -743,7 +762,7 @@ fn test_cross_sell_opportunities() {
             GROUP BY c.customer_id, cust.name
             HAVING COUNT(DISTINCT cc.category) > 0
             ORDER BY c.customer_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -766,10 +785,10 @@ fn test_cross_sell_opportunities() {
     );
 }
 
-#[test]
-fn test_revenue_concentration() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_revenue_concentration() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -795,7 +814,7 @@ fn test_revenue_concentration() {
             FROM product_revenue pr
             CROSS JOIN total t
             ORDER BY pr.revenue DESC",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -811,10 +830,10 @@ fn test_revenue_concentration() {
     );
 }
 
-#[test]
-fn test_days_between_orders() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_days_between_orders() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -834,15 +853,15 @@ fn test_days_between_orders() {
             FROM ordered
             WHERE prev_order_date IS NOT NULL
             GROUP BY customer_id",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(result, [[1, 11.0, 5, 17],]);
 }
 
-#[test]
-fn test_category_share_of_wallet() {
-    let mut session = create_session();
-    setup_ecommerce_schema(&mut session);
+#[tokio::test]
+async fn test_category_share_of_wallet() {
+    let session = create_session();
+    setup_ecommerce_schema(&session).await;
 
     let result = session
         .execute_sql(
@@ -874,6 +893,7 @@ fn test_category_share_of_wallet() {
             JOIN customer_total ct ON ccs.customer_id = ct.customer_id
             ORDER BY ccs.customer_id, share_of_wallet DESC",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,

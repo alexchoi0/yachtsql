@@ -188,8 +188,8 @@ impl Default for Schema {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_schema_creation() {
+    #[tokio::test]
+    async fn test_schema_creation() {
         let mut schema = Schema::new();
         schema.add_field(Field::nullable("id", DataType::Int64));
         schema.add_field(Field::nullable("name", DataType::String));
@@ -200,8 +200,8 @@ mod tests {
         assert!(schema.field("missing").is_none());
     }
 
-    #[test]
-    fn test_schema_validation() {
+    #[tokio::test]
+    async fn test_schema_validation() {
         let mut schema = Schema::new();
         schema.add_field(Field::nullable("id", DataType::Int64));
         schema.add_field(Field::nullable("id", DataType::String));

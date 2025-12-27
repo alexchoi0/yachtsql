@@ -1,5 +1,3 @@
-#![cfg(feature = "concurrent")]
-
 use std::time::{Duration, Instant};
 
 use tokio::task::JoinSet;

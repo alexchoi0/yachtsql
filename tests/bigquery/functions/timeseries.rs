@@ -1,18 +1,19 @@
 use crate::assert_table_eq;
 use crate::common::{create_session, d, dt, null, ts};
 
-#[test]
-fn test_date_bucket_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_date_bucket_basic() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 7 DAY)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[d(2024, 6, 9)]]);
 }
 
-#[test]
-fn test_date_bucket_2_day() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_date_bucket_2_day() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_dates AS (
@@ -27,6 +28,7 @@ fn test_date_bucket_2_day() {
             FROM some_dates
             ORDER BY my_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -41,9 +43,9 @@ fn test_date_bucket_2_day() {
     );
 }
 
-#[test]
-fn test_date_bucket_with_origin() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_date_bucket_with_origin() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_dates AS (
@@ -58,6 +60,7 @@ fn test_date_bucket_with_origin() {
             FROM some_dates
             ORDER BY my_date",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -72,36 +75,39 @@ fn test_date_bucket_with_origin() {
     );
 }
 
-#[test]
-fn test_date_bucket_with_null() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_date_bucket_with_null() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATE_BUCKET(NULL, INTERVAL 7 DAY)")
+        .await
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
 }
 
-#[test]
-fn test_date_bucket_month_interval() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_date_bucket_month_interval() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATE_BUCKET(DATE '2024-06-15', INTERVAL 1 MONTH)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[d(2024, 6, 1)]]);
 }
 
-#[test]
-fn test_datetime_bucket_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_datetime_bucket_basic() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[dt(2024, 6, 15, 12, 0, 0)]]);
 }
 
-#[test]
-fn test_datetime_bucket_12_hour() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_datetime_bucket_12_hour() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_datetimes AS (
@@ -116,6 +122,7 @@ fn test_datetime_bucket_12_hour() {
             FROM some_datetimes
             ORDER BY my_datetime",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -130,9 +137,9 @@ fn test_datetime_bucket_12_hour() {
     );
 }
 
-#[test]
-fn test_datetime_bucket_with_origin() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_datetime_bucket_with_origin() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_datetimes AS (
@@ -146,7 +153,7 @@ fn test_datetime_bucket_with_origin() {
             SELECT DATETIME_BUCKET(my_datetime, INTERVAL 7 DAY, DATETIME '2000-12-22 12:00:00') AS bucket_lower_bound
             FROM some_datetimes
             ORDER BY my_datetime",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -161,36 +168,39 @@ fn test_datetime_bucket_with_origin() {
     );
 }
 
-#[test]
-fn test_datetime_bucket_with_null() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_datetime_bucket_with_null() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATETIME_BUCKET(NULL, INTERVAL 12 HOUR)")
+        .await
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
 }
 
-#[test]
-fn test_datetime_bucket_minute_interval() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_datetime_bucket_minute_interval() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT DATETIME_BUCKET(DATETIME '2024-06-15 14:37:00', INTERVAL 15 MINUTE)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[dt(2024, 6, 15, 14, 30, 0)]]);
 }
 
-#[test]
-fn test_timestamp_bucket_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_timestamp_bucket_basic() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:30:00', INTERVAL 12 HOUR)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ts(2024, 6, 15, 12, 0, 0)]]);
 }
 
-#[test]
-fn test_timestamp_bucket_12_hour() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_timestamp_bucket_12_hour() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_timestamps AS (
@@ -205,6 +215,7 @@ fn test_timestamp_bucket_12_hour() {
             FROM some_timestamps
             ORDER BY my_timestamp",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -219,9 +230,9 @@ fn test_timestamp_bucket_12_hour() {
     );
 }
 
-#[test]
-fn test_timestamp_bucket_with_origin() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_timestamp_bucket_with_origin() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "WITH some_timestamps AS (
@@ -235,7 +246,7 @@ fn test_timestamp_bucket_with_origin() {
             SELECT TIMESTAMP_BUCKET(my_timestamp, INTERVAL 7 DAY, TIMESTAMP '2000-12-22 12:00:00') AS bucket_lower_bound
             FROM some_timestamps
             ORDER BY my_timestamp",
-        )
+        ).await
         .unwrap();
     assert_table_eq!(
         result,
@@ -250,27 +261,29 @@ fn test_timestamp_bucket_with_origin() {
     );
 }
 
-#[test]
-fn test_timestamp_bucket_with_null() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_timestamp_bucket_with_null() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(NULL, INTERVAL 12 HOUR)")
+        .await
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[0].is_null());
 }
 
-#[test]
-fn test_timestamp_bucket_minute_interval() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_timestamp_bucket_minute_interval() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-06-15 14:37:00', INTERVAL 15 MINUTE)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ts(2024, 6, 15, 14, 30, 0)]]);
 }
 
-#[test]
-fn test_gap_fill_locf() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_locf() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -283,6 +296,7 @@ fn test_gap_fill_locf() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -298,6 +312,7 @@ fn test_gap_fill_locf() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -310,9 +325,9 @@ fn test_gap_fill_locf() {
     );
 }
 
-#[test]
-fn test_gap_fill_linear() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_linear() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -325,6 +340,7 @@ fn test_gap_fill_linear() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -340,6 +356,7 @@ fn test_gap_fill_linear() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -352,9 +369,9 @@ fn test_gap_fill_linear() {
     );
 }
 
-#[test]
-fn test_gap_fill_null() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_null() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -367,6 +384,7 @@ fn test_gap_fill_null() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -382,6 +400,7 @@ fn test_gap_fill_null() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert!(result.get_row(0).unwrap().values()[1].is_null());
     assert_eq!(result.get_row(1).unwrap().values()[1].as_i64().unwrap(), 77);
@@ -389,9 +408,9 @@ fn test_gap_fill_null() {
     assert!(result.get_row(3).unwrap().values()[1].is_null());
 }
 
-#[test]
-fn test_gap_fill_with_partitions() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_with_partitions() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -411,6 +430,7 @@ fn test_gap_fill_with_partitions() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -427,6 +447,7 @@ fn test_gap_fill_with_partitions() {
             )
             ORDER BY device_id, time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -444,9 +465,9 @@ fn test_gap_fill_with_partitions() {
     );
 }
 
-#[test]
-fn test_gap_fill_multiple_columns() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_multiple_columns() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -459,6 +480,7 @@ fn test_gap_fill_multiple_columns() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -475,6 +497,7 @@ fn test_gap_fill_multiple_columns() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -488,9 +511,9 @@ fn test_gap_fill_multiple_columns() {
     );
 }
 
-#[test]
-fn test_gap_fill_with_origin() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_with_origin() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TEMP TABLE device_data AS
@@ -503,6 +526,7 @@ fn test_gap_fill_with_origin() {
                 ]
             )",
         )
+        .await
         .unwrap();
 
     let result = session
@@ -519,6 +543,7 @@ fn test_gap_fill_with_origin() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,
@@ -533,9 +558,9 @@ fn test_gap_fill_with_origin() {
     );
 }
 
-#[test]
-fn test_gap_fill_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_gap_fill_subquery() {
+    let session = create_session();
     let result = session
         .execute_sql(
             "SELECT *
@@ -557,6 +582,7 @@ fn test_gap_fill_subquery() {
             )
             ORDER BY time",
         )
+        .await
         .unwrap();
     assert_table_eq!(
         result,

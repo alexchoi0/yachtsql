@@ -637,9 +637,12 @@ impl PhysicalPlanner {
             }
 
             LogicalPlan::Delete {
-                table_name, filter, ..
+                table_name,
+                alias,
+                filter,
             } => Ok(OptimizedLogicalPlan::Delete {
                 table_name: table_name.clone(),
+                alias: alias.clone(),
                 filter: filter.clone(),
             }),
 
@@ -1361,9 +1364,13 @@ impl OptimizedLogicalPlan {
                 from: from.map(|p| Box::new(p.into_logical())),
                 filter,
             },
-            OptimizedLogicalPlan::Delete { table_name, filter } => LogicalPlan::Delete {
+            OptimizedLogicalPlan::Delete {
                 table_name,
-                alias: None,
+                alias,
+                filter,
+            } => LogicalPlan::Delete {
+                table_name,
+                alias,
                 filter,
             },
             OptimizedLogicalPlan::Merge {

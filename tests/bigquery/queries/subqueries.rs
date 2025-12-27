@@ -3,71 +3,75 @@ use yachtsql::YachtSQLSession;
 use crate::assert_table_eq;
 use crate::common::create_session;
 
-fn setup_tables(session: &mut YachtSQLSession) {
+async fn setup_tables(session: &YachtSQLSession) {
     session
         .execute_sql("CREATE TABLE employees (id INT64, name STRING, dept_id INT64, salary INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE departments (id INT64, name STRING)")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO employees VALUES (1, 'Alice', 1, 50000), (2, 'Bob', 1, 60000), (3, 'Charlie', 2, 55000), (4, 'Diana', 2, 70000)")
+        .execute_sql("INSERT INTO employees VALUES (1, 'Alice', 1, 50000), (2, 'Bob', 1, 60000), (3, 'Charlie', 2, 55000), (4, 'Diana', 2, 70000)").await
         .unwrap();
     session
         .execute_sql("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        .await
         .unwrap();
 }
 
-#[test]
-fn test_subquery_in_where_in() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_subquery_in_where_in() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
-        .execute_sql("SELECT name FROM employees WHERE dept_id IN (SELECT id FROM departments WHERE name = 'Engineering') ORDER BY name")
-        .unwrap();
-
-    assert_table_eq!(result, [["Alice"], ["Bob"],]);
-}
-
-#[test]
-fn test_subquery_in_where_not_in() {
-    let mut session = create_session();
-    setup_tables(&mut session);
-
-    let result = session
-        .execute_sql("SELECT name FROM employees WHERE dept_id NOT IN (SELECT id FROM departments WHERE name = 'Sales') ORDER BY name")
+        .execute_sql("SELECT name FROM employees WHERE dept_id IN (SELECT id FROM departments WHERE name = 'Engineering') ORDER BY name").await
         .unwrap();
 
     assert_table_eq!(result, [["Alice"], ["Bob"],]);
 }
 
-#[test]
-fn test_subquery_in_from_clause() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_subquery_in_where_not_in() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
-        .execute_sql("SELECT sub.name, sub.salary FROM (SELECT name, salary FROM employees WHERE salary > 55000) AS sub ORDER BY sub.name")
+        .execute_sql("SELECT name FROM employees WHERE dept_id NOT IN (SELECT id FROM departments WHERE name = 'Sales') ORDER BY name").await
+        .unwrap();
+
+    assert_table_eq!(result, [["Alice"], ["Bob"],]);
+}
+
+#[tokio::test]
+async fn test_subquery_in_from_clause() {
+    let session = create_session();
+    setup_tables(&session).await;
+
+    let result = session
+        .execute_sql("SELECT sub.name, sub.salary FROM (SELECT name, salary FROM employees WHERE salary > 55000) AS sub ORDER BY sub.name").await
         .unwrap();
 
     assert_table_eq!(result, [["Bob", 60000], ["Diana", 70000],]);
 }
 
-#[test]
-fn test_subquery_literal_values() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_subquery_literal_values() {
+    let session = create_session();
 
     let result = session
         .execute_sql(r#"SELECT * FROM (SELECT "apple" AS fruit, "carrot" AS vegetable)"#)
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["apple", "carrot"]]);
 }
 
-#[test]
-fn test_cte_with_qualified_star() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cte_with_qualified_star() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -78,14 +82,15 @@ fn test_cte_with_qualified_star() {
             SELECT g.*
             FROM groceries AS g"#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["milk", "eggs", "bread"]]);
 }
 
-#[test]
-fn test_cte_with_star() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_cte_with_star() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -96,14 +101,15 @@ fn test_cte_with_star() {
             SELECT *
             FROM groceries AS g"#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["milk", "eggs", "bread"]]);
 }
 
-#[test]
-fn test_array_struct_offset_star() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_struct_offset_star() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -113,14 +119,15 @@ fn test_array_struct_offset_star() {
             SELECT l.location[offset(0)].*
             FROM locations l"#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["Seattle", "Washington"]]);
 }
 
-#[test]
-fn test_select_star_except() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_select_star_except() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -131,14 +138,15 @@ fn test_select_star_except() {
             SELECT * EXCEPT (order_id)
             FROM orders"#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["sprocket", 200]]);
 }
 
-#[test]
-fn test_select_star_replace() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_select_star_replace() {
+    let session = create_session();
 
     let result = session
         .execute_sql(
@@ -149,79 +157,86 @@ fn test_select_star_replace() {
             SELECT * REPLACE (quantity * 2 AS quantity)
             FROM orders"#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[5, "sprocket", 400]]);
 }
 
-#[test]
-fn test_subquery_with_aggregation() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_subquery_with_aggregation() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
-        .execute_sql("SELECT name FROM employees WHERE salary > (SELECT AVG(salary) FROM employees) ORDER BY name")
+        .execute_sql("SELECT name FROM employees WHERE salary > (SELECT AVG(salary) FROM employees) ORDER BY name").await
         .unwrap();
 
     assert_table_eq!(result, [["Bob"], ["Diana"],]);
 }
 
-#[test]
-fn test_exists_subquery() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_exists_subquery() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
-        .execute_sql("SELECT name FROM departments d WHERE EXISTS (SELECT 1 FROM employees e WHERE e.dept_id = d.id AND e.salary > 55000) ORDER BY name")
+        .execute_sql("SELECT name FROM departments d WHERE EXISTS (SELECT 1 FROM employees e WHERE e.dept_id = d.id AND e.salary > 55000) ORDER BY name").await
         .unwrap();
 
     assert_table_eq!(result, [["Engineering"], ["Sales"],]);
 }
 
-#[test]
-fn test_not_exists_subquery() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_not_exists_subquery() {
+    let session = create_session();
 
     session
         .execute_sql("CREATE TABLE products (id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE orders (id INT64, product_id INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget'), (3, 'Gizmo')")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO orders VALUES (1, 1), (2, 1)")
+        .await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT name FROM products p WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.product_id = p.id) ORDER BY name")
+        .execute_sql("SELECT name FROM products p WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.product_id = p.id) ORDER BY name").await
         .unwrap();
 
     assert_table_eq!(result, [["Gadget"], ["Gizmo"],]);
 }
 
-#[test]
-fn test_nested_subquery() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_nested_subquery() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
-        .execute_sql("SELECT name FROM employees WHERE dept_id IN (SELECT id FROM departments WHERE id IN (SELECT dept_id FROM employees WHERE salary > 65000)) ORDER BY name")
+        .execute_sql("SELECT name FROM employees WHERE dept_id IN (SELECT id FROM departments WHERE id IN (SELECT dept_id FROM employees WHERE salary > 65000)) ORDER BY name").await
         .unwrap();
 
     assert_table_eq!(result, [["Charlie"], ["Diana"],]);
 }
 
-#[test]
-fn test_dedup_pattern_with_row_number() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_dedup_pattern_with_row_number() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE test_table (db_id INT64, db_basis_t INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO test_table VALUES (1, 100, 'a'), (1, 200, 'b'), (2, 100, 'c')")
+        .await
         .unwrap();
 
     let result = session
@@ -243,96 +258,119 @@ fn test_dedup_pattern_with_row_number() {
             WHERE row_number_id = 1
             ORDER BY db_id",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, "b"], [2, "c"]]);
 }
 
-#[test]
-fn test_array_agg_ignore_nulls() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_ignore_nulls() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE test_data (id INT64, val STRING)")
+        .await
         .unwrap();
     session
         .execute_sql(
             "INSERT INTO test_data VALUES (1, 'a'), (1, NULL), (1, 'b'), (2, NULL), (2, 'c')",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT id, ARRAY_AGG(val IGNORE NULLS) as vals FROM test_data GROUP BY id ORDER BY id",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, ["a", "b"]], [2, ["c"]]]);
 }
 
-#[test]
-fn test_backtick_quoted_table() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_backtick_quoted_table() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE `my-table` (id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO `my-table` VALUES (1, 'test')")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT * FROM `my-table`").unwrap();
+    let result = session
+        .execute_sql("SELECT * FROM `my-table`")
+        .await
+        .unwrap();
 
     assert_table_eq!(result, [[1, "test"]]);
 }
 
-#[test]
-fn test_backtick_bigquery_qualified_table() {
-    let mut session = create_session();
-    session.execute_sql("CREATE SCHEMA `my-dataset`").unwrap();
+#[tokio::test]
+async fn test_backtick_bigquery_qualified_table() {
+    let session = create_session();
+    session
+        .execute_sql("CREATE SCHEMA `my-dataset`")
+        .await
+        .unwrap();
     session
         .execute_sql("CREATE TABLE `my-dataset.my-table` (id INT64, value STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO `my-dataset.my-table` VALUES (1, 'hello'), (2, 'world')")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT * FROM `my-dataset.my-table` ORDER BY id")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, "hello"], [2, "world"]]);
 }
 
-#[test]
-fn test_backtick_mixed_operations() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_backtick_mixed_operations() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE `source-table` (id INT64, data STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO `source-table` VALUES (1, 'a'), (2, 'b')")
+        .await
         .unwrap();
 
     session
         .execute_sql("UPDATE `source-table` SET data = 'updated' WHERE id = 1")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT * FROM `source-table` ORDER BY id")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1, "updated"], [2, "b"]]);
 
     session
         .execute_sql("DELETE FROM `source-table` WHERE id = 2")
+        .await
         .unwrap();
 
-    let result = session.execute_sql("SELECT * FROM `source-table`").unwrap();
+    let result = session
+        .execute_sql("SELECT * FROM `source-table`")
+        .await
+        .unwrap();
     assert_table_eq!(result, [[1, "updated"]]);
 }
 
-#[test]
-fn test_correlated_scalar_subquery_order_by_non_projected() {
-    let mut session = create_session();
-    setup_tables(&mut session);
+#[tokio::test]
+async fn test_correlated_scalar_subquery_order_by_non_projected() {
+    let session = create_session();
+    setup_tables(&session).await;
 
     let result = session
         .execute_sql(
@@ -347,121 +385,132 @@ fn test_correlated_scalar_subquery_order_by_non_projected() {
             FROM departments d
             ORDER BY d.id",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, "Engineering", "Bob"], [2, "Sales", "Diana"],]);
 }
 
-#[test]
-fn test_array_agg_with_order_by() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_with_order_by() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE events (order_id INT64, code STRING, ts INT64)")
+        .await
         .unwrap();
     session
         .execute_sql(
             "INSERT INTO events VALUES (1, 'A', 100), (1, 'B', 300), (1, 'C', 200), (2, 'X', 50)",
         )
+        .await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT order_id, ARRAY_AGG(code ORDER BY ts DESC) as codes FROM events GROUP BY order_id ORDER BY order_id")
+        .execute_sql("SELECT order_id, ARRAY_AGG(code ORDER BY ts DESC) as codes FROM events GROUP BY order_id ORDER BY order_id").await
         .unwrap();
 
     assert_table_eq!(result, [[1, ["B", "C", "A"]], [2, ["X"]]]);
 }
 
-#[test]
-fn test_array_agg_ignore_nulls_with_order_by() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_ignore_nulls_with_order_by() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE events (order_id INT64, code STRING, ts INT64)")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO events VALUES (1, 'A', 100), (1, NULL, 300), (1, 'B', 200), (2, NULL, 50), (2, 'X', 100)")
+        .execute_sql("INSERT INTO events VALUES (1, 'A', 100), (1, NULL, 300), (1, 'B', 200), (2, NULL, 50), (2, 'X', 100)").await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT order_id, ARRAY_AGG(code IGNORE NULLS ORDER BY ts DESC) as codes FROM events GROUP BY order_id ORDER BY order_id")
+        .execute_sql("SELECT order_id, ARRAY_AGG(code IGNORE NULLS ORDER BY ts DESC) as codes FROM events GROUP BY order_id ORDER BY order_id").await
         .unwrap();
 
     assert_table_eq!(result, [[1, ["B", "A"]], [2, ["X"]]]);
 }
 
-#[test]
-fn test_safe_offset_on_array() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_safe_offset_on_array() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE data (id INT64, vals ARRAY<STRING>)")
+        .await
         .unwrap();
     session
         .execute_sql(r#"INSERT INTO data VALUES (1, ['a', 'b', 'c']), (2, ['x']), (3, [])"#)
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id, vals[SAFE_OFFSET(0)] as first_val FROM data ORDER BY id")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, "a"], [2, "x"], [3, null]]);
 }
 
-#[test]
-fn test_exists_with_unnest() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exists_with_unnest() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE orders (id INT64, status_codes ARRAY<STRING>)")
+        .await
         .unwrap();
     session
-        .execute_sql(r#"INSERT INTO orders VALUES (1, ['100', '129', '200']), (2, ['100', '200']), (3, ['219A', '300'])"#)
+        .execute_sql(r#"INSERT INTO orders VALUES (1, ['100', '129', '200']), (2, ['100', '200']), (3, ['219A', '300'])"#).await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c = '129' LIMIT 1) AS has_129 FROM orders ORDER BY id")
+        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c = '129' LIMIT 1) AS has_129 FROM orders ORDER BY id").await
         .unwrap();
 
     assert_table_eq!(result, [[1, true], [2, false], [3, false]]);
 }
 
-#[test]
-fn test_exists_with_unnest_like_pattern() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exists_with_unnest_like_pattern() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE orders (id INT64, status_codes ARRAY<STRING>)")
+        .await
         .unwrap();
     session
-        .execute_sql(r#"INSERT INTO orders VALUES (1, ['100', '129', '200']), (2, ['100', '200']), (3, ['219A', '300'])"#)
+        .execute_sql(r#"INSERT INTO orders VALUES (1, ['100', '129', '200']), (2, ['100', '200']), (3, ['219A', '300'])"#).await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c LIKE '219%' LIMIT 1) AS has_219x FROM orders ORDER BY id")
+        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c LIKE '219%' LIMIT 1) AS has_219x FROM orders ORDER BY id").await
         .unwrap();
 
     assert_table_eq!(result, [[1, false], [2, false], [3, true]]);
 }
 
-#[test]
-fn test_exists_with_unnest_in_list() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_exists_with_unnest_in_list() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE orders (id INT64, status_codes ARRAY<STRING>)")
+        .await
         .unwrap();
     session
-        .execute_sql(r#"INSERT INTO orders VALUES (1, ['610', '200']), (2, ['100', '200']), (3, ['611', '612'])"#)
+        .execute_sql(r#"INSERT INTO orders VALUES (1, ['610', '200']), (2, ['100', '200']), (3, ['611', '612'])"#).await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c IN ('610', '611', '612') LIMIT 1) AS has_complete FROM orders ORDER BY id")
+        .execute_sql("SELECT id, EXISTS (SELECT c FROM UNNEST(status_codes) c WHERE c IN ('610', '611', '612') LIMIT 1) AS has_complete FROM orders ORDER BY id").await
         .unwrap();
 
     assert_table_eq!(result, [[1, true], [2, false], [3, true]]);
 }
 
-#[test]
-fn test_farm_fingerprint() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_farm_fingerprint() {
+    let session = create_session();
 
     let result = session
         .execute_sql("SELECT FARM_FINGERPRINT('hello') AS hash")
+        .await
         .unwrap();
 
     let records = result.to_records().unwrap();
@@ -469,29 +518,29 @@ fn test_farm_fingerprint() {
     assert_ne!(hash, 0);
 
     let result2 = session
-        .execute_sql("SELECT FARM_FINGERPRINT('hello') = FARM_FINGERPRINT('hello') AS same, FARM_FINGERPRINT('hello') = FARM_FINGERPRINT('world') AS different")
+        .execute_sql("SELECT FARM_FINGERPRINT('hello') = FARM_FINGERPRINT('hello') AS same, FARM_FINGERPRINT('hello') = FARM_FINGERPRINT('world') AS different").await
         .unwrap();
 
     assert_table_eq!(result2, [[true, false]]);
 }
 
-#[test]
-fn test_generate_timestamp_array() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_generate_timestamp_array() {
+    let session = create_session();
 
     let result = session
-        .execute_sql("SELECT ARRAY_LENGTH(GENERATE_TIMESTAMP_ARRAY(TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-03 00:00:00', INTERVAL 1 DAY)) AS len")
+        .execute_sql("SELECT ARRAY_LENGTH(GENERATE_TIMESTAMP_ARRAY(TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-03 00:00:00', INTERVAL 1 DAY)) AS len").await
         .unwrap();
 
     assert_table_eq!(result, [[3]]);
 }
 
-#[test]
-fn test_generate_date_array() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_generate_date_array() {
+    let session = create_session();
 
     let result = session
-        .execute_sql("SELECT GENERATE_DATE_ARRAY(DATE '2024-01-01', DATE '2024-01-05', INTERVAL 1 DAY) AS dates")
+        .execute_sql("SELECT GENERATE_DATE_ARRAY(DATE '2024-01-01', DATE '2024-01-05', INTERVAL 1 DAY) AS dates").await
         .unwrap();
 
     let records = result.to_records().unwrap();
@@ -499,62 +548,71 @@ fn test_generate_date_array() {
     assert_eq!(arr.len(), 5);
 }
 
-#[test]
-fn test_logical_or() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_logical_or() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE flags (grp INT64, flag BOOL)")
+        .await
         .unwrap();
     session
         .execute_sql(
             "INSERT INTO flags VALUES (1, true), (1, false), (2, false), (2, false), (3, NULL)",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT grp, LOGICAL_OR(flag) AS any_true FROM flags GROUP BY grp ORDER BY grp",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, true], [2, false], [3, false]]);
 }
 
-#[test]
-fn test_logical_and() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_logical_and() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE flags (grp INT64, flag BOOL)")
+        .await
         .unwrap();
     session
         .execute_sql(
             "INSERT INTO flags VALUES (1, true), (1, true), (2, true), (2, false), (3, NULL)",
         )
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT grp, LOGICAL_AND(flag) AS all_true FROM flags GROUP BY grp ORDER BY grp",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[1, true], [2, false], [3, null]]);
 }
 
-#[test]
-fn test_array_select_as_struct() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_select_as_struct() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE items (id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO items VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql(
             "SELECT ARRAY(SELECT AS STRUCT id, name FROM items WHERE id <= 2 ORDER BY id) AS arr",
         )
+        .await
         .unwrap();
 
     eprintln!("Result: {:?}", result);
@@ -573,37 +631,41 @@ fn test_array_select_as_struct() {
     assert_eq!(s1[1].1.as_str().unwrap(), "Bob");
 }
 
-#[test]
-fn test_temp_function_basic() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_temp_function_basic() {
+    let session = create_session();
     session
         .execute_sql("CREATE TEMP FUNCTION double_it(x INT64) AS (x * 2)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT double_it(5) AS doubled")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[10]]);
 }
 
-#[test]
-fn test_temp_function_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_temp_function_string() {
+    let session = create_session();
     session
         .execute_sql("CREATE TEMP FUNCTION greet(name STRING) AS (CONCAT('Hello, ', name, '!'))")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT greet('World') AS greeting")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["Hello, World!"]]);
 }
 
-#[test]
-fn test_temp_function_complex() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_temp_function_complex() {
+    let session = create_session();
     session
         .execute_sql(
             r#"CREATE TEMP FUNCTION to_uuid(s STRING)
@@ -619,32 +681,35 @@ fn test_temp_function_complex() {
                        SUBSTR(TO_HEX(SHA256(s)), 20, 12))
             )"#,
         )
+        .await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT to_uuid('hello') = to_uuid('hello') AS same, to_uuid('hello') = to_uuid('world') AS diff")
+        .execute_sql("SELECT to_uuid('hello') = to_uuid('hello') AS same, to_uuid('hello') = to_uuid('world') AS diff").await
         .unwrap();
 
     assert_table_eq!(result, [[true, false]]);
 }
 
-#[test]
-fn test_temp_function_in_expression() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_temp_function_in_expression() {
+    let session = create_session();
     session
         .execute_sql("CREATE TEMP FUNCTION add_one(x INT64) AS (x + 1)")
+        .await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT add_one(add_one(5)) AS nested, add_one(10) + add_one(20) AS sum")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[7, 32]]);
 }
 
-#[test]
-fn test_complex_union_with_nested_subqueries() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_complex_union_with_nested_subqueries() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -658,6 +723,7 @@ fn test_complex_union_with_nested_subqueries() {
                 issued_time DATETIME
             )"#,
         )
+        .await
         .unwrap();
 
     session
@@ -667,7 +733,7 @@ fn test_complex_union_with_nested_subqueries() {
                 ('u2', 'a2', 'ladder', 'lincoln', 2000.0, DATETIME '2024-01-02 10:00:00', DATETIME '2024-01-20 10:00:00'),
                 ('u3', 'a3', 'other', 'lincoln', 1500.0, DATETIME '2024-01-03 10:00:00', DATETIME '2024-01-25 10:00:00')
             "#,
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -702,7 +768,7 @@ fn test_complex_union_with_nested_subqueries() {
             WHERE COALESCE(tbl.visit_time, tbl.issued_time) <= tbl.issued_time
             ORDER BY rule_type, user_id
             "#,
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -717,9 +783,9 @@ fn test_complex_union_with_nested_subqueries() {
     );
 }
 
-#[test]
-fn test_array_agg_struct_field_access() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_struct_field_access() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -733,6 +799,7 @@ fn test_array_agg_struct_field_access() {
                 campaign STRING
             )"#,
         )
+        .await
         .unwrap();
 
     session
@@ -743,7 +810,7 @@ fn test_array_agg_struct_field_access() {
                 ('u2', 'partner_b', DATETIME '2024-01-02 10:00:00', 'ext3', 'web', 'bing', 'campaign3'),
                 ('u3', 'partner_a', DATETIME '2024-01-03 10:00:00', 'ext4', 'app', 'direct', 'campaign4')
             "#,
-        )
+        ).await
         .unwrap();
 
     let result = session
@@ -774,7 +841,7 @@ fn test_array_agg_struct_field_access() {
             )
             ORDER BY user_id, partner, external_id
             "#,
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -788,9 +855,9 @@ fn test_array_agg_struct_field_access() {
     );
 }
 
-#[test]
-fn test_array_agg_ignore_nulls_limit_debug() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_ignore_nulls_limit_debug() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -802,6 +869,7 @@ fn test_array_agg_ignore_nulls_limit_debug() {
                 source STRING
             )"#,
         )
+        .await
         .unwrap();
 
     session
@@ -811,6 +879,7 @@ fn test_array_agg_ignore_nulls_limit_debug() {
                 ('u2', 'partner_b', DATETIME '2024-01-02 10:00:00', 'ext3', 'bing')
             "#,
         )
+        .await
         .unwrap();
 
     let result = session
@@ -826,6 +895,7 @@ fn test_array_agg_ignore_nulls_limit_debug() {
             ORDER BY user_id
             "#,
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -834,9 +904,9 @@ fn test_array_agg_ignore_nulls_limit_debug() {
     );
 }
 
-#[test]
-fn test_array_agg_ignore_nulls_limit_safe_offset() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_ignore_nulls_limit_safe_offset() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -848,6 +918,7 @@ fn test_array_agg_ignore_nulls_limit_safe_offset() {
                 source STRING
             )"#,
         )
+        .await
         .unwrap();
 
     session
@@ -857,6 +928,7 @@ fn test_array_agg_ignore_nulls_limit_safe_offset() {
                 ('u2', 'partner_b', DATETIME '2024-01-02 10:00:00', 'ext3', 'bing')
             "#,
         )
+        .await
         .unwrap();
 
     let result = session
@@ -871,7 +943,7 @@ fn test_array_agg_ignore_nulls_limit_safe_offset() {
             GROUP BY user_id, partner
             ORDER BY user_id
             "#,
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -880,9 +952,9 @@ fn test_array_agg_ignore_nulls_limit_safe_offset() {
     );
 }
 
-#[test]
-fn test_array_agg_in_union_all() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_agg_in_union_all() {
+    let session = create_session();
 
     session
         .execute_sql(
@@ -894,6 +966,7 @@ fn test_array_agg_in_union_all() {
                 source STRING
             )"#,
         )
+        .await
         .unwrap();
 
     session
@@ -905,6 +978,7 @@ fn test_array_agg_in_union_all() {
                 ('u3', 'partner_a', DATETIME '2024-01-03 10:00:00', 'ext4', 'direct')
             "#,
         )
+        .await
         .unwrap();
 
     let result = session
@@ -923,7 +997,7 @@ fn test_array_agg_in_union_all() {
             GROUP BY user_id, partner
             ORDER BY user_id, external_id
             "#,
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(
@@ -937,25 +1011,27 @@ fn test_array_agg_in_union_all() {
     );
 }
 
-fn setup_players_mascots(session: &mut YachtSQLSession) {
+async fn setup_players_mascots(session: &YachtSQLSession) {
     session
         .execute_sql("CREATE TABLE Players (username STRING, team STRING, level INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE Mascots (team STRING, mascot STRING)")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Players VALUES ('gorbie', 'red', 29), ('junelyn', 'blue', 2), ('corba', 'green', 43)")
+        .execute_sql("INSERT INTO Players VALUES ('gorbie', 'red', 29), ('junelyn', 'blue', 2), ('corba', 'green', 43)").await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Mascots VALUES ('red', 'cardinal'), ('blue', 'finch'), ('green', 'parrot')")
+        .execute_sql("INSERT INTO Mascots VALUES ('red', 'cardinal'), ('blue', 'finch'), ('green', 'parrot')").await
         .unwrap();
 }
 
-#[test]
-fn test_scalar_subquery_in_select() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_scalar_subquery_in_select() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -965,6 +1041,7 @@ fn test_scalar_subquery_in_select() {
             FROM Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -977,10 +1054,10 @@ fn test_scalar_subquery_in_select() {
     );
 }
 
-#[test]
-fn test_scalar_subquery_with_aggregate() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_scalar_subquery_with_aggregate() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -991,6 +1068,7 @@ fn test_scalar_subquery_with_aggregate() {
             FROM Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     let records = result.to_records().unwrap();
@@ -999,67 +1077,73 @@ fn test_scalar_subquery_with_aggregate() {
     assert!((avg - 24.666666).abs() < 0.01);
 }
 
-fn setup_npcs(session: &mut YachtSQLSession) {
+async fn setup_npcs(session: &YachtSQLSession) {
     session
         .execute_sql("CREATE TABLE NPCs (username STRING, team STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO NPCs VALUES ('niles', 'red'), ('jujul', 'red'), ('kira', 'blue')")
+        .await
         .unwrap();
 }
 
-#[test]
-fn test_array_subquery_basic() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_array_subquery_basic() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT ARRAY(SELECT username FROM NPCs WHERE team = 'red' ORDER BY username) AS red",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[["jujul", "niles"]]]);
 }
 
-#[test]
-fn test_array_subquery_empty_result() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_array_subquery_empty_result() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql("SELECT ARRAY(SELECT username FROM NPCs WHERE team = 'yellow') AS yellow")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[[]]]);
 }
 
-#[test]
-fn test_array_subquery_with_filter() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_array_subquery_with_filter() {
+    let session = create_session();
     session
         .execute_sql(
             "CREATE TABLE Products (id INT64, name STRING, category STRING, price FLOAT64)",
         )
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Products VALUES (1, 'Laptop', 'Electronics', 999.99), (2, 'Phone', 'Electronics', 599.99), (3, 'Desk', 'Furniture', 299.99)")
+        .execute_sql("INSERT INTO Products VALUES (1, 'Laptop', 'Electronics', 999.99), (2, 'Phone', 'Electronics', 599.99), (3, 'Desk', 'Furniture', 299.99)").await
         .unwrap();
 
     let result = session
-        .execute_sql("SELECT ARRAY(SELECT name FROM Products WHERE category = 'Electronics' ORDER BY price DESC) AS electronics")
+        .execute_sql("SELECT ARRAY(SELECT name FROM Products WHERE category = 'Electronics' ORDER BY price DESC) AS electronics").await
         .unwrap();
 
     assert_table_eq!(result, [[["Laptop", "Phone"]]]);
 }
 
-#[test]
-fn test_scalar_subquery_returns_null_when_no_match() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_scalar_subquery_returns_null_when_no_match() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     session
         .execute_sql("INSERT INTO Players VALUES ('nobody', 'yellow', 10)")
+        .await
         .unwrap();
 
     let result = session
@@ -1070,15 +1154,16 @@ fn test_scalar_subquery_returns_null_when_no_match() {
             FROM Players
             WHERE username = 'nobody'",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["nobody", null]]);
 }
 
-#[test]
-fn test_scalar_subquery_in_where_clause() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_scalar_subquery_in_where_clause() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1087,15 +1172,16 @@ fn test_scalar_subquery_in_where_clause() {
             WHERE level > (SELECT AVG(level) FROM Players)
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["corba", 43], ["gorbie", 29],]);
 }
 
-#[test]
-fn test_scalar_subquery_in_case() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_scalar_subquery_in_case() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1108,6 +1194,7 @@ fn test_scalar_subquery_in_case() {
             FROM Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -1120,122 +1207,130 @@ fn test_scalar_subquery_in_case() {
     );
 }
 
-#[test]
-fn test_array_subquery_with_limit() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_array_subquery_with_limit() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql("SELECT ARRAY(SELECT username FROM NPCs ORDER BY username LIMIT 2) AS top2")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[["jujul", "kira"]]]);
 }
 
-#[test]
-fn test_in_subquery_exists() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_in_subquery_exists() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT 'corba' IN (SELECT username FROM Players) AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_in_subquery_not_exists() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_in_subquery_not_exists() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT 'unknown' IN (SELECT username FROM Players) AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_not_in_subquery() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_not_in_subquery() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT 'unknown' NOT IN (SELECT username FROM Players) AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_in_subquery_empty_result() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_in_subquery_empty_result() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT 'corba' IN (SELECT username FROM Players WHERE team = 'yellow') AS result",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_exists_subquery_true() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_exists_subquery_true() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT EXISTS(SELECT username FROM Players WHERE team = 'red') AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_exists_subquery_false() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_exists_subquery_false() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT EXISTS(SELECT username FROM Players WHERE team = 'yellow') AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_exists_subquery_multiple_columns() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_exists_subquery_multiple_columns() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT EXISTS(SELECT username, team, level FROM Players WHERE level > 20) AS result",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_table_subquery_basic() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_table_subquery_basic() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
-        .execute_sql("SELECT results.username FROM (SELECT * FROM Players) AS results ORDER BY results.username")
+        .execute_sql("SELECT results.username FROM (SELECT * FROM Players) AS results ORDER BY results.username").await
         .unwrap();
 
     assert_table_eq!(result, [["corba"], ["gorbie"], ["junelyn"]]);
 }
 
-#[test]
-fn test_table_subquery_with_filter() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_table_subquery_with_filter() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql(
@@ -1243,15 +1338,16 @@ fn test_table_subquery_with_filter() {
             FROM (SELECT * FROM NPCs WHERE team = 'red') AS red_team
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["jujul"], ["niles"]]);
 }
 
-#[test]
-fn test_table_subquery_with_cte() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_table_subquery_with_cte() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql(
@@ -1262,15 +1358,16 @@ fn test_table_subquery_with_cte() {
             )
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["jujul"], ["niles"]]);
 }
 
-#[test]
-fn test_in_subquery_with_column() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_in_subquery_with_column() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1279,41 +1376,44 @@ fn test_in_subquery_with_column() {
             WHERE team IN (SELECT team FROM Mascots WHERE mascot = 'cardinal')
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["gorbie", "red"]]);
 }
 
-#[test]
-fn test_not_exists_subquery_in_select() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_not_exists_subquery_in_select() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT NOT EXISTS(SELECT username FROM Players WHERE team = 'yellow') AS result",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_in_unnest_array_subquery() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_in_unnest_array_subquery() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql("SELECT 'corba' IN UNNEST(ARRAY(SELECT username FROM Players)) AS result")
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_doc_example_expression_subquery_mascot() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_doc_example_expression_subquery_mascot() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1324,6 +1424,7 @@ fn test_doc_example_expression_subquery_mascot() {
               Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -1336,10 +1437,10 @@ fn test_doc_example_expression_subquery_mascot() {
     );
 }
 
-#[test]
-fn test_doc_example_expression_subquery_avg() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_doc_example_expression_subquery_avg() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1351,6 +1452,7 @@ fn test_doc_example_expression_subquery_avg() {
               Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     let records = result.to_records().unwrap();
@@ -1361,55 +1463,58 @@ fn test_doc_example_expression_subquery_avg() {
     assert!((avg - 24.666666).abs() < 0.01);
 }
 
-#[test]
-fn test_doc_example_array_subquery_red_team() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_doc_example_array_subquery_red_team() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT
               ARRAY(SELECT username FROM NPCs WHERE team = 'red' ORDER BY username) AS red",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[["jujul", "niles"]]]);
 }
 
-#[test]
-fn test_doc_example_in_subquery() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_doc_example_in_subquery() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT
               'corba' IN (SELECT username FROM Players) AS result",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_doc_example_exists_subquery() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_doc_example_exists_subquery() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
             "SELECT
               EXISTS(SELECT username FROM Players WHERE team = 'yellow') AS result",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_doc_example_table_subquery() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_doc_example_table_subquery() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1417,15 +1522,16 @@ fn test_doc_example_table_subquery() {
             FROM (SELECT * FROM Players) AS results
             ORDER BY results.username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["corba"], ["gorbie"], ["junelyn"]]);
 }
 
-#[test]
-fn test_doc_example_table_subquery_with_cte() {
-    let mut session = create_session();
-    setup_npcs(&mut session);
+#[tokio::test]
+async fn test_doc_example_table_subquery_with_cte() {
+    let session = create_session();
+    setup_npcs(&session).await;
 
     let result = session
         .execute_sql(
@@ -1437,15 +1543,16 @@ fn test_doc_example_table_subquery_with_cte() {
             )
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["jujul"], ["niles"]]);
 }
 
-#[test]
-fn test_volatile_subquery_rand() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_volatile_subquery_rand() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1455,16 +1562,17 @@ fn test_volatile_subquery_rand() {
               (SELECT * FROM Players WHERE RAND() < 0.5) AS results
             ORDER BY results.username",
         )
+        .await
         .unwrap();
 
     let records = result.to_records().unwrap();
     assert!(records.len() <= 3);
 }
 
-#[test]
-fn test_volatile_subquery_rand_always_true() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_volatile_subquery_rand_always_true() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1474,15 +1582,16 @@ fn test_volatile_subquery_rand_always_true() {
               (SELECT * FROM Players WHERE RAND() < 1.0) AS results
             ORDER BY results.username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["corba"], ["gorbie"], ["junelyn"]]);
 }
 
-#[test]
-fn test_volatile_subquery_rand_always_false() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_volatile_subquery_rand_always_false() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1492,31 +1601,34 @@ fn test_volatile_subquery_rand_always_false() {
               (SELECT * FROM Players WHERE RAND() < 0.0) AS results
             ORDER BY results.username",
         )
+        .await
         .unwrap();
 
     let records = result.to_records().unwrap();
     assert!(records.is_empty());
 }
 
-fn setup_players_mascots_with_sparrow(session: &mut YachtSQLSession) {
+async fn setup_players_mascots_with_sparrow(session: &YachtSQLSession) {
     session
         .execute_sql("CREATE TABLE Players2 (username STRING, team STRING, level INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE Mascots2 (team STRING, mascot STRING)")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Players2 VALUES ('gorbie', 'red', 29), ('junelyn', 'blue', 2), ('corba', 'green', 43)")
+        .execute_sql("INSERT INTO Players2 VALUES ('gorbie', 'red', 29), ('junelyn', 'blue', 2), ('corba', 'green', 43)").await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Mascots2 VALUES ('red', 'cardinal'), ('blue', 'finch'), ('green', 'parrot'), ('yellow', 'sparrow')")
+        .execute_sql("INSERT INTO Mascots2 VALUES ('red', 'cardinal'), ('blue', 'finch'), ('green', 'parrot'), ('yellow', 'sparrow')").await
         .unwrap();
 }
 
-#[test]
-fn test_correlated_subquery_not_exists_unassigned_mascot() {
-    let mut session = create_session();
-    setup_players_mascots_with_sparrow(&mut session);
+#[tokio::test]
+async fn test_correlated_subquery_not_exists_unassigned_mascot() {
+    let session = create_session();
+    setup_players_mascots_with_sparrow(&session).await;
 
     let result = session
         .execute_sql(
@@ -1526,15 +1638,16 @@ fn test_correlated_subquery_not_exists_unassigned_mascot() {
               NOT EXISTS(SELECT username FROM Players2 WHERE Mascots2.team = Players2.team)
             ORDER BY mascot",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["sparrow"]]);
 }
 
-#[test]
-fn test_correlated_scalar_subquery_player_mascot() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_correlated_scalar_subquery_player_mascot() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1544,6 +1657,7 @@ fn test_correlated_scalar_subquery_player_mascot() {
             FROM Players
             ORDER BY username",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(
@@ -1556,10 +1670,10 @@ fn test_correlated_scalar_subquery_player_mascot() {
     );
 }
 
-#[test]
-fn test_correlated_subquery_exists_with_condition() {
-    let mut session = create_session();
-    setup_players_mascots(&mut session);
+#[tokio::test]
+async fn test_correlated_subquery_exists_with_condition() {
+    let session = create_session();
+    setup_players_mascots(&session).await;
 
     let result = session
         .execute_sql(
@@ -1567,26 +1681,30 @@ fn test_correlated_subquery_exists_with_condition() {
             FROM Players
             WHERE EXISTS(SELECT 1 FROM Mascots WHERE Players.team = Mascots.team AND mascot LIKE '%a%')
             ORDER BY username",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["corba"], ["gorbie"]]);
 }
 
-#[test]
-fn test_correlated_subquery_count() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_correlated_subquery_count() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE Orders (order_id INT64, customer_id INT64, amount FLOAT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE Customers (customer_id INT64, name STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO Customers VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO Orders VALUES (1, 1, 100.0), (2, 1, 200.0), (3, 2, 150.0)")
+        .await
         .unwrap();
 
     let result = session
@@ -1596,26 +1714,29 @@ fn test_correlated_subquery_count() {
               (SELECT COUNT(*) FROM Orders WHERE Orders.customer_id = Customers.customer_id) AS order_count
             FROM Customers
             ORDER BY name",
-        )
+        ).await
         .unwrap();
 
     assert_table_eq!(result, [["Alice", 2], ["Bob", 1], ["Charlie", 0],]);
 }
 
-#[test]
-fn test_correlated_subquery_max() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_correlated_subquery_max() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE Sales (id INT64, product STRING, region STRING, amount INT64)")
+        .await
         .unwrap();
     session
         .execute_sql("CREATE TABLE Regions (region STRING, manager STRING)")
+        .await
         .unwrap();
     session
         .execute_sql("INSERT INTO Regions VALUES ('East', 'Alice'), ('West', 'Bob')")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO Sales VALUES (1, 'Widget', 'East', 100), (2, 'Gadget', 'East', 200), (3, 'Widget', 'West', 150)")
+        .execute_sql("INSERT INTO Sales VALUES (1, 'Widget', 'East', 100), (2, 'Gadget', 'East', 200), (3, 'Widget', 'West', 150)").await
         .unwrap();
 
     let result = session
@@ -1626,6 +1747,7 @@ fn test_correlated_subquery_max() {
             FROM Regions
             ORDER BY manager",
         )
+        .await
         .unwrap();
 
     assert_table_eq!(result, [["Alice", 200], ["Bob", 150],]);

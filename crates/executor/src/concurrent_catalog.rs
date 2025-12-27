@@ -7,9 +7,16 @@ use yachtsql_ir::Expr;
 use yachtsql_storage::{Schema, Table};
 
 use crate::catalog::{ColumnDefault, SchemaMetadata, UserFunction, UserProcedure, ViewDef};
-use crate::plan::{AccessType, TableAccessSet};
+use crate::plan::{AccessType, PhysicalPlan, TableAccessSet};
 
 pub type TableHandle = Arc<RwLock<Table>>;
+
+#[derive(Debug)]
+pub struct DroppedSchemaData {
+    pub metadata: SchemaMetadata,
+    pub tables: Vec<(String, Table)>,
+    pub table_defaults: Vec<(String, Vec<ColumnDefault>)>,
+}
 
 pub struct TableLockSet<'a> {
     read_guards: Vec<(String, RwLockReadGuard<'a, Table>)>,
@@ -56,6 +63,14 @@ impl<'a> TableLockSet<'a> {
         }
         None
     }
+
+    pub fn snapshot_write_locked_tables(&self) -> HashMap<String, Table> {
+        let mut snapshot = HashMap::new();
+        for (name, guard) in &self.write_guards {
+            snapshot.insert(name.clone(), (*guard).clone());
+        }
+        snapshot
+    }
 }
 
 impl Default for TableLockSet<'_> {
@@ -64,16 +79,24 @@ impl Default for TableLockSet<'_> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TransactionSnapshot {
+    pub tables: HashMap<String, Table>,
+}
+
 #[derive(Debug)]
 pub struct ConcurrentCatalog {
     tables: DashMap<String, TableHandle>,
     table_defaults: DashMap<String, Vec<ColumnDefault>>,
     functions: DashMap<String, UserFunction>,
     procedures: DashMap<String, UserProcedure>,
+    procedure_bodies: DashMap<String, Vec<PhysicalPlan>>,
     views: DashMap<String, ViewDef>,
     schemas: DashMap<String, ()>,
     schema_metadata: DashMap<String, SchemaMetadata>,
     search_path: RwLock<Vec<String>>,
+    dropped_schemas: DashMap<String, DroppedSchemaData>,
+    transaction_snapshot: RwLock<Option<TransactionSnapshot>>,
 }
 
 impl ConcurrentCatalog {
@@ -83,11 +106,73 @@ impl ConcurrentCatalog {
             table_defaults: DashMap::new(),
             functions: DashMap::new(),
             procedures: DashMap::new(),
+            procedure_bodies: DashMap::new(),
             views: DashMap::new(),
             schemas: DashMap::new(),
             schema_metadata: DashMap::new(),
             search_path: RwLock::new(Vec::new()),
+            dropped_schemas: DashMap::new(),
+            transaction_snapshot: RwLock::new(None),
         }
+    }
+
+    pub fn begin_transaction(&self) {
+        let mut tables_snapshot = HashMap::new();
+        for entry in self.tables.iter() {
+            if let Ok(table) = entry.value().try_read() {
+                tables_snapshot.insert(entry.key().clone(), table.clone());
+            }
+        }
+        *self.transaction_snapshot.write().unwrap() = Some(TransactionSnapshot {
+            tables: tables_snapshot,
+        });
+    }
+
+    pub fn begin_transaction_with_tables(&self, table_names: &[String]) {
+        let mut tables_snapshot = HashMap::new();
+        for name in table_names {
+            let key = name.to_uppercase();
+            if let Some(handle) = self.tables.get(&key)
+                && let Ok(table) = handle.try_read()
+            {
+                tables_snapshot.insert(key, table.clone());
+            }
+        }
+        *self.transaction_snapshot.write().unwrap() = Some(TransactionSnapshot {
+            tables: tables_snapshot,
+        });
+    }
+
+    pub fn snapshot_table(&self, name: &str, table_data: Table) {
+        let mut snapshot_guard = self.transaction_snapshot.write().unwrap();
+        if let Some(ref mut snapshot) = *snapshot_guard {
+            snapshot.tables.insert(name.to_uppercase(), table_data);
+        } else {
+            let mut tables = HashMap::new();
+            tables.insert(name.to_uppercase(), table_data);
+            *snapshot_guard = Some(TransactionSnapshot { tables });
+        }
+    }
+
+    pub fn commit(&self) {
+        *self.transaction_snapshot.write().unwrap() = None;
+    }
+
+    pub fn rollback(&self) {
+        let snapshot = self.transaction_snapshot.write().unwrap().take();
+        if let Some(snapshot) = snapshot {
+            for (name, table_data) in snapshot.tables {
+                if let Some(handle) = self.tables.get(&name)
+                    && let Ok(mut table) = handle.try_write()
+                {
+                    *table = table_data;
+                }
+            }
+        }
+    }
+
+    pub fn take_transaction_snapshot(&self) -> Option<TransactionSnapshot> {
+        self.transaction_snapshot.write().unwrap().take()
     }
 
     fn resolve_table_name(&self, name: &str) -> String {
@@ -115,14 +200,24 @@ impl ConcurrentCatalog {
 
         for (table_name, access_type) in &accesses.accesses {
             let resolved = self.resolve_table_name(table_name);
-            let handle = self
-                .tables
-                .get(&resolved)
-                .ok_or_else(|| Error::TableNotFound(table_name.clone()))?;
-            let handle = handle.clone();
+            let handle_opt = self.tables.get(&resolved);
 
             match access_type {
+                AccessType::WriteOptional => {
+                    if let Some(handle) = handle_opt {
+                        let handle = handle.clone();
+                        let guard = handle.write().map_err(|_| {
+                            Error::internal(format!("Lock poisoned for table: {}", table_name))
+                        })?;
+                        let guard: RwLockWriteGuard<'static, Table> =
+                            unsafe { std::mem::transmute(guard) };
+                        locks.add_write(resolved, guard);
+                    }
+                }
                 AccessType::Read => {
+                    let handle = handle_opt
+                        .ok_or_else(|| Error::TableNotFound(table_name.clone()))?
+                        .clone();
                     let guard = handle.read().map_err(|_| {
                         Error::internal(format!("Lock poisoned for table: {}", table_name))
                     })?;
@@ -131,6 +226,9 @@ impl ConcurrentCatalog {
                     locks.add_read(resolved, guard);
                 }
                 AccessType::Write => {
+                    let handle = handle_opt
+                        .ok_or_else(|| Error::TableNotFound(table_name.clone()))?
+                        .clone();
                     let guard = handle.write().map_err(|_| {
                         Error::internal(format!("Lock poisoned for table: {}", table_name))
                     })?;
@@ -155,6 +253,7 @@ impl ConcurrentCatalog {
                 name
             )));
         }
+        self.dropped_schemas.remove(&key);
         self.schemas.insert(key.clone(), ());
         self.schema_metadata.insert(key, SchemaMetadata::default());
         Ok(())
@@ -176,6 +275,7 @@ impl ConcurrentCatalog {
                 name
             )));
         }
+        self.dropped_schemas.remove(&key);
         self.schemas.insert(key.clone(), ());
         self.schema_metadata.insert(key, SchemaMetadata { options });
         Ok(())
@@ -205,13 +305,38 @@ impl ConcurrentCatalog {
             )));
         }
 
+        let mut dropped_tables = Vec::new();
+        let mut dropped_defaults = Vec::new();
         for table_key in tables_in_schema {
-            self.tables.remove(&table_key);
+            if let Some((_, handle)) = self.tables.remove(&table_key) {
+                let table = handle.read().unwrap().clone();
+                dropped_tables.push((table_key.clone(), table));
+            }
+            if let Some((_, defaults)) = self.table_defaults.remove(&table_key) {
+                dropped_defaults.push((table_key, defaults));
+            }
         }
 
         self.schemas.remove(&key);
-        self.schema_metadata.remove(&key);
+        let metadata = self
+            .schema_metadata
+            .remove(&key)
+            .map(|(_, m)| m)
+            .unwrap_or_default();
+
+        self.dropped_schemas.insert(
+            key,
+            DroppedSchemaData {
+                metadata,
+                tables: dropped_tables,
+                table_defaults: dropped_defaults,
+            },
+        );
         Ok(())
+    }
+
+    pub fn is_schema_dropped(&self, name: &str) -> bool {
+        self.dropped_schemas.contains_key(&name.to_uppercase())
     }
 
     pub fn undrop_schema(&self, name: &str, if_not_exists: bool) -> Result<()> {
@@ -225,7 +350,29 @@ impl ConcurrentCatalog {
                 name
             )));
         }
-        Ok(())
+        let dropped = self.dropped_schemas.remove(&key);
+        match dropped {
+            Some((_, dropped_data)) => {
+                self.schemas.insert(key.clone(), ());
+                self.schema_metadata.insert(key, dropped_data.metadata);
+                for (table_key, table) in dropped_data.tables {
+                    self.tables.insert(table_key, Arc::new(RwLock::new(table)));
+                }
+                for (table_key, defaults) in dropped_data.table_defaults {
+                    self.table_defaults.insert(table_key, defaults);
+                }
+                Ok(())
+            }
+            None => {
+                if if_not_exists {
+                    return Ok(());
+                }
+                Err(Error::invalid_query(format!(
+                    "Schema not found in drop history: {}",
+                    name
+                )))
+            }
+        }
     }
 
     pub fn schema_exists(&self, name: &str) -> bool {
@@ -243,6 +390,13 @@ impl ConcurrentCatalog {
             }
         }
         Ok(())
+    }
+
+    pub fn get_schema_default_collation(&self, name: &str) -> Option<String> {
+        let key = name.to_uppercase();
+        self.schema_metadata
+            .get(&key)
+            .and_then(|metadata| metadata.options.get("default_collate").cloned())
     }
 
     pub fn set_search_path(&self, schemas: Vec<String>) {
@@ -418,6 +572,17 @@ impl ConcurrentCatalog {
         self.procedures.contains_key(&name.to_uppercase())
     }
 
+    pub fn set_procedure_body(&self, name: &str, body: Vec<PhysicalPlan>) {
+        let key = name.to_uppercase();
+        self.procedure_bodies.insert(key, body);
+    }
+
+    pub fn get_procedure_body(&self, name: &str) -> Option<Vec<PhysicalPlan>> {
+        self.procedure_bodies
+            .get(&name.to_uppercase())
+            .map(|r| r.clone())
+    }
+
     pub fn get_functions(&self) -> HashMap<String, UserFunction> {
         self.functions
             .iter()
@@ -481,5 +646,30 @@ impl ConcurrentCatalog {
 impl Default for ConcurrentCatalog {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl yachtsql_parser::CatalogProvider for ConcurrentCatalog {
+    fn get_table_schema(&self, name: &str) -> Option<Schema> {
+        self.get_table_schema(name)
+    }
+
+    fn get_view(&self, name: &str) -> Option<yachtsql_parser::ViewDefinition> {
+        self.get_view(name)
+            .map(|v| yachtsql_parser::ViewDefinition {
+                query: v.query,
+                column_aliases: v.column_aliases,
+            })
+    }
+
+    fn get_function(&self, name: &str) -> Option<yachtsql_parser::FunctionDefinition> {
+        self.get_function(name)
+            .map(|f| yachtsql_parser::FunctionDefinition {
+                name: f.name.clone(),
+                parameters: f.parameters.clone(),
+                return_type: f.return_type.clone(),
+                body: f.body.clone(),
+                is_aggregate: f.is_aggregate,
+            })
     }
 }

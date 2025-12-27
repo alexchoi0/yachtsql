@@ -1,5 +1,4 @@
 mod aggregate;
-#[cfg(feature = "concurrent")]
 pub mod concurrent;
 mod cte;
 mod ddl;
@@ -212,9 +211,11 @@ impl<'a> PlanExecutor<'a> {
                 filter,
                 ..
             } => self.execute_update(table_name, assignments, from.as_deref(), filter.as_ref()),
-            PhysicalPlan::Delete { table_name, filter } => {
-                self.execute_delete(table_name, filter.as_ref())
-            }
+            PhysicalPlan::Delete {
+                table_name,
+                alias,
+                filter,
+            } => self.execute_delete(table_name, alias.as_deref(), filter.as_ref()),
             PhysicalPlan::Merge {
                 target_table,
                 source,

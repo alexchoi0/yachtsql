@@ -1,189 +1,210 @@
 use crate::assert_table_eq;
 use crate::common::{create_session, ip};
 
-#[test]
-fn test_net_ipv4_from_int64() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ipv4_from_int64() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IPV4_FROM_INT64(167772161)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ip("10.0.0.1")]]);
 }
 
-#[test]
-fn test_net_ipv4_to_int64() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ipv4_to_int64() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IPV4_TO_INT64(NET.IP_FROM_STRING('192.168.1.1'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [[3232235777i64]]);
 }
 
-#[test]
-fn test_net_ip_from_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_from_string() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_FROM_STRING('192.168.1.1')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ip("192.168.1.1")]]);
 }
 
-#[test]
-fn test_net_safe_ip_from_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_safe_ip_from_string() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.SAFE_IP_FROM_STRING('192.168.1.1')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ip("192.168.1.1")]]);
 }
 
-#[test]
-fn test_net_safe_ip_from_string_invalid() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_safe_ip_from_string_invalid() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.SAFE_IP_FROM_STRING('invalid')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[null]]);
 }
 
-#[test]
-fn test_net_ip_to_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_to_string() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_TO_STRING(NET.IP_FROM_STRING('192.168.1.1'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [["192.168.1.1"]]);
 }
 
-#[test]
-fn test_net_ip_net_mask() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_net_mask() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_NET_MASK(4, 24)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ip("255.255.255.0")]]);
 }
 
-#[test]
-fn test_net_ip_trunc() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_trunc() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_TRUNC(NET.IP_FROM_STRING('192.168.1.100'), 24)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[ip("192.168.1.0")]]);
 }
 
-#[test]
-fn test_net_ipv4_from_int64_null() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ipv4_from_int64_null() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IPV4_FROM_INT64(NULL)")
+        .await
         .unwrap();
     assert_table_eq!(result, [[null]]);
 }
 
-#[test]
-fn test_net_host() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_host() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.HOST('https://www.example.com:8080/path')")
+        .await
         .unwrap();
     assert_table_eq!(result, [["www.example.com"]]);
 }
 
-#[test]
-fn test_net_public_suffix() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_public_suffix() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.PUBLIC_SUFFIX('www.example.com')")
+        .await
         .unwrap();
     assert_table_eq!(result, [["com"]]);
 }
 
-#[test]
-fn test_net_reg_domain() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_reg_domain() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.REG_DOMAIN('www.example.com')")
+        .await
         .unwrap();
     assert_table_eq!(result, [["example.com"]]);
 }
 
-#[test]
-fn test_net_ip_in_net() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_in_net() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_IN_NET(NET.IP_FROM_STRING('192.168.1.100'), '192.168.1.0/24')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_net_ip_in_net_false() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_in_net_false() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_IN_NET(NET.IP_FROM_STRING('10.0.0.1'), '192.168.1.0/24')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_net_make_net() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_make_net() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.MAKE_NET(NET.IP_FROM_STRING('192.168.1.0'), 24)")
+        .await
         .unwrap();
     assert_table_eq!(result, [["192.168.1.0/24"]]);
 }
 
-#[test]
-fn test_net_ip_is_private() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_is_private() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_IS_PRIVATE(NET.IP_FROM_STRING('192.168.1.1'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [[true]]);
 }
 
-#[test]
-fn test_net_ip_is_private_public() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ip_is_private_public() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_IS_PRIVATE(NET.IP_FROM_STRING('8.8.8.8'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [[false]]);
 }
 
-#[test]
-fn test_net_ipv6_from_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ipv6_from_string() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_TO_STRING(NET.IP_FROM_STRING('2001:db8::1'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [["2001:db8::1"]]);
 }
 
-#[test]
-fn test_net_ipv6_to_string() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_ipv6_to_string() {
+    let session = create_session();
     let result = session
         .execute_sql("SELECT NET.IP_TO_STRING(NET.IP_FROM_STRING('::ffff:192.168.1.1'))")
+        .await
         .unwrap();
     assert_table_eq!(result, [["::ffff:192.168.1.1"]]);
 }
 
-#[test]
-fn test_net_in_table() {
-    let mut session = create_session();
+#[tokio::test]
+async fn test_net_in_table() {
+    let session = create_session();
     session
         .execute_sql("CREATE TABLE servers (id INT64, ip_address BYTES)")
+        .await
         .unwrap();
     session
-        .execute_sql("INSERT INTO servers VALUES (1, NET.IP_FROM_STRING('192.168.1.1')), (2, NET.IP_FROM_STRING('10.0.0.1'))")
+        .execute_sql("INSERT INTO servers VALUES (1, NET.IP_FROM_STRING('192.168.1.1')), (2, NET.IP_FROM_STRING('10.0.0.1'))").await
         .unwrap();
 
     let result = session
         .execute_sql("SELECT id FROM servers WHERE NET.IP_IN_NET(ip_address, '192.168.0.0/16')")
+        .await
         .unwrap();
     assert_table_eq!(result, [[1]]);
 }
