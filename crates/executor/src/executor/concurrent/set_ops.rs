@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use futures::future::{join, join_all};
 use yachtsql_common::error::Result;
 use yachtsql_common::types::Value;
 use yachtsql_ir::PlanSchema;
@@ -22,14 +21,20 @@ impl ConcurrentPlanExecutor<'_> {
         let mut result = Table::empty(result_schema);
         let mut seen: HashSet<Vec<Value>> = HashSet::new();
 
-        let use_parallel = parallel && self.is_parallel_execution_enabled();
-        let tables: Vec<Table> = if use_parallel && inputs.len() > 1 {
-            let futures: Vec<_> = inputs
-                .iter()
-                .map(|input| self.execute_plan(input))
-                .collect();
-            let results = join_all(futures).await;
-            results.into_iter().collect::<Result<Vec<_>>>()?
+        let tables: Vec<Table> = if parallel && inputs.len() > 1 {
+            let rt = tokio::runtime::Handle::current();
+            std::thread::scope(|s| {
+                let handles: Vec<_> = inputs
+                    .iter()
+                    .map(|input| s.spawn(|| rt.block_on(self.execute_plan(input))))
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap())
+                    .collect::<Vec<Result<Table>>>()
+            })
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
         } else {
             let mut tables = Vec::with_capacity(inputs.len());
             for input in inputs {
@@ -58,9 +63,13 @@ impl ConcurrentPlanExecutor<'_> {
         schema: &PlanSchema,
         parallel: bool,
     ) -> Result<Table> {
-        let use_parallel = parallel && self.is_parallel_execution_enabled();
-        let (left_table, right_table) = if use_parallel {
-            let (l, r) = join(self.execute_plan(left), self.execute_plan(right)).await;
+        let (left_table, right_table) = if parallel {
+            let rt = tokio::runtime::Handle::current();
+            let (l, r) = std::thread::scope(|s| {
+                let left_handle = s.spawn(|| rt.block_on(self.execute_plan(left)));
+                let right_handle = s.spawn(|| rt.block_on(self.execute_plan(right)));
+                (left_handle.join().unwrap(), right_handle.join().unwrap())
+            });
             (l?, r?)
         } else {
             (
@@ -101,9 +110,13 @@ impl ConcurrentPlanExecutor<'_> {
         schema: &PlanSchema,
         parallel: bool,
     ) -> Result<Table> {
-        let use_parallel = parallel && self.is_parallel_execution_enabled();
-        let (left_table, right_table) = if use_parallel {
-            let (l, r) = join(self.execute_plan(left), self.execute_plan(right)).await;
+        let (left_table, right_table) = if parallel {
+            let rt = tokio::runtime::Handle::current();
+            let (l, r) = std::thread::scope(|s| {
+                let left_handle = s.spawn(|| rt.block_on(self.execute_plan(left)));
+                let right_handle = s.spawn(|| rt.block_on(self.execute_plan(right)));
+                (left_handle.join().unwrap(), right_handle.join().unwrap())
+            });
             (l?, r?)
         } else {
             (

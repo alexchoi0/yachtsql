@@ -334,6 +334,7 @@ impl ConcurrentPlanExecutor<'_> {
         aggregates: &[Expr],
         schema: &PlanSchema,
         grouping_sets: Option<&Vec<Vec<usize>>>,
+        parallel: bool,
     ) -> Result<Table> {
         let input_table = self.execute_plan(input).await?;
         let vars = self.get_variables();
@@ -346,6 +347,7 @@ impl ConcurrentPlanExecutor<'_> {
             grouping_sets,
             &vars,
             &udf,
+            parallel,
         )
     }
 

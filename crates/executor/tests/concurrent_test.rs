@@ -1,6 +1,6 @@
 use yachtsql_executor::AsyncQueryExecutor;
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_concurrent_reads_different_tables() {
     let executor = AsyncQueryExecutor::new();
 
@@ -37,7 +37,7 @@ async fn test_concurrent_reads_different_tables() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_concurrent_reads_same_table() {
     let executor = AsyncQueryExecutor::new();
 
@@ -61,7 +61,7 @@ async fn test_concurrent_reads_same_table() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_concurrent_read_write_different_tables() {
     let executor = AsyncQueryExecutor::new();
 
@@ -98,7 +98,7 @@ async fn test_concurrent_read_write_different_tables() {
     assert!(result.row_count() >= 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_sequential_writes_same_table() {
     let executor = AsyncQueryExecutor::new();
 
@@ -122,7 +122,7 @@ async fn test_sequential_writes_same_table() {
     assert_eq!(result.row_count(), 6);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_batch_execution() {
     let executor = AsyncQueryExecutor::new();
 
@@ -149,7 +149,7 @@ async fn test_batch_execution() {
     assert_eq!(results[2].as_ref().unwrap().row_count(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_read_write_isolation() {
     let executor = AsyncQueryExecutor::new();
 
@@ -190,7 +190,7 @@ async fn test_read_write_isolation() {
     assert_eq!(final_result.row_count(), 4);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_delete_during_reads() {
     let executor = AsyncQueryExecutor::new();
 
@@ -231,7 +231,7 @@ async fn test_delete_during_reads() {
     assert_eq!(final_result.row_count(), 5);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_update_during_reads() {
     let executor = AsyncQueryExecutor::new();
 
@@ -267,7 +267,7 @@ async fn test_update_during_reads() {
     assert_eq!(final_result.row_count(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_high_concurrency_reads() {
     let executor = AsyncQueryExecutor::new();
 
@@ -299,7 +299,7 @@ async fn test_high_concurrency_reads() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_parallel_queries_on_multiple_tables() {
     let executor = AsyncQueryExecutor::new();
 
@@ -336,7 +336,7 @@ async fn test_parallel_queries_on_multiple_tables() {
     assert_eq!(success_count, 50);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_parallel_join_execution() {
     let executor = AsyncQueryExecutor::new();
 
@@ -379,7 +379,7 @@ async fn test_parallel_join_execution() {
     assert_eq!(result.row_count(), 200);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_parallel_union_execution() {
     let executor = AsyncQueryExecutor::new();
 
