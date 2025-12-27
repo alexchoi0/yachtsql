@@ -132,10 +132,10 @@ impl ConcurrentCatalog {
         let mut tables_snapshot = HashMap::new();
         for name in table_names {
             let key = name.to_uppercase();
-            if let Some(handle) = self.tables.get(&key) {
-                if let Ok(table) = handle.try_read() {
-                    tables_snapshot.insert(key, table.clone());
-                }
+            if let Some(handle) = self.tables.get(&key)
+                && let Ok(table) = handle.try_read()
+            {
+                tables_snapshot.insert(key, table.clone());
             }
         }
         *self.transaction_snapshot.write().unwrap() = Some(TransactionSnapshot {
@@ -162,10 +162,10 @@ impl ConcurrentCatalog {
         let snapshot = self.transaction_snapshot.write().unwrap().take();
         if let Some(snapshot) = snapshot {
             for (name, table_data) in snapshot.tables {
-                if let Some(handle) = self.tables.get(&name) {
-                    if let Ok(mut table) = handle.try_write() {
-                        *table = table_data;
-                    }
+                if let Some(handle) = self.tables.get(&name)
+                    && let Ok(mut table) = handle.try_write()
+                {
+                    *table = table_data;
                 }
             }
         }

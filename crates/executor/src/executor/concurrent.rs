@@ -3068,9 +3068,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             for (table_name, access_type) in accesses.accesses.iter() {
                 let upper_name = table_name.to_uppercase();
                 let already_locked = self.tables.get_table(&upper_name).is_some();
-                if !already_locked
-                    && let Some(handle) = self.catalog.get_table_handle(table_name)
-                {
+                if !already_locked && let Some(handle) = self.catalog.get_table_handle(table_name) {
                     match access_type {
                         crate::plan::AccessType::Read => {
                             if let Ok(guard) = handle.read() {
@@ -3081,8 +3079,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                                 }
                             }
                         }
-                        crate::plan::AccessType::Write
-                        | crate::plan::AccessType::WriteOptional => {
+                        crate::plan::AccessType::Write | crate::plan::AccessType::WriteOptional => {
                             if let Ok(guard) = handle.write() {
                                 unsafe {
                                     let static_guard: std::sync::RwLockWriteGuard<'static, Table> =
@@ -3124,10 +3121,10 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 snapshot.tables.remove(&name);
             }
             for (name, table_data) in snapshot.tables {
-                if let Some(handle) = self.catalog.get_table_handle(&name) {
-                    if let Ok(mut table) = handle.try_write() {
-                        *table = table_data;
-                    }
+                if let Some(handle) = self.catalog.get_table_handle(&name)
+                    && let Ok(mut table) = handle.try_write()
+                {
+                    *table = table_data;
                 }
             }
         }
@@ -3539,13 +3536,16 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 .collect();
             let schema = Schema::from_fields(fields);
             let _ = self.catalog.create_table(table_name, schema);
-            let handle = self.catalog.get_table_handle(table_name)
+            let handle = self
+                .catalog
+                .get_table_handle(table_name)
                 .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
             if let Ok(guard) = handle.write() {
                 unsafe {
                     let static_guard: std::sync::RwLockWriteGuard<'static, Table> =
                         std::mem::transmute(guard);
-                    self.tables.add_write(table_name.to_uppercase(), static_guard);
+                    self.tables
+                        .add_write(table_name.to_uppercase(), static_guard);
                 }
             }
         }
@@ -5063,6 +5063,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
     ) -> Result<Expr> {
         match expr {
             Expr::Column { table, name, index } => {
+                if index.is_some() {
+                    return Ok(Expr::Column {
+                        table: table.clone(),
+                        name: name.clone(),
+                        index: *index,
+                    });
+                }
                 let should_substitute = if let Some(tbl) = table {
                     outer_schema.fields().iter().any(|f| {
                         f.source_table
@@ -5071,7 +5078,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                             && f.name.eq_ignore_ascii_case(name)
                     })
                 } else {
-                    false
+                    outer_schema.field_index(name).is_some()
                 };
 
                 if should_substitute
