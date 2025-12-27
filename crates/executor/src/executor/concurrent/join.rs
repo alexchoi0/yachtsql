@@ -221,58 +221,96 @@ impl ConcurrentPlanExecutor<'_> {
 
         match join_type {
             JoinType::Inner => {
+                let left_rows: Vec<Record> = left_table.rows()?;
+                let right_rows: Vec<Record> = right_table.rows()?;
+
+                let build_on_right = right_rows.len() <= left_rows.len();
+
+                let (build_rows, probe_rows, build_schema, probe_schema, build_keys, probe_keys) =
+                    if build_on_right {
+                        (
+                            right_rows,
+                            left_rows,
+                            &right_schema,
+                            &left_schema,
+                            right_keys,
+                            left_keys,
+                        )
+                    } else {
+                        (
+                            left_rows,
+                            right_rows,
+                            &left_schema,
+                            &right_schema,
+                            left_keys,
+                            right_keys,
+                        )
+                    };
+
                 let vars = self.get_variables();
                 let sys_vars = self.get_system_variables();
                 let udf = self.get_user_functions();
-                let right_evaluator = IrEvaluator::new(&right_schema)
+                let build_evaluator = IrEvaluator::new(build_schema)
                     .with_variables(&vars)
                     .with_system_variables(&sys_vars)
                     .with_user_functions(&udf);
 
-                let right_rows = right_table.rows()?;
                 let mut hash_table: HashMap<Vec<Value>, Vec<Record>> = HashMap::new();
-
-                for right_record in right_rows {
-                    let key_values: Vec<Value> = right_keys
+                for build_record in &build_rows {
+                    let key_values: Vec<Value> = build_keys
                         .iter()
-                        .map(|expr| right_evaluator.evaluate(expr, &right_record))
+                        .map(|expr| build_evaluator.evaluate(expr, build_record))
                         .collect::<Result<Vec<_>>>()?;
 
-                    let has_null = key_values.iter().any(|v| matches!(v, Value::Null));
-                    if has_null {
+                    if key_values.iter().any(|v| matches!(v, Value::Null)) {
                         continue;
                     }
 
-                    hash_table.entry(key_values).or_default().push(right_record);
+                    hash_table
+                        .entry(key_values)
+                        .or_default()
+                        .push(build_record.clone());
                 }
 
-                let left_rows: Vec<Record> = left_table.rows()?;
+                let combine_row = |probe_rec: &Record, build_rec: &Record| -> Vec<Value> {
+                    if build_on_right {
+                        let mut combined = probe_rec.values().to_vec();
+                        combined.extend(build_rec.values().to_vec());
+                        combined
+                    } else {
+                        let mut combined = build_rec.values().to_vec();
+                        combined.extend(probe_rec.values().to_vec());
+                        combined
+                    }
+                };
 
-                if parallel && left_rows.len() >= 10000 {
+                if parallel && probe_rows.len() >= 10000 {
                     let num_threads = std::thread::available_parallelism()
                         .map(|n| n.get())
                         .unwrap_or(4);
-                    let chunk_size = left_rows.len().div_ceil(num_threads);
+                    let chunk_size = probe_rows.len().div_ceil(num_threads);
 
                     let chunk_results: Vec<Result<Vec<Vec<Value>>>> = std::thread::scope(|s| {
-                        let handles: Vec<_> = left_rows
+                        let handles: Vec<_> = probe_rows
                             .chunks(chunk_size)
                             .map(|chunk| {
                                 let hash_table = &hash_table;
-                                let left_schema = &left_schema;
                                 let vars = &vars;
                                 let sys_vars = &sys_vars;
                                 let udf = &udf;
+                                let combine_row = &combine_row;
                                 s.spawn(move || {
-                                    let left_evaluator = IrEvaluator::new(left_schema)
+                                    let probe_evaluator = IrEvaluator::new(probe_schema)
                                         .with_variables(vars)
                                         .with_system_variables(sys_vars)
                                         .with_user_functions(udf);
                                     let mut rows = Vec::new();
-                                    for left_record in chunk {
-                                        let key_values: Vec<Value> = left_keys
+                                    for probe_record in chunk {
+                                        let key_values: Vec<Value> = probe_keys
                                             .iter()
-                                            .map(|expr| left_evaluator.evaluate(expr, left_record))
+                                            .map(|expr| {
+                                                probe_evaluator.evaluate(expr, probe_record)
+                                            })
                                             .collect::<Result<Vec<_>>>()?;
 
                                         if key_values.iter().any(|v| matches!(v, Value::Null)) {
@@ -280,10 +318,8 @@ impl ConcurrentPlanExecutor<'_> {
                                         }
 
                                         if let Some(matching_rows) = hash_table.get(&key_values) {
-                                            for right_record in matching_rows {
-                                                let mut combined = left_record.values().to_vec();
-                                                combined.extend(right_record.values().to_vec());
-                                                rows.push(combined);
+                                            for build_record in matching_rows {
+                                                rows.push(combine_row(probe_record, build_record));
                                             }
                                         }
                                     }
@@ -302,27 +338,24 @@ impl ConcurrentPlanExecutor<'_> {
                     }
                     Ok(result)
                 } else {
-                    let left_evaluator = IrEvaluator::new(&left_schema)
+                    let probe_evaluator = IrEvaluator::new(probe_schema)
                         .with_variables(&vars)
                         .with_system_variables(&sys_vars)
                         .with_user_functions(&udf);
                     let mut result = Table::empty(result_schema);
-                    for left_record in left_rows {
-                        let key_values: Vec<Value> = left_keys
+                    for probe_record in &probe_rows {
+                        let key_values: Vec<Value> = probe_keys
                             .iter()
-                            .map(|expr| left_evaluator.evaluate(expr, &left_record))
+                            .map(|expr| probe_evaluator.evaluate(expr, probe_record))
                             .collect::<Result<Vec<_>>>()?;
 
-                        let has_null = key_values.iter().any(|v| matches!(v, Value::Null));
-                        if has_null {
+                        if key_values.iter().any(|v| matches!(v, Value::Null)) {
                             continue;
                         }
 
                         if let Some(matching_rows) = hash_table.get(&key_values) {
-                            for right_record in matching_rows {
-                                let mut combined = left_record.values().to_vec();
-                                combined.extend(right_record.values().to_vec());
-                                result.push_row(combined)?;
+                            for build_record in matching_rows {
+                                result.push_row(combine_row(probe_record, build_record))?;
                             }
                         }
                     }
