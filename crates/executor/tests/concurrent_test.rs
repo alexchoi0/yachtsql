@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use yachtsql_executor::AsyncQueryExecutor;
 
 #[tokio::test]
@@ -24,8 +22,6 @@ async fn test_concurrent_reads_different_tables() {
         .await
         .unwrap();
 
-    let start = Instant::now();
-
     let mut results = Vec::new();
     for i in 0..10 {
         let result = if i % 2 == 0 {
@@ -35,9 +31,6 @@ async fn test_concurrent_reads_different_tables() {
         };
         results.push(result);
     }
-
-    let elapsed = start.elapsed();
-    println!("Reads on different tables: {:?}", elapsed);
 
     for result in results {
         assert!(result.is_ok());
@@ -54,8 +47,6 @@ async fn test_concurrent_reads_same_table() {
         .unwrap();
     executor.execute_sql("INSERT INTO products VALUES (1, 'Laptop', 999.99), (2, 'Mouse', 29.99), (3, 'Keyboard', 79.99)").await.unwrap();
 
-    let start = Instant::now();
-
     let mut results = Vec::new();
     for _ in 0..10 {
         let result = executor
@@ -63,9 +54,6 @@ async fn test_concurrent_reads_same_table() {
             .await;
         results.push(result);
     }
-
-    let elapsed = start.elapsed();
-    println!("Reads on same table: {:?}", elapsed);
 
     for result in results {
         let table = result.unwrap();
@@ -95,8 +83,6 @@ async fn test_concurrent_read_write_different_tables() {
         .await
         .unwrap();
 
-    let start = Instant::now();
-
     for i in 0..10 {
         let result = if i % 2 == 0 {
             executor.execute_sql("SELECT * FROM table_a").await
@@ -107,9 +93,6 @@ async fn test_concurrent_read_write_different_tables() {
         };
         assert!(result.is_ok());
     }
-
-    let elapsed = start.elapsed();
-    println!("Read/write on different tables: {:?}", elapsed);
 
     let result = executor.execute_sql("SELECT * FROM table_b").await.unwrap();
     assert!(result.row_count() >= 2);
@@ -128,17 +111,12 @@ async fn test_sequential_writes_same_table() {
         .await
         .unwrap();
 
-    let start = Instant::now();
-
     for i in 0..5 {
         let result = executor
             .execute_sql(&format!("INSERT INTO counter VALUES ({}, {})", i + 10, i))
             .await;
         assert!(result.is_ok());
     }
-
-    let elapsed = start.elapsed();
-    println!("Sequential writes to same table: {:?}", elapsed);
 
     let result = executor.execute_sql("SELECT * FROM counter").await.unwrap();
     assert_eq!(result.row_count(), 6);
@@ -163,11 +141,7 @@ async fn test_batch_execution() {
         "SELECT * FROM batch_test WHERE id = 2".to_string(),
     ];
 
-    let start = Instant::now();
     let results = executor.execute_batch(queries).await;
-    let elapsed = start.elapsed();
-
-    println!("Batch execution of 3 queries: {:?}", elapsed);
 
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].as_ref().unwrap().row_count(), 3);
@@ -206,8 +180,6 @@ async fn test_read_write_isolation() {
                 .unwrap();
         }
     }
-
-    println!("Row counts during operations: {:?}", results);
 
     assert!(results.iter().all(|&c| c >= 1));
 
@@ -252,8 +224,6 @@ async fn test_delete_during_reads() {
         }
     }
 
-    println!("Row counts during delete: {:?}", results);
-
     let final_result = executor
         .execute_sql("SELECT * FROM delete_test")
         .await
@@ -290,8 +260,6 @@ async fn test_update_during_reads() {
         }
     }
 
-    println!("Row counts during update: {:?}", results);
-
     let final_result = executor
         .execute_sql("SELECT * FROM update_test WHERE value > 150")
         .await
@@ -317,8 +285,6 @@ async fn test_high_concurrency_reads() {
             .unwrap();
     }
 
-    let start = Instant::now();
-
     let mut results = Vec::new();
     for _ in 0..50 {
         let result = executor
@@ -326,13 +292,6 @@ async fn test_high_concurrency_reads() {
             .await;
         results.push(result);
     }
-
-    let elapsed = start.elapsed();
-    println!(
-        "50 reads: {:?} ({:.2} queries/sec)",
-        elapsed,
-        50.0 / elapsed.as_secs_f64()
-    );
 
     for result in results {
         let table = result.unwrap();
@@ -362,8 +321,6 @@ async fn test_parallel_queries_on_multiple_tables() {
         }
     }
 
-    let start = Instant::now();
-
     let mut success_count = 0;
     for table_num in 1..=5 {
         for _ in 0..10 {
@@ -375,13 +332,6 @@ async fn test_parallel_queries_on_multiple_tables() {
             }
         }
     }
-
-    let elapsed = start.elapsed();
-    println!(
-        "50 queries on 5 tables: {:?} ({:.2} queries/sec)",
-        elapsed,
-        50.0 / elapsed.as_secs_f64()
-    );
 
     assert_eq!(success_count, 50);
 }
@@ -419,21 +369,12 @@ async fn test_parallel_join_execution() {
             .unwrap();
     }
 
-    let start = Instant::now();
-
     let result = executor
         .execute_sql(
             "SELECT l.id, l.value, r.data FROM large_left l JOIN large_right r ON l.id = r.id",
         )
         .await
         .unwrap();
-
-    let elapsed = start.elapsed();
-    println!(
-        "Join of 200x200 rows (parallel): {:?}, result rows: {}",
-        elapsed,
-        result.row_count()
-    );
 
     assert_eq!(result.row_count(), 200);
 }
@@ -462,21 +403,12 @@ async fn test_parallel_union_execution() {
         }
     }
 
-    let start = Instant::now();
-
     let result = executor
         .execute_sql(
             "SELECT * FROM union_table_1 UNION ALL SELECT * FROM union_table_2 UNION ALL SELECT * FROM union_table_3",
         )
         .await
         .unwrap();
-
-    let elapsed = start.elapsed();
-    println!(
-        "Union of 3 tables with 150 rows each (parallel): {:?}, result rows: {}",
-        elapsed,
-        result.row_count()
-    );
 
     assert_eq!(result.row_count(), 450);
 }
