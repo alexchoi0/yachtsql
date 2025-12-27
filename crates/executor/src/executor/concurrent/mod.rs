@@ -293,10 +293,17 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 aggregates,
                 schema,
                 grouping_sets,
-                ..
+                hints,
             } => {
-                self.execute_aggregate(input, group_by, aggregates, schema, grouping_sets.as_ref())
-                    .await
+                self.execute_aggregate(
+                    input,
+                    group_by,
+                    aggregates,
+                    schema,
+                    grouping_sets.as_ref(),
+                    hints.parallel,
+                )
+                .await
             }
             PhysicalPlan::Sort {
                 input, sort_exprs, ..
