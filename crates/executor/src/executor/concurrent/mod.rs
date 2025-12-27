@@ -4,12 +4,15 @@ mod gap_fill;
 mod io;
 mod join;
 mod scripting;
+mod utils;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::RwLock;
 
 use arrow::array::Array;
+use async_recursion::async_recursion;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
+use futures::future::{join, join_all};
 use yachtsql_common::error::{Error, Result};
 use yachtsql_common::types::{DataType, Value};
 use yachtsql_ir::{
@@ -126,18 +129,18 @@ fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
 pub struct ConcurrentPlanExecutor<'a> {
     pub(crate) catalog: &'a ConcurrentCatalog,
     pub(crate) session: &'a ConcurrentSession,
-    pub(crate) tables: TableLockSet<'a>,
-    pub(crate) variables: HashMap<String, Value>,
-    pub(crate) system_variables: HashMap<String, Value>,
-    pub(crate) cte_results: HashMap<String, Table>,
-    pub(crate) user_function_defs: HashMap<String, UserFunctionDef>,
+    pub(crate) tables: TableLockSet,
+    pub(crate) variables: RwLock<HashMap<String, Value>>,
+    pub(crate) system_variables: RwLock<HashMap<String, Value>>,
+    pub(crate) cte_results: RwLock<HashMap<String, Table>>,
+    pub(crate) user_function_defs: RwLock<HashMap<String, UserFunctionDef>>,
 }
 
 impl<'a> ConcurrentPlanExecutor<'a> {
     pub fn new(
         catalog: &'a ConcurrentCatalog,
         session: &'a ConcurrentSession,
-        tables: TableLockSet<'a>,
+        tables: TableLockSet,
     ) -> Self {
         let user_function_defs = catalog
             .get_functions()
@@ -165,15 +168,21 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             catalog,
             session,
             tables,
-            variables,
-            system_variables,
-            cte_results: HashMap::new(),
-            user_function_defs,
+            variables: RwLock::new(variables),
+            system_variables: RwLock::new(system_variables),
+            cte_results: RwLock::new(HashMap::new()),
+            user_function_defs: RwLock::new(user_function_defs),
         }
     }
 
-    fn refresh_user_functions(&mut self) {
-        self.user_function_defs = self
+    pub(crate) fn get_system_variables(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, HashMap<String, Value>> {
+        self.system_variables.read().unwrap()
+    }
+
+    fn refresh_user_functions(&self) {
+        let new_defs: HashMap<String, UserFunctionDef> = self
             .catalog
             .get_functions()
             .iter()
@@ -187,41 +196,90 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 )
             })
             .collect();
+        *self.user_function_defs.write().unwrap() = new_defs;
     }
 
-    pub fn execute(&mut self, plan: &OptimizedLogicalPlan) -> Result<Table> {
+    pub(crate) fn get_variables(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Value>> {
+        self.variables.read().unwrap()
+    }
+
+    pub(crate) fn get_user_functions(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, HashMap<String, UserFunctionDef>> {
+        self.user_function_defs.read().unwrap()
+    }
+
+    pub(crate) fn is_parallel_execution_enabled(&self) -> bool {
+        if let Some(val) = self.variables.read().unwrap().get("PARALLEL_EXECUTION") {
+            return val.as_bool().unwrap_or(true);
+        }
+
+        if let Some(val) = self
+            .system_variables
+            .read()
+            .unwrap()
+            .get("PARALLEL_EXECUTION")
+        {
+            return val.as_bool().unwrap_or(true);
+        }
+
+        match std::env::var("YACHTSQL_PARALLEL_EXECUTION") {
+            Ok(val) => !val.eq_ignore_ascii_case("false") && val != "0",
+            Err(_) => true,
+        }
+    }
+
+    pub async fn execute(&self, plan: &OptimizedLogicalPlan) -> Result<Table> {
         let executor_plan = PhysicalPlan::from_physical(plan);
-        self.execute_plan(&executor_plan)
+        self.execute_plan(&executor_plan).await
     }
 
-    pub fn execute_plan(&mut self, plan: &PhysicalPlan) -> Result<Table> {
+    #[async_recursion(?Send)]
+    pub async fn execute_plan(&self, plan: &PhysicalPlan) -> Result<Table> {
         match plan {
             PhysicalPlan::TableScan {
                 table_name, schema, ..
-            } => self.execute_scan(table_name, schema),
+            } => self.execute_scan(table_name, schema).await,
             PhysicalPlan::Sample {
                 input,
                 sample_type,
                 sample_value,
-            } => self.execute_sample(input, sample_type, *sample_value),
-            PhysicalPlan::Filter { input, predicate } => self.execute_filter(input, predicate),
+            } => self.execute_sample(input, sample_type, *sample_value).await,
+            PhysicalPlan::Filter { input, predicate } => {
+                self.execute_filter(input, predicate).await
+            }
             PhysicalPlan::Project {
                 input,
                 expressions,
                 schema,
-            } => self.execute_project(input, expressions, schema),
+            } => self.execute_project(input, expressions, schema).await,
             PhysicalPlan::NestedLoopJoin {
                 left,
                 right,
                 join_type,
                 condition,
                 schema,
-            } => self.execute_nested_loop_join(left, right, join_type, condition.as_ref(), schema),
+                parallel,
+            } => {
+                self.execute_nested_loop_join(
+                    left,
+                    right,
+                    join_type,
+                    condition.as_ref(),
+                    schema,
+                    *parallel,
+                )
+                .await
+            }
             PhysicalPlan::CrossJoin {
                 left,
                 right,
                 schema,
-            } => self.execute_cross_join(left, right, schema),
+                parallel,
+            } => {
+                self.execute_cross_join(left, right, schema, *parallel)
+                    .await
+            }
             PhysicalPlan::HashJoin {
                 left,
                 right,
@@ -229,7 +287,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 left_keys,
                 right_keys,
                 schema,
-            } => self.execute_hash_join(left, right, join_type, left_keys, right_keys, schema),
+                parallel,
+            } => {
+                self.execute_hash_join(
+                    left, right, join_type, left_keys, right_keys, schema, *parallel,
+                )
+                .await
+            }
             PhysicalPlan::HashAggregate {
                 input,
                 group_by,
@@ -238,49 +302,65 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 grouping_sets,
             } => {
                 self.execute_aggregate(input, group_by, aggregates, schema, grouping_sets.as_ref())
+                    .await
             }
-            PhysicalPlan::Sort { input, sort_exprs } => self.execute_sort(input, sort_exprs),
+            PhysicalPlan::Sort { input, sort_exprs } => self.execute_sort(input, sort_exprs).await,
             PhysicalPlan::Limit {
                 input,
                 limit,
                 offset,
-            } => self.execute_limit(input, *limit, *offset),
+            } => self.execute_limit(input, *limit, *offset).await,
             PhysicalPlan::TopN {
                 input,
                 sort_exprs,
                 limit,
-            } => self.execute_topn(input, sort_exprs, *limit),
-            PhysicalPlan::Distinct { input } => self.execute_distinct(input),
+            } => self.execute_topn(input, sort_exprs, *limit).await,
+            PhysicalPlan::Distinct { input } => self.execute_distinct(input).await,
             PhysicalPlan::Union {
                 inputs,
                 all,
                 schema,
-            } => self.execute_union(inputs, *all, schema),
+                parallel,
+            } => self.execute_union(inputs, *all, schema, *parallel).await,
             PhysicalPlan::Intersect {
                 left,
                 right,
                 all,
                 schema,
-            } => self.execute_intersect(left, right, *all, schema),
+                parallel,
+            } => {
+                self.execute_intersect(left, right, *all, schema, *parallel)
+                    .await
+            }
             PhysicalPlan::Except {
                 left,
                 right,
                 all,
                 schema,
-            } => self.execute_except(left, right, *all, schema),
+                parallel,
+            } => {
+                self.execute_except(left, right, *all, schema, *parallel)
+                    .await
+            }
             PhysicalPlan::Window {
                 input,
                 window_exprs,
                 schema,
-            } => self.execute_window(input, window_exprs, schema),
-            PhysicalPlan::WithCte { ctes, body } => self.execute_cte(ctes, body),
+            } => self.execute_window(input, window_exprs, schema).await,
+            PhysicalPlan::WithCte {
+                ctes,
+                body,
+                parallel_ctes,
+            } => self.execute_cte(ctes, body, parallel_ctes).await,
             PhysicalPlan::Unnest {
                 input,
                 columns,
                 schema,
-            } => self.execute_unnest(input, columns, schema),
-            PhysicalPlan::Qualify { input, predicate } => self.execute_qualify(input, predicate),
-            PhysicalPlan::Values { values, schema } => self.execute_values(values, schema),
+            } => self.execute_unnest(input, columns, schema).await,
+            PhysicalPlan::Qualify { input, predicate } => {
+                self.execute_qualify(input, predicate).await
+            }
+            PhysicalPlan::Values { values, schema } => self.execute_values(values, schema).await,
             PhysicalPlan::Empty { schema } => {
                 let result_schema = plan_schema_to_schema(schema);
                 let mut table = Table::empty(result_schema.clone());
@@ -293,44 +373,53 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 table_name,
                 columns,
                 source,
-            } => self.execute_insert(table_name, columns, source),
+            } => self.execute_insert(table_name, columns, source).await,
             PhysicalPlan::Update {
                 table_name,
                 alias,
                 assignments,
                 from,
                 filter,
-            } => self.execute_update(
-                table_name,
-                alias.as_deref(),
-                assignments,
-                from.as_deref(),
-                filter.as_ref(),
-            ),
+            } => {
+                self.execute_update(
+                    table_name,
+                    alias.as_deref(),
+                    assignments,
+                    from.as_deref(),
+                    filter.as_ref(),
+                )
+                .await
+            }
             PhysicalPlan::Delete {
                 table_name,
                 alias,
                 filter,
-            } => self.execute_delete(table_name, alias.as_deref(), filter.as_ref()),
+            } => {
+                self.execute_delete(table_name, alias.as_deref(), filter.as_ref())
+                    .await
+            }
             PhysicalPlan::Merge {
                 target_table,
                 source,
                 on,
                 clauses,
-            } => self.execute_merge(target_table, source, on, clauses),
+            } => self.execute_merge(target_table, source, on, clauses).await,
             PhysicalPlan::CreateTable {
                 table_name,
                 columns,
                 if_not_exists,
                 or_replace,
                 query,
-            } => self.execute_create_table(
-                table_name,
-                columns,
-                *if_not_exists,
-                *or_replace,
-                query.as_deref(),
-            ),
+            } => {
+                self.execute_create_table(
+                    table_name,
+                    columns,
+                    *if_not_exists,
+                    *or_replace,
+                    query.as_deref(),
+                )
+                .await
+            }
             PhysicalPlan::DropTable {
                 table_names,
                 if_exists,
@@ -406,8 +495,10 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             PhysicalPlan::Call {
                 procedure_name,
                 args,
-            } => self.execute_call(procedure_name, args),
-            PhysicalPlan::ExportData { options, query } => self.execute_export(options, query),
+            } => self.execute_call(procedure_name, args).await,
+            PhysicalPlan::ExportData { options, query } => {
+                self.execute_export(options, query).await
+            }
             PhysicalPlan::LoadData {
                 table_name,
                 options,
@@ -419,31 +510,36 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 data_type,
                 default,
             } => self.execute_declare(name, data_type, default.as_ref()),
-            PhysicalPlan::SetVariable { name, value } => self.execute_set_variable(name, value),
+            PhysicalPlan::SetVariable { name, value } => {
+                self.execute_set_variable(name, value).await
+            }
             PhysicalPlan::SetMultipleVariables { names, value } => {
-                self.execute_set_multiple_variables(names, value)
+                self.execute_set_multiple_variables(names, value).await
             }
             PhysicalPlan::If {
                 condition,
                 then_branch,
                 else_branch,
-            } => self.execute_if(condition, then_branch, else_branch.as_deref()),
+            } => {
+                self.execute_if(condition, then_branch, else_branch.as_deref())
+                    .await
+            }
             PhysicalPlan::While {
                 condition,
                 body,
                 label,
-            } => self.execute_while(condition, body, label.as_deref()),
-            PhysicalPlan::Loop { body, label } => self.execute_loop(body, label.as_deref()),
-            PhysicalPlan::Block { body, label } => self.execute_block(body, label.as_deref()),
+            } => self.execute_while(condition, body, label.as_deref()).await,
+            PhysicalPlan::Loop { body, label } => self.execute_loop(body, label.as_deref()).await,
+            PhysicalPlan::Block { body, label } => self.execute_block(body, label.as_deref()).await,
             PhysicalPlan::Repeat {
                 body,
                 until_condition,
-            } => self.execute_repeat(body, until_condition),
+            } => self.execute_repeat(body, until_condition).await,
             PhysicalPlan::For {
                 variable,
                 query,
                 body,
-            } => self.execute_for(variable, query, body),
+            } => self.execute_for(variable, query, body).await,
             PhysicalPlan::Return { value: _ } => {
                 Err(Error::InvalidQuery("RETURN outside of function".into()))
             }
@@ -472,13 +568,16 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 if_exists,
             } => self.execute_drop_snapshot(snapshot_name, *if_exists),
             PhysicalPlan::Assert { condition, message } => {
-                self.execute_assert(condition, message.as_ref())
+                self.execute_assert(condition, message.as_ref()).await
             }
             PhysicalPlan::ExecuteImmediate {
                 sql_expr,
                 into_variables,
                 using_params,
-            } => self.execute_execute_immediate(sql_expr, into_variables, using_params),
+            } => {
+                self.execute_execute_immediate(sql_expr, into_variables, using_params)
+                    .await
+            }
             PhysicalPlan::Grant { .. } => Ok(Table::empty(Schema::new())),
             PhysicalPlan::Revoke { .. } => Ok(Table::empty(Schema::new())),
             PhysicalPlan::BeginTransaction => {
@@ -500,7 +599,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             PhysicalPlan::TryCatch {
                 try_block,
                 catch_block,
-            } => self.execute_try_catch(try_block, catch_block),
+            } => self.execute_try_catch(try_block, catch_block).await,
             PhysicalPlan::GapFill {
                 input,
                 ts_column,
@@ -510,43 +609,45 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 origin,
                 input_schema,
                 schema,
-            } => self.execute_gap_fill(
-                input,
-                ts_column,
-                bucket_width,
-                value_columns,
-                partitioning_columns,
-                origin.as_ref(),
-                input_schema,
-                schema,
-            ),
+            } => {
+                self.execute_gap_fill(
+                    input,
+                    ts_column,
+                    bucket_width,
+                    value_columns,
+                    partitioning_columns,
+                    origin.as_ref(),
+                    input_schema,
+                    schema,
+                )
+                .await
+            }
         }
     }
 
-    pub(crate) fn execute_scan(
+    pub(crate) async fn execute_scan(
         &self,
         table_name: &str,
         planned_schema: &PlanSchema,
     ) -> Result<Table> {
-        if let Some(cte_table) = self.cte_results.get(table_name) {
+        if let Some(cte_table) = self.cte_results.read().unwrap().get(table_name) {
             return Ok(self.apply_planned_schema(cte_table, planned_schema));
         }
         let table_name_upper = table_name.to_uppercase();
-        if let Some(cte_table) = self.cte_results.get(&table_name_upper) {
+        if let Some(cte_table) = self.cte_results.read().unwrap().get(&table_name_upper) {
             return Ok(self.apply_planned_schema(cte_table, planned_schema));
         }
         let table_name_lower = table_name.to_lowercase();
-        if let Some(cte_table) = self.cte_results.get(&table_name_lower) {
+        if let Some(cte_table) = self.cte_results.read().unwrap().get(&table_name_lower) {
             return Ok(self.apply_planned_schema(cte_table, planned_schema));
         }
 
         if let Some(table) = self.tables.get_table(table_name) {
-            return Ok(self.apply_planned_schema(table, planned_schema));
+            return Ok(self.apply_planned_schema(&table, planned_schema));
         }
 
-        if let Some(handle) = self.catalog.get_table_handle(table_name)
-            && let Ok(guard) = handle.read()
-        {
+        if let Some(handle) = self.catalog.get_table_handle(table_name) {
+            let guard = handle.read();
             return Ok(self.apply_planned_schema(&guard, planned_schema));
         }
 
@@ -590,17 +691,21 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         source_table.with_reordered_schema(new_schema, &column_indices)
     }
 
-    fn execute_assert(&mut self, condition: &Expr, message: Option<&Expr>) -> Result<Table> {
+    async fn execute_assert(&self, condition: &Expr, message: Option<&Expr>) -> Result<Table> {
         let empty_schema = Schema::new();
         let empty_record = Record::new();
 
         let result = if Self::expr_contains_subquery(condition) {
-            self.eval_expr_with_subqueries(condition, &empty_schema, &empty_record)?
+            self.eval_expr_with_subqueries(condition, &empty_schema, &empty_record)
+                .await?
         } else {
+            let vars = self.get_variables();
+            let sys_vars = self.get_system_variables();
+            let udf = self.get_user_functions();
             let evaluator = IrEvaluator::new(&empty_schema)
-                .with_variables(&self.variables)
-                .with_system_variables(&self.system_variables)
-                .with_user_functions(&self.user_function_defs);
+                .with_variables(&vars)
+                .with_system_variables(&sys_vars)
+                .with_user_functions(&udf);
             evaluator.evaluate(condition, &empty_record)?
         };
 
@@ -608,10 +713,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             Value::Bool(true) => Ok(Table::empty(Schema::new())),
             Value::Bool(false) => {
                 let msg = if let Some(msg_expr) = message {
+                    let vars = self.get_variables();
+                    let sys_vars = self.get_system_variables();
+                    let udf = self.get_user_functions();
                     let evaluator = IrEvaluator::new(&empty_schema)
-                        .with_variables(&self.variables)
-                        .with_system_variables(&self.system_variables)
-                        .with_user_functions(&self.user_function_defs);
+                        .with_variables(&vars)
+                        .with_system_variables(&sys_vars)
+                        .with_user_functions(&udf);
                     let msg_val = evaluator.evaluate(msg_expr, &empty_record)?;
                     match msg_val {
                         Value::String(s) => s,
@@ -628,28 +736,33 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
     }
 
-    pub(crate) fn execute_filter(
-        &mut self,
+    pub(crate) async fn execute_filter(
+        &self,
         input: &PhysicalPlan,
         predicate: &Expr,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
         let has_subquery = Self::expr_contains_subquery(predicate);
         let mut result = Table::empty(schema.clone());
 
         if has_subquery {
             for record in input_table.rows()? {
-                let val = self.eval_expr_with_subqueries(predicate, &schema, &record)?;
+                let val = self
+                    .eval_expr_with_subqueries(predicate, &schema, &record)
+                    .await?;
                 if val.as_bool().unwrap_or(false) {
                     result.push_row(record.values().to_vec())?;
                 }
             }
         } else {
+            let vars = self.get_variables();
+            let sys_vars = self.get_system_variables();
+            let udf = self.get_user_functions();
             let evaluator = IrEvaluator::new(&schema)
-                .with_variables(&self.variables)
-                .with_system_variables(&self.system_variables)
-                .with_user_functions(&self.user_function_defs);
+                .with_variables(&vars)
+                .with_system_variables(&sys_vars)
+                .with_user_functions(&udf);
 
             for record in input_table.rows()? {
                 let val = evaluator.evaluate(predicate, &record)?;
@@ -662,13 +775,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_project(
-        &mut self,
+    pub(crate) async fn execute_project(
+        &self,
         input: &PhysicalPlan,
         expressions: &[Expr],
         schema: &PlanSchema,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let input_schema = input_table.schema().clone();
         let result_schema = plan_schema_to_schema(schema);
         let has_subqueries = expressions.iter().any(Self::expr_contains_subquery);
@@ -679,16 +792,21 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             for record in input_table.rows()? {
                 let mut new_row = Vec::with_capacity(expressions.len());
                 for expr in expressions {
-                    let val = self.eval_expr_with_subqueries(expr, &input_schema, &record)?;
+                    let val = self
+                        .eval_expr_with_subqueries(expr, &input_schema, &record)
+                        .await?;
                     new_row.push(val);
                 }
                 result.push_row(new_row)?;
             }
         } else {
+            let vars = self.get_variables();
+            let sys_vars = self.get_system_variables();
+            let udf = self.get_user_functions();
             let evaluator = IrEvaluator::new(&input_schema)
-                .with_variables(&self.variables)
-                .with_system_variables(&self.system_variables)
-                .with_user_functions(&self.user_function_defs);
+                .with_variables(&vars)
+                .with_system_variables(&sys_vars)
+                .with_user_functions(&udf);
 
             for record in input_table.rows()? {
                 let mut new_row = Vec::with_capacity(expressions.len());
@@ -703,8 +821,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_sample(
-        &mut self,
+    pub(crate) async fn execute_sample(
+        &self,
         input: &PhysicalPlan,
         sample_type: &SampleType,
         sample_value: i64,
@@ -712,7 +830,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         use rand::Rng;
         use rand::seq::SliceRandom;
 
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
         let rows = input_table.rows()?;
         let mut result = Table::empty(schema);
@@ -740,17 +858,20 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_sort(
-        &mut self,
+    pub(crate) async fn execute_sort(
+        &self,
         input: &PhysicalPlan,
         sort_exprs: &[SortExpr],
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(&schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
 
         let mut rows: Vec<Record> = input_table.rows()?;
 
@@ -804,13 +925,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_limit(
-        &mut self,
+    pub(crate) async fn execute_limit(
+        &self,
         input: &PhysicalPlan,
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
         let mut result = Table::empty(schema);
 
@@ -829,13 +950,13 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_topn(
-        &mut self,
+    pub(crate) async fn execute_topn(
+        &self,
         input: &PhysicalPlan,
         sort_exprs: &[SortExpr],
         limit: usize,
     ) -> Result<Table> {
-        let sorted = self.execute_sort(input, sort_exprs)?;
+        let sorted = self.execute_sort(input, sort_exprs).await?;
         let schema = sorted.schema().clone();
         let mut result = Table::empty(schema);
 
@@ -849,8 +970,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_distinct(&mut self, input: &PhysicalPlan) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+    pub(crate) async fn execute_distinct(&self, input: &PhysicalPlan) -> Result<Table> {
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
         let mut result = Table::empty(schema);
         let mut seen: HashSet<Vec<Value>> = HashSet::new();
@@ -865,18 +986,34 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_union(
-        &mut self,
+    pub(crate) async fn execute_union(
+        &self,
         inputs: &[PhysicalPlan],
         all: bool,
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
         let result_schema = plan_schema_to_schema(schema);
         let mut result = Table::empty(result_schema);
         let mut seen: HashSet<Vec<Value>> = HashSet::new();
 
-        for input in inputs {
-            let table = self.execute_plan(input)?;
+        let use_parallel = parallel && self.is_parallel_execution_enabled();
+        let tables: Vec<Table> = if use_parallel && inputs.len() > 1 {
+            let futures: Vec<_> = inputs
+                .iter()
+                .map(|input| self.execute_plan(input))
+                .collect();
+            let results = join_all(futures).await;
+            results.into_iter().collect::<Result<Vec<_>>>()?
+        } else {
+            let mut tables = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                tables.push(self.execute_plan(input).await?);
+            }
+            tables
+        };
+
+        for table in tables {
             for record in table.rows()? {
                 let values = record.values().to_vec();
                 if all || seen.insert(values.clone()) {
@@ -888,15 +1025,24 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_intersect(
-        &mut self,
+    pub(crate) async fn execute_intersect(
+        &self,
         left: &PhysicalPlan,
         right: &PhysicalPlan,
         all: bool,
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
-        let left_table = self.execute_plan(left)?;
-        let right_table = self.execute_plan(right)?;
+        let use_parallel = parallel && self.is_parallel_execution_enabled();
+        let (left_table, right_table) = if use_parallel {
+            let (l, r) = join(self.execute_plan(left), self.execute_plan(right)).await;
+            (l?, r?)
+        } else {
+            (
+                self.execute_plan(left).await?,
+                self.execute_plan(right).await?,
+            )
+        };
         let result_schema = plan_schema_to_schema(schema);
         let mut result = Table::empty(result_schema);
 
@@ -922,15 +1068,24 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_except(
-        &mut self,
+    pub(crate) async fn execute_except(
+        &self,
         left: &PhysicalPlan,
         right: &PhysicalPlan,
         all: bool,
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
-        let left_table = self.execute_plan(left)?;
-        let right_table = self.execute_plan(right)?;
+        let use_parallel = parallel && self.is_parallel_execution_enabled();
+        let (left_table, right_table) = if use_parallel {
+            let (l, r) = join(self.execute_plan(left), self.execute_plan(right)).await;
+            (l?, r?)
+        } else {
+            (
+                self.execute_plan(left).await?,
+                self.execute_plan(right).await?,
+            )
+        };
         let result_schema = plan_schema_to_schema(schema);
         let mut result = Table::empty(result_schema);
 
@@ -959,63 +1114,65 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    pub(crate) fn execute_aggregate(
-        &mut self,
+    pub(crate) async fn execute_aggregate(
+        &self,
         input: &PhysicalPlan,
         group_by: &[Expr],
         aggregates: &[Expr],
         schema: &PlanSchema,
         grouping_sets: Option<&Vec<Vec<usize>>>,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
+        let vars = self.get_variables();
+        let udf = self.get_user_functions();
         crate::executor::compute_aggregate(
             &input_table,
             group_by,
             aggregates,
             schema,
             grouping_sets,
-            &self.variables,
-            &self.user_function_defs,
+            &vars,
+            &udf,
         )
     }
 
-    pub(crate) fn execute_window(
-        &mut self,
+    pub(crate) async fn execute_window(
+        &self,
         input: &PhysicalPlan,
         window_exprs: &[Expr],
         schema: &PlanSchema,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
-        crate::executor::compute_window(
-            &input_table,
-            window_exprs,
-            schema,
-            &self.variables,
-            &self.user_function_defs,
-        )
+        let input_table = self.execute_plan(input).await?;
+        let vars = self.get_variables();
+        let udf = self.get_user_functions();
+        crate::executor::compute_window(&input_table, window_exprs, schema, &vars, &udf)
     }
 
-    pub(crate) fn execute_cte(
-        &mut self,
+    pub(crate) async fn execute_cte(
+        &self,
         ctes: &[CteDefinition],
         body: &PhysicalPlan,
+        _parallel_ctes: &[usize],
     ) -> Result<Table> {
         for cte in ctes {
             if cte.recursive {
-                self.execute_recursive_cte(cte)?;
+                self.execute_recursive_cte(cte).await?;
             } else {
                 let physical_cte = yachtsql_optimizer::optimize(&cte.query)?;
                 let cte_plan = PhysicalPlan::from_physical(&physical_cte);
-                let mut cte_result = self.execute_plan(&cte_plan)?;
+                let mut cte_result = self.execute_plan(&cte_plan).await?;
 
                 if let Some(ref columns) = cte.columns {
                     cte_result = self.apply_cte_column_aliases(&cte_result, columns)?;
                 }
 
-                self.cte_results.insert(cte.name.to_uppercase(), cte_result);
+                self.cte_results
+                    .write()
+                    .unwrap()
+                    .insert(cte.name.to_uppercase(), cte_result);
             }
         }
-        self.execute_plan(body)
+        self.execute_plan(body).await
     }
 
     fn apply_cte_column_aliases(&self, table: &Table, columns: &[String]) -> Result<Table> {
@@ -1041,7 +1198,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    fn execute_recursive_cte(&mut self, cte: &CteDefinition) -> Result<()> {
+    async fn execute_recursive_cte(&self, cte: &CteDefinition) -> Result<()> {
         const MAX_RECURSION_DEPTH: usize = 500;
 
         let (anchor_terms, recursive_terms) = Self::split_recursive_cte(&cte.query, &cte.name);
@@ -1050,7 +1207,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         for anchor in &anchor_terms {
             let physical = yachtsql_optimizer::optimize(anchor)?;
             let anchor_plan = PhysicalPlan::from_physical(&physical);
-            let result = self.execute_plan(&anchor_plan)?;
+            let result = self.execute_plan(&anchor_plan).await?;
             for row in result.rows()? {
                 all_results.push(row.values().to_vec());
             }
@@ -1064,6 +1221,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
 
         self.cte_results
+            .write()
+            .unwrap()
             .insert(cte.name.to_uppercase(), accumulated.clone());
 
         let mut working_set = accumulated.clone();
@@ -1073,13 +1232,15 @@ impl<'a> ConcurrentPlanExecutor<'a> {
             iteration += 1;
 
             self.cte_results
+                .write()
+                .unwrap()
                 .insert(cte.name.to_uppercase(), working_set);
 
             let mut new_rows = Vec::new();
             for recursive_term in &recursive_terms {
                 let physical = yachtsql_optimizer::optimize(recursive_term)?;
                 let rec_plan = PhysicalPlan::from_physical(&physical);
-                let result = self.execute_plan(&rec_plan)?;
+                let result = self.execute_plan(&rec_plan).await?;
                 for row in result.rows()? {
                     new_rows.push(row.values().to_vec());
                 }
@@ -1104,6 +1265,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
 
         self.cte_results
+            .write()
+            .unwrap()
             .insert(cte.name.to_uppercase(), accumulated);
         Ok(())
     }
@@ -1179,18 +1342,21 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
     }
 
-    pub(crate) fn execute_unnest(
-        &mut self,
+    pub(crate) async fn execute_unnest(
+        &self,
         input: &PhysicalPlan,
         columns: &[UnnestColumn],
         schema: &PlanSchema,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let input_schema = input_table.schema().clone();
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(&input_schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
 
         let result_schema = plan_schema_to_schema(schema);
         let mut result = Table::empty(result_schema);
@@ -1254,21 +1420,25 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(())
     }
 
-    pub(crate) fn execute_qualify(
-        &mut self,
+    pub(crate) async fn execute_qualify(
+        &self,
         input: &PhysicalPlan,
         predicate: &Expr,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let schema = input_table.schema().clone();
 
         if Self::expr_has_window_function(predicate) {
             self.execute_qualify_with_window(&input_table, predicate)
+                .await
         } else {
+            let vars = self.get_variables();
+            let sys_vars = self.get_system_variables();
+            let udf = self.get_user_functions();
             let evaluator = IrEvaluator::new(&schema)
-                .with_variables(&self.variables)
-                .with_system_variables(&self.system_variables)
-                .with_user_functions(&self.user_function_defs);
+                .with_variables(&vars)
+                .with_system_variables(&sys_vars)
+                .with_user_functions(&udf);
             let mut result = Table::empty(schema.clone());
 
             for record in input_table.rows()? {
@@ -1282,13 +1452,16 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
     }
 
-    fn execute_qualify_with_window(&mut self, input: &Table, predicate: &Expr) -> Result<Table> {
+    async fn execute_qualify_with_window(&self, input: &Table, predicate: &Expr) -> Result<Table> {
         let schema = input.schema().clone();
         let rows: Vec<Record> = input.rows()?;
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(&schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
 
         let window_exprs = Self::collect_window_exprs(predicate);
         let mut window_results: HashMap<String, Vec<Value>> = HashMap::new();
@@ -1496,17 +1669,20 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
     }
 
-    pub(crate) fn execute_values(
-        &mut self,
+    pub(crate) async fn execute_values(
+        &self,
         values: &[Vec<Expr>],
         schema: &PlanSchema,
     ) -> Result<Table> {
         let result_schema = plan_schema_to_schema(schema);
         let empty_schema = Schema::new();
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(&empty_schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
         let empty_record = Record::new();
         let mut result = Table::empty(result_schema);
 
@@ -1522,28 +1698,33 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(result)
     }
 
-    fn eval_expr_with_subqueries(
-        &mut self,
+    #[async_recursion(?Send)]
+    async fn eval_expr_with_subqueries(
+        &self,
         expr: &Expr,
         schema: &Schema,
         record: &Record,
     ) -> Result<Value> {
         match expr {
             Expr::Subquery(plan) | Expr::ScalarSubquery(plan) => {
-                self.eval_scalar_subquery(plan, schema, record)
+                self.eval_scalar_subquery(plan, schema, record).await
             }
             Expr::Exists { subquery, negated } => {
-                let has_rows = self.eval_exists_subquery(subquery, schema, record)?;
+                let has_rows = self.eval_exists_subquery(subquery, schema, record).await?;
                 Ok(Value::Bool(if *negated { !has_rows } else { has_rows }))
             }
-            Expr::ArraySubquery(plan) => self.eval_array_subquery(plan, schema, record),
+            Expr::ArraySubquery(plan) => self.eval_array_subquery(plan, schema, record).await,
             Expr::InSubquery {
                 expr: inner_expr,
                 subquery,
                 negated,
             } => {
-                let val = self.eval_expr_with_subqueries(inner_expr, schema, record)?;
-                let in_result = self.eval_value_in_subquery(&val, subquery, schema, record)?;
+                let val = self
+                    .eval_expr_with_subqueries(inner_expr, schema, record)
+                    .await?;
+                let in_result = self
+                    .eval_value_in_subquery(&val, subquery, schema, record)
+                    .await?;
                 Ok(Value::Bool(if *negated { !in_result } else { in_result }))
             }
             Expr::InUnnest {
@@ -1551,8 +1732,12 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 array_expr,
                 negated,
             } => {
-                let val = self.eval_expr_with_subqueries(inner_expr, schema, record)?;
-                let array_val = self.eval_expr_with_subqueries(array_expr, schema, record)?;
+                let val = self
+                    .eval_expr_with_subqueries(inner_expr, schema, record)
+                    .await?;
+                let array_val = self
+                    .eval_expr_with_subqueries(array_expr, schema, record)
+                    .await?;
                 let in_result = if let Value::Array(arr) = array_val {
                     arr.contains(&val)
                 } else {
@@ -1561,23 +1746,30 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 Ok(Value::Bool(if *negated { !in_result } else { in_result }))
             }
             Expr::BinaryOp { left, op, right } => {
-                let left_val = self.eval_expr_with_subqueries(left, schema, record)?;
-                let right_val = self.eval_expr_with_subqueries(right, schema, record)?;
+                let left_val = self.eval_expr_with_subqueries(left, schema, record).await?;
+                let right_val = self
+                    .eval_expr_with_subqueries(right, schema, record)
+                    .await?;
                 self.eval_binary_op_values(left_val, *op, right_val)
             }
             Expr::UnaryOp { op, expr: inner } => {
-                let val = self.eval_expr_with_subqueries(inner, schema, record)?;
+                let val = self
+                    .eval_expr_with_subqueries(inner, schema, record)
+                    .await?;
                 self.eval_unary_op_value(*op, val)
             }
             Expr::ScalarFunction { name, args } => {
-                let arg_vals: Vec<Value> = args
-                    .iter()
-                    .map(|a| self.eval_expr_with_subqueries(a, schema, record))
-                    .collect::<Result<_>>()?;
+                let mut arg_vals: Vec<Value> = Vec::with_capacity(args.len());
+                for a in args {
+                    arg_vals.push(self.eval_expr_with_subqueries(a, schema, record).await?);
+                }
+                let vars = self.get_variables();
+                let sys_vars = self.get_system_variables();
+                let udf = self.get_user_functions();
                 let evaluator = IrEvaluator::new(schema)
-                    .with_variables(&self.variables)
-                    .with_system_variables(&self.system_variables)
-                    .with_user_functions(&self.user_function_defs);
+                    .with_variables(&vars)
+                    .with_system_variables(&sys_vars)
+                    .with_user_functions(&udf);
                 evaluator.eval_scalar_function_with_values(name, &arg_vals)
             }
             Expr::Cast {
@@ -1585,7 +1777,9 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 data_type,
                 safe,
             } => {
-                let val = self.eval_expr_with_subqueries(inner, schema, record)?;
+                let val = self
+                    .eval_expr_with_subqueries(inner, schema, record)
+                    .await?;
                 IrEvaluator::cast_value(val, data_type, *safe)
             }
             Expr::Case {
@@ -1593,46 +1787,54 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 when_clauses,
                 else_result,
             } => {
-                let operand_val = operand
-                    .as_ref()
-                    .map(|e| self.eval_expr_with_subqueries(e, schema, record))
-                    .transpose()?;
+                let operand_val = match operand.as_ref() {
+                    Some(e) => Some(self.eval_expr_with_subqueries(e, schema, record).await?),
+                    None => None,
+                };
 
                 for clause in when_clauses {
                     let condition_val = if let Some(op_val) = &operand_val {
-                        let cond_val =
-                            self.eval_expr_with_subqueries(&clause.condition, schema, record)?;
+                        let cond_val = self
+                            .eval_expr_with_subqueries(&clause.condition, schema, record)
+                            .await?;
                         Value::Bool(op_val == &cond_val)
                     } else {
-                        self.eval_expr_with_subqueries(&clause.condition, schema, record)?
+                        self.eval_expr_with_subqueries(&clause.condition, schema, record)
+                            .await?
                     };
 
                     if matches!(condition_val, Value::Bool(true)) {
-                        return self.eval_expr_with_subqueries(&clause.result, schema, record);
+                        return self
+                            .eval_expr_with_subqueries(&clause.result, schema, record)
+                            .await;
                     }
                 }
 
                 if let Some(else_expr) = else_result {
                     self.eval_expr_with_subqueries(else_expr, schema, record)
+                        .await
                 } else {
                     Ok(Value::Null)
                 }
             }
             Expr::Alias { expr: inner, .. } => {
-                self.eval_expr_with_subqueries(inner, schema, record)
+                self.eval_expr_with_subqueries(inner, schema, record).await
             }
             _ => {
+                let vars = self.get_variables();
+                let sys_vars = self.get_system_variables();
+                let udf = self.get_user_functions();
                 let evaluator = IrEvaluator::new(schema)
-                    .with_variables(&self.variables)
-                    .with_system_variables(&self.system_variables)
-                    .with_user_functions(&self.user_function_defs);
+                    .with_variables(&vars)
+                    .with_system_variables(&sys_vars)
+                    .with_user_functions(&udf);
                 evaluator.evaluate(expr, record)
             }
         }
     }
 
-    fn eval_scalar_subquery(
-        &mut self,
+    async fn eval_scalar_subquery(
+        &self,
         plan: &LogicalPlan,
         outer_schema: &Schema,
         outer_record: &Record,
@@ -1640,7 +1842,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         let substituted = self.substitute_outer_refs_in_plan(plan, outer_schema, outer_record)?;
         let physical = optimize(&substituted)?;
         let executor_plan = PhysicalPlan::from_physical(&physical);
-        let result_table = self.execute_plan(&executor_plan)?;
+        let result_table = self.execute_plan(&executor_plan).await?;
 
         if result_table.is_empty() {
             return Ok(Value::Null);
@@ -1660,10 +1862,10 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(values[0].clone())
     }
 
-    fn eval_scalar_subquery_as_row(&mut self, plan: &LogicalPlan) -> Result<Value> {
+    async fn eval_scalar_subquery_as_row(&self, plan: &LogicalPlan) -> Result<Value> {
         let physical = optimize(plan)?;
         let executor_plan = PhysicalPlan::from_physical(&physical);
-        let result_table = self.execute_plan(&executor_plan)?;
+        let result_table = self.execute_plan(&executor_plan).await?;
 
         if result_table.is_empty() {
             return Ok(Value::Struct(vec![]));
@@ -1689,8 +1891,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(Value::Struct(result))
     }
 
-    fn eval_exists_subquery(
-        &mut self,
+    async fn eval_exists_subquery(
+        &self,
         plan: &LogicalPlan,
         outer_schema: &Schema,
         outer_record: &Record,
@@ -1698,12 +1900,12 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         let substituted = self.substitute_outer_refs_in_plan(plan, outer_schema, outer_record)?;
         let physical = optimize(&substituted)?;
         let executor_plan = PhysicalPlan::from_physical(&physical);
-        let result_table = self.execute_plan(&executor_plan)?;
+        let result_table = self.execute_plan(&executor_plan).await?;
         Ok(!result_table.is_empty())
     }
 
-    fn eval_array_subquery(
-        &mut self,
+    async fn eval_array_subquery(
+        &self,
         plan: &LogicalPlan,
         outer_schema: &Schema,
         outer_record: &Record,
@@ -1711,7 +1913,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         let substituted = self.substitute_outer_refs_in_plan(plan, outer_schema, outer_record)?;
         let physical = optimize(&substituted)?;
         let executor_plan = PhysicalPlan::from_physical(&physical);
-        let result_table = self.execute_plan(&executor_plan)?;
+        let result_table = self.execute_plan(&executor_plan).await?;
 
         let result_schema = result_table.schema();
         let num_fields = result_schema.field_count();
@@ -1735,8 +1937,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         Ok(Value::Array(array_values))
     }
 
-    fn eval_value_in_subquery(
-        &mut self,
+    async fn eval_value_in_subquery(
+        &self,
         value: &Value,
         plan: &LogicalPlan,
         outer_schema: &Schema,
@@ -1749,7 +1951,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         let substituted = self.substitute_outer_refs_in_plan(plan, outer_schema, outer_record)?;
         let physical = optimize(&substituted)?;
         let executor_plan = PhysicalPlan::from_physical(&physical);
-        let result_table = self.execute_plan(&executor_plan)?;
+        let result_table = self.execute_plan(&executor_plan).await?;
 
         for record in result_table.rows()? {
             let values = record.values();
@@ -2227,21 +2429,22 @@ impl<'a> ConcurrentPlanExecutor<'a> {
         }
     }
 
-    fn resolve_subqueries_in_expr(&mut self, expr: &Expr) -> Result<Expr> {
+    #[async_recursion(?Send)]
+    async fn resolve_subqueries_in_expr(&self, expr: &Expr) -> Result<Expr> {
         match expr {
             Expr::InSubquery {
                 expr: inner_expr,
                 subquery,
                 negated,
             } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner_expr)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner_expr).await?;
                 let empty_schema = Schema::new();
                 let empty_record = Record::new();
                 let substituted =
                     self.substitute_outer_refs_in_plan(subquery, &empty_schema, &empty_record)?;
                 let physical = optimize(&substituted)?;
                 let executor_plan = PhysicalPlan::from_physical(&physical);
-                let result_table = self.execute_plan(&executor_plan)?;
+                let result_table = self.execute_plan(&executor_plan).await?;
 
                 let mut list_exprs = Vec::new();
                 for record in result_table.rows()? {
@@ -2265,7 +2468,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                     self.substitute_outer_refs_in_plan(subquery, &empty_schema, &empty_record)?;
                 let physical = optimize(&substituted)?;
                 let executor_plan = PhysicalPlan::from_physical(&physical);
-                let result_table = self.execute_plan(&executor_plan)?;
+                let result_table = self.execute_plan(&executor_plan).await?;
                 let has_rows = !result_table.is_empty();
                 let result = if *negated { !has_rows } else { has_rows };
                 Ok(Expr::Literal(yachtsql_ir::Literal::Bool(result)))
@@ -2277,7 +2480,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                     self.substitute_outer_refs_in_plan(plan, &empty_schema, &empty_record)?;
                 let physical = optimize(&substituted)?;
                 let executor_plan = PhysicalPlan::from_physical(&physical);
-                let result_table = self.execute_plan(&executor_plan)?;
+                let result_table = self.execute_plan(&executor_plan).await?;
 
                 if result_table.is_empty() {
                     return Ok(Expr::Literal(yachtsql_ir::Literal::Null));
@@ -2303,7 +2506,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                     self.substitute_outer_refs_in_plan(plan, &empty_schema, &empty_record)?;
                 let physical = optimize(&substituted)?;
                 let executor_plan = PhysicalPlan::from_physical(&physical);
-                let result_table = self.execute_plan(&executor_plan)?;
+                let result_table = self.execute_plan(&executor_plan).await?;
 
                 let mut array_elements = Vec::new();
                 for record in result_table.rows()? {
@@ -2315,8 +2518,8 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 Ok(Expr::Literal(yachtsql_ir::Literal::Array(array_elements)))
             }
             Expr::BinaryOp { left, op, right } => {
-                let resolved_left = self.resolve_subqueries_in_expr(left)?;
-                let resolved_right = self.resolve_subqueries_in_expr(right)?;
+                let resolved_left = self.resolve_subqueries_in_expr(left).await?;
+                let resolved_right = self.resolve_subqueries_in_expr(right).await?;
                 Ok(Expr::BinaryOp {
                     left: Box::new(resolved_left),
                     op: *op,
@@ -2324,7 +2527,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 })
             }
             Expr::UnaryOp { op, expr: inner } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
                 Ok(Expr::UnaryOp {
                     op: *op,
                     expr: Box::new(resolved_inner),
@@ -2335,7 +2538,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 data_type,
                 safe,
             } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
                 Ok(Expr::Cast {
                     expr: Box::new(resolved_inner),
                     data_type: data_type.clone(),
@@ -2347,25 +2550,23 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 when_clauses,
                 else_result,
             } => {
-                let resolved_operand = operand
-                    .as_ref()
-                    .map(|e| self.resolve_subqueries_in_expr(e))
-                    .transpose()?
-                    .map(Box::new);
+                let resolved_operand = match operand.as_ref() {
+                    Some(e) => Some(Box::new(self.resolve_subqueries_in_expr(e).await?)),
+                    None => None,
+                };
 
                 let mut resolved_clauses = Vec::new();
                 for clause in when_clauses {
                     resolved_clauses.push(yachtsql_ir::WhenClause {
-                        condition: self.resolve_subqueries_in_expr(&clause.condition)?,
-                        result: self.resolve_subqueries_in_expr(&clause.result)?,
+                        condition: self.resolve_subqueries_in_expr(&clause.condition).await?,
+                        result: self.resolve_subqueries_in_expr(&clause.result).await?,
                     });
                 }
 
-                let resolved_else = else_result
-                    .as_ref()
-                    .map(|e| self.resolve_subqueries_in_expr(e))
-                    .transpose()?
-                    .map(Box::new);
+                let resolved_else = match else_result.as_ref() {
+                    Some(e) => Some(Box::new(self.resolve_subqueries_in_expr(e).await?)),
+                    None => None,
+                };
 
                 Ok(Expr::Case {
                     operand: resolved_operand,
@@ -2374,17 +2575,17 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 })
             }
             Expr::ScalarFunction { name, args } => {
-                let resolved_args = args
-                    .iter()
-                    .map(|a| self.resolve_subqueries_in_expr(a))
-                    .collect::<Result<Vec<_>>>()?;
+                let mut resolved_args = Vec::with_capacity(args.len());
+                for a in args {
+                    resolved_args.push(self.resolve_subqueries_in_expr(a).await?);
+                }
                 Ok(Expr::ScalarFunction {
                     name: name.clone(),
                     args: resolved_args,
                 })
             }
             Expr::Alias { expr: inner, name } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
                 Ok(Expr::Alias {
                     expr: Box::new(resolved_inner),
                     name: name.clone(),
@@ -2394,7 +2595,7 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 expr: inner,
                 negated,
             } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
                 Ok(Expr::IsNull {
                     expr: Box::new(resolved_inner),
                     negated: *negated,
@@ -2405,11 +2606,11 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 list,
                 negated,
             } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
-                let resolved_list = list
-                    .iter()
-                    .map(|e| self.resolve_subqueries_in_expr(e))
-                    .collect::<Result<Vec<_>>>()?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
+                let mut resolved_list = Vec::with_capacity(list.len());
+                for e in list {
+                    resolved_list.push(self.resolve_subqueries_in_expr(e).await?);
+                }
                 Ok(Expr::InList {
                     expr: Box::new(resolved_inner),
                     list: resolved_list,
@@ -2422,9 +2623,9 @@ impl<'a> ConcurrentPlanExecutor<'a> {
                 high,
                 negated,
             } => {
-                let resolved_inner = self.resolve_subqueries_in_expr(inner)?;
-                let resolved_low = self.resolve_subqueries_in_expr(low)?;
-                let resolved_high = self.resolve_subqueries_in_expr(high)?;
+                let resolved_inner = self.resolve_subqueries_in_expr(inner).await?;
+                let resolved_low = self.resolve_subqueries_in_expr(low).await?;
+                let resolved_high = self.resolve_subqueries_in_expr(high).await?;
                 Ok(Expr::Between {
                     expr: Box::new(resolved_inner),
                     low: Box::new(resolved_low),

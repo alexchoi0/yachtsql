@@ -442,6 +442,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             table_name,
             schema,
             projection,
+            ..
         } => LogicalPlan::Scan {
             table_name: table_name.clone(),
             schema: schema.clone(),
@@ -466,6 +467,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             join_type,
             condition,
             schema,
+            ..
         } => LogicalPlan::Join {
             left: Box::new(executor_plan_to_logical_plan(left)),
             right: Box::new(executor_plan_to_logical_plan(right)),
@@ -477,6 +479,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             left,
             right,
             schema,
+            ..
         } => LogicalPlan::Join {
             left: Box::new(executor_plan_to_logical_plan(left)),
             right: Box::new(executor_plan_to_logical_plan(right)),
@@ -491,6 +494,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             left_keys,
             right_keys,
             schema,
+            ..
         } => {
             let condition = if left_keys.len() == 1 {
                 Some(yachtsql_ir::Expr::BinaryOp {
@@ -569,6 +573,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             inputs,
             all,
             schema,
+            ..
         } => {
             let mut iter = inputs.iter();
             let first = iter.next().map(executor_plan_to_logical_plan);
@@ -590,6 +595,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             right,
             all,
             schema,
+            ..
         } => LogicalPlan::SetOperation {
             left: Box::new(executor_plan_to_logical_plan(left)),
             right: Box::new(executor_plan_to_logical_plan(right)),
@@ -602,6 +608,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             right,
             all,
             schema,
+            ..
         } => LogicalPlan::SetOperation {
             left: Box::new(executor_plan_to_logical_plan(left)),
             right: Box::new(executor_plan_to_logical_plan(right)),
@@ -631,7 +638,7 @@ fn executor_plan_to_logical_plan(plan: &PhysicalPlan) -> yachtsql_ir::LogicalPla
             input: Box::new(executor_plan_to_logical_plan(input)),
             predicate: predicate.clone(),
         },
-        PhysicalPlan::WithCte { ctes, body } => LogicalPlan::WithCte {
+        PhysicalPlan::WithCte { ctes, body, .. } => LogicalPlan::WithCte {
             ctes: ctes.clone(),
             body: Box::new(executor_plan_to_logical_plan(body)),
         },

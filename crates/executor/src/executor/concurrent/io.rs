@@ -21,12 +21,12 @@ use super::ConcurrentPlanExecutor;
 use crate::plan::PhysicalPlan;
 
 impl ConcurrentPlanExecutor<'_> {
-    pub(crate) fn execute_export(
-        &mut self,
+    pub(crate) async fn execute_export(
+        &self,
         options: &ExportOptions,
         query: &PhysicalPlan,
     ) -> Result<Table> {
-        let data = self.execute_plan(query)?;
+        let data = self.execute_plan(query).await?;
 
         let is_cloud_uri = options.uri.starts_with("gs://")
             || options.uri.starts_with("s3://")
@@ -414,7 +414,7 @@ impl ConcurrentPlanExecutor<'_> {
     }
 
     pub(crate) fn execute_load(
-        &mut self,
+        &self,
         table_name: &str,
         options: &LoadOptions,
         temp_table: bool,
@@ -431,13 +431,10 @@ impl ConcurrentPlanExecutor<'_> {
                 .catalog
                 .get_table_handle(table_name)
                 .ok_or_else(|| Error::TableNotFound(table_name.to_string()))?;
-            if let Ok(guard) = handle.write() {
-                unsafe {
-                    let static_guard: std::sync::RwLockWriteGuard<'static, Table> =
-                        std::mem::transmute(guard);
-                    self.tables
-                        .add_write(table_name.to_uppercase(), static_guard);
-                }
+            {
+                let table = handle.write().clone();
+                self.tables
+                    .add_write_table(table_name.to_uppercase(), table);
             }
         }
 

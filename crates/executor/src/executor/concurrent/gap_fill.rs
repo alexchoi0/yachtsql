@@ -10,8 +10,8 @@ use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 
 impl ConcurrentPlanExecutor<'_> {
-    pub(crate) fn execute_gap_fill(
-        &mut self,
+    pub(crate) async fn execute_gap_fill(
+        &self,
         input: &PhysicalPlan,
         ts_column: &str,
         bucket_width: &Expr,
@@ -21,7 +21,7 @@ impl ConcurrentPlanExecutor<'_> {
         input_schema: &PlanSchema,
         schema: &PlanSchema,
     ) -> Result<Table> {
-        let input_table = self.execute_plan(input)?;
+        let input_table = self.execute_plan(input).await?;
         let storage_schema = input_table.schema();
 
         let ts_idx = input_schema
@@ -51,10 +51,13 @@ impl ConcurrentPlanExecutor<'_> {
             })
             .collect();
 
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(storage_schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
         let empty_record = Record::new();
 
         let bucket_interval = evaluator.evaluate(bucket_width, &empty_record)?;

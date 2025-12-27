@@ -10,16 +10,31 @@ use crate::ir_evaluator::IrEvaluator;
 use crate::plan::PhysicalPlan;
 
 impl ConcurrentPlanExecutor<'_> {
-    pub(crate) fn execute_nested_loop_join(
-        &mut self,
+    pub(crate) async fn execute_nested_loop_join(
+        &self,
         left: &PhysicalPlan,
         right: &PhysicalPlan,
         join_type: &JoinType,
         condition: Option<&Expr>,
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
-        let left_table = self.execute_plan(left)?;
-        let right_table = self.execute_plan(right)?;
+        let use_parallel = parallel && self.is_parallel_execution_enabled();
+
+        let (left_table, right_table) = if use_parallel {
+            let rt = tokio::runtime::Handle::current();
+            let (l, r) = std::thread::scope(|s| {
+                let left_handle = s.spawn(|| rt.block_on(self.execute_plan(left)));
+                let right_handle = s.spawn(|| rt.block_on(self.execute_plan(right)));
+                (left_handle.join().unwrap(), right_handle.join().unwrap())
+            });
+            (l?, r?)
+        } else {
+            (
+                self.execute_plan(left).await?,
+                self.execute_plan(right).await?,
+            )
+        };
         let left_schema = left_table.schema().clone();
         let right_schema = right_table.schema().clone();
         let result_schema = plan_schema_to_schema(schema);
@@ -32,10 +47,13 @@ impl ConcurrentPlanExecutor<'_> {
             combined_schema.add_field(field.clone());
         }
 
+        let vars = self.get_variables();
+        let sys_vars = self.get_system_variables();
+        let udf = self.get_user_functions();
         let evaluator = IrEvaluator::new(&combined_schema)
-            .with_variables(&self.variables)
-            .with_system_variables(&self.system_variables)
-            .with_user_functions(&self.user_function_defs);
+            .with_variables(&vars)
+            .with_system_variables(&sys_vars)
+            .with_user_functions(&udf);
 
         let mut result = Table::empty(result_schema.clone());
         let left_rows = left_table.rows()?;
@@ -164,40 +182,60 @@ impl ConcurrentPlanExecutor<'_> {
         Ok(result)
     }
 
-    pub(crate) fn execute_cross_join(
-        &mut self,
+    pub(crate) async fn execute_cross_join(
+        &self,
         left: &PhysicalPlan,
         right: &PhysicalPlan,
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
-        self.execute_nested_loop_join(left, right, &JoinType::Cross, None, schema)
+        self.execute_nested_loop_join(left, right, &JoinType::Cross, None, schema, parallel)
+            .await
     }
 
-    pub(crate) fn execute_hash_join(
-        &mut self,
+    pub(crate) async fn execute_hash_join(
+        &self,
         left: &PhysicalPlan,
         right: &PhysicalPlan,
         join_type: &JoinType,
         left_keys: &[Expr],
         right_keys: &[Expr],
         schema: &PlanSchema,
+        parallel: bool,
     ) -> Result<Table> {
-        let left_table = self.execute_plan(left)?;
-        let right_table = self.execute_plan(right)?;
+        let use_parallel = parallel && self.is_parallel_execution_enabled();
+
+        let (left_table, right_table) = if use_parallel {
+            let rt = tokio::runtime::Handle::current();
+            let (l, r) = std::thread::scope(|s| {
+                let left_handle = s.spawn(|| rt.block_on(self.execute_plan(left)));
+                let right_handle = s.spawn(|| rt.block_on(self.execute_plan(right)));
+                (left_handle.join().unwrap(), right_handle.join().unwrap())
+            });
+            (l?, r?)
+        } else {
+            (
+                self.execute_plan(left).await?,
+                self.execute_plan(right).await?,
+            )
+        };
         let left_schema = left_table.schema().clone();
         let right_schema = right_table.schema().clone();
         let result_schema = plan_schema_to_schema(schema);
 
         match join_type {
             JoinType::Inner => {
+                let vars = self.get_variables();
+                let sys_vars = self.get_system_variables();
+                let udf = self.get_user_functions();
                 let left_evaluator = IrEvaluator::new(&left_schema)
-                    .with_variables(&self.variables)
-                    .with_system_variables(&self.system_variables)
-                    .with_user_functions(&self.user_function_defs);
+                    .with_variables(&vars)
+                    .with_system_variables(&sys_vars)
+                    .with_user_functions(&udf);
                 let right_evaluator = IrEvaluator::new(&right_schema)
-                    .with_variables(&self.variables)
-                    .with_system_variables(&self.system_variables)
-                    .with_user_functions(&self.user_function_defs);
+                    .with_variables(&vars)
+                    .with_system_variables(&sys_vars)
+                    .with_user_functions(&udf);
 
                 let right_rows = right_table.rows()?;
                 let mut hash_table: HashMap<Vec<Value>, Vec<Record>> = HashMap::new();
